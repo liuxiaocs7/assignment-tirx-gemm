@@ -1,0 +1,10 @@
+{
+  "step": 4,
+  "variant": "early_release",
+  "sources": [
+    {
+      "before_sha256": "fd0cc0b746c8fe2e5bca742357a94532140e6d6cde64d5027249b2837346c434",
+      "compiled_sha256": "b2453e97899088032ba5ccc065280f791ad9410f11eaa675a559b7c86b8750f8"
+    }
+  ]
+}

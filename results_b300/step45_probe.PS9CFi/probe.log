@@ -1,0 +1,61 @@
+Code: 683da599718c74ea680cdf920bfda07f14d0e5f5; gemm_sha256=3fd407fc54aa98b6c1c2b9f38893fde231324e5ecb12b65a01f4266f62c12194
+GPU: NVIDIA B300 SXM6 AC; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Diagnostic variants only; verify all outputs before interleaved CUDA-event timing.
+Verified step 4 / baseline
+Verified step 4 / early_release
+Verified step 4 / wait_64ns
+Verified step 4 / no_k_unroll
+Verified step 5 / baseline
+Verified step 5 / early_release
+Verified step 5 / wait_64ns
+Verified step 5 / no_k_unroll
+Trial 1: step 4 / baseline: 0.076641 ms
+Trial 1: step 4 / early_release: 0.043157 ms
+Trial 1: step 4 / wait_64ns: 0.071841 ms
+Trial 1: step 4 / no_k_unroll: 0.086491 ms
+Trial 1: step 5 / baseline: 0.045205 ms
+Trial 1: step 5 / early_release: 0.033215 ms
+Trial 1: step 5 / wait_64ns: 0.043196 ms
+Trial 1: step 5 / no_k_unroll: 0.047291 ms
+Trial 2: step 4 / baseline: 0.076441 ms
+Trial 2: step 5 / no_k_unroll: 0.047627 ms
+Trial 2: step 5 / wait_64ns: 0.043143 ms
+Trial 2: step 5 / early_release: 0.033455 ms
+Trial 2: step 5 / baseline: 0.045228 ms
+Trial 2: step 4 / no_k_unroll: 0.086378 ms
+Trial 2: step 4 / wait_64ns: 0.071742 ms
+Trial 2: step 4 / early_release: 0.043150 ms
+Trial 3: step 4 / wait_64ns: 0.071823 ms
+Trial 3: step 4 / no_k_unroll: 0.086445 ms
+Trial 3: step 5 / baseline: 0.045266 ms
+Trial 3: step 5 / early_release: 0.033525 ms
+Trial 3: step 5 / wait_64ns: 0.043183 ms
+Trial 3: step 5 / no_k_unroll: 0.048330 ms
+Trial 3: step 4 / baseline: 0.077021 ms
+Trial 3: step 4 / early_release: 0.042321 ms
+Trial 4: step 4 / wait_64ns: 0.072005 ms
+Trial 4: step 4 / early_release: 0.042363 ms
+Trial 4: step 4 / baseline: 0.077168 ms
+Trial 4: step 5 / no_k_unroll: 0.048052 ms
+Trial 4: step 5 / wait_64ns: 0.043142 ms
+Trial 4: step 5 / early_release: 0.033551 ms
+Trial 4: step 5 / baseline: 0.045161 ms
+Trial 4: step 4 / no_k_unroll: 0.086228 ms
+Trial 5: step 5 / baseline: 0.045271 ms
+Trial 5: step 5 / early_release: 0.032763 ms
+Trial 5: step 5 / wait_64ns: 0.043155 ms
+Trial 5: step 5 / no_k_unroll: 0.047293 ms
+Trial 5: step 4 / baseline: 0.076308 ms
+Trial 5: step 4 / early_release: 0.043155 ms
+Trial 5: step 4 / wait_64ns: 0.071748 ms
+Trial 5: step 4 / no_k_unroll: 0.086410 ms
+step variant         median_ms    min_ms    max_ms paired_speedup limit_ms status
+   4 baseline         0.076641  0.076308  0.077168          1.000 0.067600 SLOW
+   4 early_release    0.043150  0.042321  0.043157          1.776 0.067600 PASS
+   4 wait_64ns        0.071823  0.071742  0.072005          1.067 0.067600 SLOW
+   4 no_k_unroll      0.086410  0.086228  0.086491          0.886 0.067600 SLOW
+   5 baseline         0.045228  0.045161  0.045271          1.000 0.042900 SLOW
+   5 early_release    0.033455  0.032763  0.033551          1.352 0.042900 PASS
+   5 wait_64ns        0.043155  0.043142  0.043196          1.048 0.042900 SLOW
+   5 no_k_unroll      0.047627  0.047291  0.048330          0.950 0.042900 SLOW
+Saved results_b300/step45_probe.PS9CFi/probe/summary.csv; SLOW is a measured result, not a tool error.

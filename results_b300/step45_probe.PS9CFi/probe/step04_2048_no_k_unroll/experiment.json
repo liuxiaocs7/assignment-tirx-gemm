@@ -1,0 +1,10 @@
+{
+  "step": 4,
+  "variant": "no_k_unroll",
+  "sources": [
+    {
+      "before_sha256": "fd0cc0b746c8fe2e5bca742357a94532140e6d6cde64d5027249b2837346c434",
+      "compiled_sha256": "8d4232eaa3e9b606ce93ab491d92d575db3b187c481f8cd7c02fa17c26e87402"
+    }
+  ]
+}

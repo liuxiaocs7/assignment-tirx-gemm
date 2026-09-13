@@ -1,0 +1,10 @@
+--- baseline.cu
++++ no_k_unroll.cu
+@@ -405,6 +405,7 @@
+   int cse_v4 = (((int)blockIdx.x) * 128);
+   if ((warp_id_in_cta % 4) == 0) {
+     if (tvm_builtin_elect_one_sync_op() != (uint)0) {
++      #pragma unroll 1
+       for (int k = 0; k < 32; ++k) {
+         int cse_v3 = (k * 64);
+         ptx_cp_async_bulk_tensor_g2s_cluster_tile_2d((&(((half*)pool_buf_ptr)[512])), (&(((uint64_t*)pool_buf_ptr)[1])), ((unsigned long long)(&(A_tensormap))), 0, (uint64_t)0, (k * 64), (((int)blockIdx.x) * 128));

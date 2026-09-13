@@ -1,0 +1,10 @@
+--- baseline.cu
++++ no_k_unroll.cu
+@@ -411,6 +411,7 @@
+       ptx_cp_async_bulk_tensor_g2s_cluster_tile_2d((&(((half*)pool_buf_ptr)[8704])), (&(((uint64_t*)pool_buf_ptr)[2])), ((unsigned long long)(&(A_tensormap))), 0, (uint64_t)0, 64, (((int)blockIdx.x) * 128));
+       ptx_cp_async_bulk_tensor_g2s_cluster_tile_2d((&(((half*)pool_buf_ptr)[25088])), (&(((uint64_t*)pool_buf_ptr)[2])), ((unsigned long long)(&(B_tensormap))), 0, (uint64_t)0, 64, (((int)blockIdx.y) * 128));
+       tvm_builtin_ptx_mbarrier_arrive_expect_tx_shared((&(((uint64_t*)pool_buf_ptr)[2])), 32768);
++      #pragma unroll 1
+       for (int ring = 0; ring < 16; ++ring) {
+         int cse_v5 = (ring & 1);
+         tvm_builtin_ptx_mbarrier_try_wait((&(((uint64_t*)pool_buf_ptr)[1])), (ring & 1));

@@ -1,0 +1,10 @@
+{
+  "step": 5,
+  "variant": "wait_64ns",
+  "sources": [
+    {
+      "before_sha256": "e95678a60773680cb5f103c6c189a5b1a4fba3ce267ca516e9a7693e4a8d7182",
+      "compiled_sha256": "dbf0f966dd336e9207e142798c47331496caf439893d18681a35c2dc9ce81701"
+    }
+  ]
+}

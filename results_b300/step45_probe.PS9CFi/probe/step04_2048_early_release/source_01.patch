@@ -1,0 +1,18 @@
+--- baseline.cu
++++ early_release.cu
+@@ -393,6 +393,7 @@
+       tvm_builtin_ptx_mbarrier_init((&(((uint64_t*)pool_buf_ptr)[2])), 1);
+     }
+     tvm_builtin_ptx_tcgen05_alloc_cta_group_1((&(((uint*)pool_buf_ptr)[0])), 128);
++    tvm_builtin_ptx_tcgen05_relinquish_alloc_permit_cta_group_1();
+   }
+   tvm_builtin_ptx_fence_proxy_async_shared_cta();
+   tvm_builtin_ptx_fence_mbarrier_init();
+@@ -462,7 +463,6 @@
+   }
+   tvm_builtin_cuda_cta_sync();
+   if ((warp_id_in_cta % 4) == 0) {
+-    tvm_builtin_ptx_tcgen05_relinquish_alloc_permit_cta_group_1();
+     tvm_builtin_ptx_tcgen05_dealloc_cta_group_1(((uint*)pool_buf_ptr)[0], 128);
+   }
+ }
