@@ -1,0 +1,43 @@
+--- baseline.py
++++ specialize_mma.py
+@@ -102,22 +102,24 @@
+                                     CTA_GROUP * (NUM_CONSUMER * BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
+                             tma_phase.advance()
+                         tile_scheduler.next_tile()
+-            elif warp_id < NUM_CONSUMER:
+-                if cbx == 0:
+-                    if T.filter(lane_id, T.ptx.elect_sync()):
+-                        while tile_scheduler.valid():
+-                            ld2mma.wait(warp_id, ld_phase.phase)
+-                            ld_phase.advance()
+-                            for k in range(K_TILES):
+-                                tma2mma.wait(mma_phase.stage, mma_phase.phase)
+-                                T.ptx.tcgen05.fence.after_thread_sync()
+-                                Tx.gemm_async(tmem[:, warp_id * MMA_N:(warp_id + 1) * MMA_N],
+-                                    Asmem[mma_phase.stage, warp_id, :, :], Bsmem[mma_phase.stage, :, :],
+-                                    accum=(k != 0), dispatch="tcgen05", cta_group=CTA_GROUP)
+-                                mma2tma.arrive(mma_phase.stage, cta_group=CTA_GROUP, cta_mask=3)
+-                                mma_phase.advance()
+-                            mma2ld.arrive(warp_id, cta_group=CTA_GROUP, cta_mask=3)
+-                            tile_scheduler.next_tile()
++            else:
++                for mma_consumer in T.unroll(NUM_CONSUMER):
++                    if warp_id == mma_consumer:
++                        if cbx == 0:
++                            if T.filter(lane_id, T.ptx.elect_sync()):
++                                while tile_scheduler.valid():
++                                    ld2mma.wait(mma_consumer, ld_phase.phase)
++                                    ld_phase.advance()
++                                    for k in range(K_TILES):
++                                        tma2mma.wait(mma_phase.stage, mma_phase.phase)
++                                        T.ptx.tcgen05.fence.after_thread_sync()
++                                        Tx.gemm_async(tmem[:, mma_consumer * MMA_N:(mma_consumer + 1) * MMA_N],
++                                            Asmem[mma_phase.stage, mma_consumer, :, :], Bsmem[mma_phase.stage, :, :],
++                                            accum=(k != 0), dispatch="tcgen05", cta_group=CTA_GROUP)
++                                        mma2tma.arrive(mma_phase.stage, cta_group=CTA_GROUP, cta_mask=3)
++                                        mma_phase.advance()
++                                    mma2ld.arrive(mma_consumer, cta_group=CTA_GROUP, cta_mask=3)
++                                    tile_scheduler.next_tile()
+         elif wg_id < NUM_CONSUMER:
+             m_out = T.meta_var(m_st + wg_id * MMA_M)
+             Dreg = T.alloc_local((TMEM_LD_N,), acc_type)

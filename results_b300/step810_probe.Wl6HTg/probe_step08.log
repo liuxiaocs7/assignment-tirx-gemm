@@ -1,0 +1,26 @@
+Code: adf93ebe5acc4e6b64d1c20275d995ee3cd39a3a; gemm_sha256=11a94f0b64a8f5a1034f432eea11865c7d0fe4ef7bb53c26e35ca615be397aad
+GPU: NVIDIA B300 SXM6 AC; SMs: 148; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Independent variants; verify all outputs before interleaved CUDA-event timing.
+Verified step 8 / baseline
+Verified step 8 / tma_wait_64ns
+Verified step 8 / epilogue_128
+Trial 1: step 8 / baseline: 0.029859 ms
+Trial 1: step 8 / tma_wait_64ns: 0.029321 ms
+Trial 1: step 8 / epilogue_128: 0.029830 ms
+Trial 2: step 8 / baseline: 0.030447 ms
+Trial 2: step 8 / epilogue_128: 0.030849 ms
+Trial 2: step 8 / tma_wait_64ns: 0.029261 ms
+Trial 3: step 8 / epilogue_128: 0.029925 ms
+Trial 3: step 8 / baseline: 0.029243 ms
+Trial 3: step 8 / tma_wait_64ns: 0.029229 ms
+Trial 4: step 8 / epilogue_128: 0.029387 ms
+Trial 4: step 8 / tma_wait_64ns: 0.029174 ms
+Trial 4: step 8 / baseline: 0.029956 ms
+Trial 5: step 8 / tma_wait_64ns: 0.029245 ms
+Trial 5: step 8 / epilogue_128: 0.029606 ms
+Trial 5: step 8 / baseline: 0.029540 ms
+step variant         median_ms    min_ms    max_ms paired_speedup limit_ms status
+   8 baseline         0.029859  0.029243  0.030447          1.000 0.029900 PASS
+   8 tma_wait_64ns    0.029245  0.029174  0.029321          1.018 0.029900 PASS
+   8 epilogue_128     0.029830  0.029387  0.030849          0.998 0.029900 PASS
+Saved results_b300/step810_probe.Wl6HTg/step08/summary.csv; SLOW is a measured result, not a tool error.

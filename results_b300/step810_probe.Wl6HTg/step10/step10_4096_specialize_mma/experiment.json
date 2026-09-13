@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "specialize_mma",
+  "sources": [
+    {
+      "before_sha256": "65b840149742b7669e602823dce2ffbeceffd8c132a792a6f7fe9fd6766108ac",
+      "compiled_sha256": "65b840149742b7669e602823dce2ffbeceffd8c132a792a6f7fe9fd6766108ac"
+    }
+  ]
+}

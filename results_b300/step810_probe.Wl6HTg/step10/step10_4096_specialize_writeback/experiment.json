@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "specialize_writeback",
+  "sources": [
+    {
+      "before_sha256": "b164ab9dcc55425c25d06e0111200c4fa5cfa2d64059a025ec0d54326864ff6a",
+      "compiled_sha256": "b164ab9dcc55425c25d06e0111200c4fa5cfa2d64059a025ec0d54326864ff6a"
+    }
+  ]
+}

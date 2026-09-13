@@ -1,0 +1,10 @@
+{
+  "step": 8,
+  "variant": "tma_wait_64ns",
+  "sources": [
+    {
+      "before_sha256": "f98c9acdaced03e6b8e7579d950bf6123e449758abf7e211d5d3c23a753f0fea",
+      "compiled_sha256": "bdedf2b8db84e409c8843f5c7739313d560348bdc575b732da03c040d92a4e97"
+    }
+  ]
+}
