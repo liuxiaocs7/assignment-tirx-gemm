@@ -22,11 +22,12 @@
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
 覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线。
-**尚未在 NVIDIA GPU 上实测 NVRTC/PTX 编译、数值正确性或性能**。
-以下命令是上机验收流程，不能把文档中的参考值视为本实现的实测成绩。
+用户回传的 `dfc9065` 日志显示：B300 上 49 个用例的数值检查全部通过，
+其中 **36 个用例整体通过、13 个仅性能断言失败**。Step 6 / 2048 回退后恢复到 0.047595 ms，
+但仍需继续优化性能。详见 [B300_VALIDATION.md](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（18 个 CLI 用例 + 32 个构建和源码生成用例；没有 TVM 时后者跳过）。
+（18 个 CLI 用例、36 个构建和源码生成用例、6 个诊断工具用例；依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
@@ -131,6 +132,7 @@ PY
 
 pytest 和 `benchmark.py` 会按实际 GPU 调整常驻 CTA 数量；直接使用
 `hgemm_v6`–`hgemm_v10` 时默认 `SM_COUNT=148`（B200）。
+Step 7–10 的网格还会按输出 tile 数量限制 CTA / cluster 数，避免小矩阵启动空闲任务。
 
 ## 4. 按步骤验收
 
@@ -213,7 +215,8 @@ step       M       N       K   median_ms   TFLOP/s   cuBLAS_ms   vs_cuBLAS   lim
 - `vs_cuBLAS = cuBLAS_ms / median_ms`，大于 1 表示本内核在当前测量下更快。
 - `PASS`：正确性通过且耗时在参考门槛内；`SLOW`：正确但慢；`UNSCORED`：自定义形状没有参考门槛。
 - 有 `SLOW` 时脚本退出码为 1，CSV 仍保留。数值验证失败则立即报错。
-- CSV 包含 GPU / SM 数、TVM / PyTorch / CUDA 版本、种子、计时配置、各 trial 的最小/最大耗时。
+- CSV 包含 GPU / SM 数、TVM / PyTorch / CUDA 版本、种子、计时配置、各 trial 的原始耗时及最小/最大值。
+- 日志和 CSV 记录 commit、工作区是否有修改、内核/工具源码 SHA256、目标架构和编译参数。
 
 计算公式为 `TFLOP/s = 2*M*N*K / (time_ms*1e-3) / 1e12`。
 默认计时方式与原测试保持一致：当前 CUDA stream 上的 event 包围重复 kernel launch，
@@ -238,6 +241,27 @@ git rev-parse HEAD > results/commit.txt
 nvidia-smi > results/gpu.txt
 uv pip freeze > results/packages.txt
 ```
+
+持续偏慢时，先采集原有编译过程的资源信息；下例只测当前仍有失败的步骤：
+
+```bash
+mkdir -p results
+set -o pipefail
+tirx_run=$(mktemp -d results/b300_diag.XXXXXX)
+nvidia-smi > "$tirx_run/gpu_before.txt"
+uv run python -u benchmark.py --steps 4,5,6,7,8,10 --trials 3 \
+  --diagnostics-dir "$tirx_run/compiler" --csv "$tirx_run/focus.csv" \
+  2>&1 | tee "$tirx_run/benchmark.log"
+nvidia-smi > "$tirx_run/gpu_after.txt"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+`--diagnostics-dir` 必须是新目录，避免混入上轮日志。每个形状保存 CUDA 源码、编译二进制，
+默认 NVRTC 路径还保存实际参数、编译器版本和包含寄存器/spill 信息的编译日志。
+采集复用 TVM 原编译回调，**不更改编译参数**，在正确性检查和预热计时前移除钩子。
+未指定该选项时不安装钩子。若使用 NVCC，则保存 `.fatbin`，不采集 NVRTC 日志。
+目录内 `capture.json` 的 `modules: 0` 表示没有捕获到编译回调，不能据此判断没有寄存器溢出。
+详细产物说明及可选 Nsight Compute 命令见 [B300_VALIDATION.md](B300_VALIDATION.md)。
 
 ## 6. 编译、死锁与数值错误排查
 

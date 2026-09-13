@@ -2,9 +2,11 @@
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` are implemented using
 Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
-source generation checks. See [RUNNING.md](RUNNING.md) for the Chinese
-installation, correctness, performance, and debugging guide. NVRTC/PTX compilation,
-correctness, and timing still need to be verified on your Blackwell machine.
+source generation checks. User-reported B300 results at `dfc9065` pass all 49 numerical
+checks, with **36 tests passing and 13 performance assertions failing**. The Step 6
+rollback recovered the 2048-size regression; further performance work remains.
+See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
+for measured results and compiler diagnostics.
 
 In this assignment, you will progressively build a high-performance FP16 GEMM kernel for NVIDIA Blackwell (SM100) GPUs using TVM/TIRX. Starting from a minimal single-tile kernel, you will incrementally add optimizations — K-loop accumulation, spatial tiling, TMA async loads, software pipelining, persistent kernels, warp specialization, deeper pipelines, multi-CTA clusters, and multi-consumer parallelism — until you arrive at a fully optimized kernel that matches the structure of production-grade implementations.
 
