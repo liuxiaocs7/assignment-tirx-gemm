@@ -475,6 +475,28 @@ def hgemm_v5(M, N, K):
     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
     D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_N))
 
+    # B300 wait1024.UP24Tv: only the MMA wait benefits from a shorter hint.
+    # Keep the measured PTX retry loop (default acquire.cta); 64 ns is a
+    # suspension hint, not a timeout that permits using an unfinished MMA.
+    # TVM 0.26's built-in retry helper hard-codes the hint, so embed a local
+    # helper instead of changing TVM's global codegen or the TMA waits.
+    MMA_WAIT_SOURCE = r"""
+__forceinline__ __device__ void tirx_mma_wait_64ns(void* barrier, int phase) {
+    unsigned int barrier_addr_int = __cvta_generic_to_shared(barrier);
+    unsigned int ticks = 64;
+    asm volatile(
+        "{\n"
+        ".reg .pred                P1;\n"
+        "LAB_WAIT:\n"
+        "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1, %2;\n"
+        "@P1                       bra.uni DONE;\n"
+        "bra.uni                   LAB_WAIT;\n"
+        "DONE:\n"
+        "}\n"
+        :: "r"(barrier_addr_int), "r"(phase), "r"(ticks) : "memory");
+}
+"""
+
     @T.prim_func
     def kernel(
         A: T.Buffer((M, K), a_type),
@@ -545,7 +567,8 @@ def hgemm_v5(M, N, K):
                             T.ptx.mbarrier.try_wait(tma_bar.ptr_to([stage]), ring % 2)
                             T.ptx.tcgen05.fence.after_thread_sync()
                             mma(stage, k != 0)
-                            T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
+                            T.cuda.func_call("tirx_mma_wait_64ns", mma_bar.ptr_to([0]), phase_mma,
+                                             source_code=MMA_WAIT_SOURCE)
                             phase_mma = phase_mma ^ 1
                             if k + PIPE_DEPTH < K_TILES:
                                 tma_load(stage, (k + PIPE_DEPTH) * BLK_K)

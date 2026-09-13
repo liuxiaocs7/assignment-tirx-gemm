@@ -91,15 +91,11 @@ def test_adopted_variant_is_not_silently_benchmarked_as_a_new_change(generated):
 
 @pytest.mark.parametrize("step", [4, 5])
 @pytest.mark.parametrize("variant", WAIT_VARIANTS)
-def test_current_1024_wait_probe_preserves_kernel_protocol(step, variant):
-    tvm = pytest.importorskip("tvm")
-    import gemm_kernels
-
-    target = tvm.target.Target({"kind": "cuda", "arch": "sm_103a"})
-    with target:
-        kernel = getattr(gemm_kernels, f"hgemm_v{step}")(1024, 1024, 1024)
-        executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
-    source = executable.mod.imports[0].inspect_source()
+def test_recorded_1024_wait_probe_preserves_kernel_protocol(step, variant):
+    # Replay the exact pre-adoption compiler input of this completed experiment.
+    path = (Path(__file__).parents[1] / "results_b300/wait1024.UP24Tv/probe" /
+            f"step{step:02d}_1024_baseline/module_01.cu")
+    source = path.read_text()
     modified = variant_source(source, step, variant)
     marker = 'extern "C" __global__'
     header, body = modified.split(marker, 1)
@@ -136,6 +132,15 @@ def test_current_1024_wait_probe_preserves_kernel_protocol(step, variant):
 def test_defaults_target_waits_on_the_current_kernel():
     assert DEFAULT_VARIANTS == ("baseline", *WAIT_VARIANTS)
     assert "early_release" not in DEFAULT_VARIANTS
+
+
+@pytest.mark.parametrize("variant", WAIT_VARIANTS)
+def test_adopted_mma_wait_rejects_historical_wait_experiments(variant):
+    from test_step45_adoption import generated_source
+
+    source = generated_source(5, 1024)
+    with pytest.raises(ValueError, match="Step 5 has adopted mma_wait_64ns"):
+        variant_source(source, 5, variant)
 
 
 @pytest.mark.parametrize("variant", VARIANTS[1:])

@@ -3,7 +3,7 @@
 Each variant changes one thing after TVM lowering. The original gemm_kernels.py,
 compiler options, verification tolerances, and CUDA-event timer are unchanged.
 Use a fresh --output directory. All actual compiler inputs/binaries are saved.
-Defaults target the remaining size-1024 failures after adopting early_release.
+Defaults target Step 4 at size 1024; Step 5 has adopted mma_wait_64ns.
 The historical early_release/no_k_unroll variants remain explicit opt-ins.
 """
 
@@ -27,6 +27,9 @@ VARIANTS = (*DEFAULT_VARIANTS, "early_release", "no_k_unroll")
 
 def change_wait(header, body, step, variant):
     """Change wait scheduling while retaining parity, acquire, and retry logic."""
+    if "tirx_mma_wait_64ns" in header or "tirx_mma_wait_64ns" in body:
+        raise ValueError("Step 5 has adopted mma_wait_64ns; validate the production kernel "
+                         "with benchmark.py --steps 5 and tests/test_step05.py")
     name = "tvm_builtin_ptx_mbarrier_try_wait"
     helper = re.compile(rf"^__forceinline__ __device__ void {name}\([^\n]+\) \{{\n.*?^\}}\n",
                         re.M | re.S)
@@ -160,7 +163,7 @@ def summarize(cases, reference_times, tolerance):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="fresh directory, must not exist")
-    parser.add_argument("--steps", type=int, nargs="+", choices=(4, 5), default=[4, 5])
+    parser.add_argument("--steps", type=int, nargs="+", choices=(4, 5), default=[4])
     parser.add_argument("--size", type=int, choices=(512, 1024, 2048), default=1024)
     parser.add_argument("--variants", nargs="+", choices=VARIANTS, default=list(DEFAULT_VARIANTS))
     parser.add_argument("--trials", type=int, default=5)
