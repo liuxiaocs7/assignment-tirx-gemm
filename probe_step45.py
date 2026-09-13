@@ -3,6 +3,8 @@
 Each variant changes one thing after TVM lowering. The original gemm_kernels.py,
 compiler options, verification tolerances, and CUDA-event timer are unchanged.
 Use a fresh --output directory. All actual compiler inputs/binaries are saved.
+The early-release experiment was adopted after step45_probe.PS9CFi. On kernels
+that already contain it, use benchmark.py and tests/test_step04.py/test_step05.py.
 """
 
 import argparse
@@ -37,6 +39,9 @@ def variant_source(source, step, variant):
         alloc = re.compile(r"^    tvm_builtin_ptx_tcgen05_alloc_cta_group_1\([^\n]+, 128\);\n", re.M)
         if body.count(release) != 1 or len(alloc.findall(body)) != 1:
             raise ValueError("expected exactly one 128-column allocation and release")
+        if body[alloc.search(body).end():].startswith(release):
+            raise ValueError("early_release is already applied; validate the production kernel "
+                             "with benchmark.py --steps 4,5 and tests/test_step04.py/test_step05.py")
         body = body.replace(release, "")
         body = alloc.sub(lambda match: match.group() + release, body)
     elif variant == "wait_64ns":

@@ -1,6 +1,5 @@
-"""Verify probe isolation and transformations against real TVM-generated CUDA."""
+"""Verify the historical probe against its captured TVM-generated baseline."""
 
-import importlib
 import json
 from pathlib import Path
 import sys
@@ -13,13 +12,9 @@ from probe_step45 import VARIANTS, main, source_experiment, summarize, trial_ord
 
 @pytest.fixture(scope="module", params=[4, 5])
 def generated(request):
-    tvm = pytest.importorskip("tvm")
-    kernels = importlib.import_module("gemm_kernels")
-    target = tvm.target.Target({"kind": "cuda", "arch": "sm_103a"})
-    with target:
-        kernel = getattr(kernels, f"hgemm_v{request.param}")(2048, 2048, 2048)
-        executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
-    return request.param, executable.mod.imports[0].inspect_source()
+    path = (Path(__file__).parents[1] / "results_b300/step45_probe.PS9CFi/probe" /
+            f"step{request.param:02d}_2048_baseline/module_01.cu")
+    return request.param, path.read_text()
 
 
 def test_variants_change_only_the_declared_operation(generated):
@@ -41,7 +36,8 @@ def test_variants_change_only_the_declared_operation(generated):
 
 @pytest.mark.parametrize("fail", [False, True])
 def test_capture_receives_variant_and_restores_compiler(generated, tmp_path, monkeypatch, fail):
-    import tvm_ffi
+    tvm_ffi = pytest.importorskip("tvm_ffi")
+    pytest.importorskip("tvm.support.nvcc")
     from benchmark_diagnostics import capture_compilation
 
     step, source = generated
@@ -83,6 +79,13 @@ def test_capture_receives_variant_and_restores_compiler(generated, tmp_path, mon
         assert not (tmp_path / "module_02.cu").exists()
     finally:
         tvm_ffi.register_global_func(name, original, override=True)
+
+
+def test_adopted_variant_is_not_silently_benchmarked_as_a_new_change(generated):
+    step, source = generated
+    adopted = variant_source(source, step, "early_release")
+    with pytest.raises(ValueError, match="early_release is already applied"):
+        variant_source(adopted, step, "early_release")
 
 
 @pytest.mark.parametrize("variant", VARIANTS[1:])
