@@ -1,0 +1,45 @@
+--- baseline.py
++++ mma.py
+@@ -19,11 +19,14 @@
+     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
+     D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (NUM_CONSUMER, BLK_M, EPI_N))
+ 
++    PROFILE_SOURCE = '\n#ifndef TIRX_PROFILE_TIMERS_DEFINED\n#define TIRX_PROFILE_TIMERS_DEFINED\n__forceinline__ __device__ uint64_t tirx_profile_ns() {\n    uint64_t value;\n    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(value) :: "memory");\n    return value;\n}\n__forceinline__ __device__ uint64_t tirx_profile_cycles() {\n    uint64_t value;\n    asm volatile("mov.u64 %0, %%clock64;" : "=l"(value) :: "memory");\n    return value;\n}\n__forceinline__ __device__ void tirx_profile_start(uint64_t* s, bool leader) {\n    if (leader) {\n        s[0] = tirx_profile_ns();\n        s[1] = tirx_profile_cycles();\n        unsigned int sm;\n        asm volatile("mov.u32 %0, %%smid;" : "=r"(sm));\n        s[2] = sm;\n        s[3] = 0; s[4] = 0; s[5] = 0; s[6] = 0;\n    }\n}\n__forceinline__ __device__ void tirx_profile_mark(uint64_t* s, bool leader) {\n    if (leader) s[7] = tirx_profile_ns();\n}\n__forceinline__ __device__ void tirx_profile_add_wait(uint64_t* s, bool leader) {\n    if (leader) s[3] += tirx_profile_ns() - s[7];\n}\n__forceinline__ __device__ void tirx_profile_add_work(uint64_t* s, bool leader) {\n    if (leader) s[4] += tirx_profile_ns() - s[7];\n}\n__forceinline__ __device__ void tirx_profile_add_handoff(uint64_t* s, bool leader) {\n    if (leader) s[5] += tirx_profile_ns() - s[7];\n}\n__forceinline__ __device__ void tirx_profile_add_epilogue(uint64_t* s, bool leader) {\n    if (leader) s[6] += tirx_profile_ns() - s[7];\n}\n__forceinline__ __device__ void tirx_profile_finish(\n        uint64_t* s, int64_t* out, int m, int n, bool leader) {\n    if (leader) {\n        uint64_t end = tirx_profile_ns();\n        uint64_t cycles = tirx_profile_cycles();\n        out[0] = s[0]; out[1] = end;\n        out[2] = s[3]; out[3] = s[4]; out[4] = s[5]; out[5] = s[6];\n        out[6] = s[1]; out[7] = cycles; out[8] = s[2];\n        out[9] = m; out[10] = n;\n    }\n}\n#endif\n'
++
+     @T.prim_func
+     def kernel(
+         A: T.Buffer((M, K), a_type),
+         B: T.Buffer((N, K), b_type),
+         D: T.Buffer((M, N), d_type),
++        Profile: T.Buffer((148, 2, 2, 11), "int64"),
+     ):
+         # fmt: off
+         T.device_entry()
+@@ -105,18 +108,27 @@
+             elif warp_id < NUM_CONSUMER:
+                 if cbx == 0:
+                     if T.filter(lane_id, T.ptx.elect_sync()):
++                        profile_state = T.alloc_local((8,), "uint64")
+                         while tile_scheduler.valid():
++                            T.cuda.func_call("tirx_profile_start", profile_state.data, True, source_code=PROFILE_SOURCE)
++                            T.cuda.func_call("tirx_profile_mark", profile_state.data, True, source_code=PROFILE_SOURCE)
+                             ld2mma.wait(warp_id, ld_phase.phase)
++                            T.cuda.func_call("tirx_profile_add_handoff", profile_state.data, True, source_code=PROFILE_SOURCE)
+                             ld_phase.advance()
+                             for k in range(K_TILES):
++                                T.cuda.func_call("tirx_profile_mark", profile_state.data, True, source_code=PROFILE_SOURCE)
+                                 tma2mma.wait(mma_phase.stage, mma_phase.phase)
++                                T.cuda.func_call("tirx_profile_add_wait", profile_state.data, True, source_code=PROFILE_SOURCE)
++                                T.cuda.func_call("tirx_profile_mark", profile_state.data, True, source_code=PROFILE_SOURCE)
+                                 T.ptx.tcgen05.fence.after_thread_sync()
+                                 Tx.gemm_async(tmem[:, warp_id * MMA_N:(warp_id + 1) * MMA_N],
+                                     Asmem[mma_phase.stage, warp_id, :, :], Bsmem[mma_phase.stage, :, :],
+                                     accum=(k != 0), dispatch="tcgen05", cta_group=CTA_GROUP)
+                                 mma2tma.arrive(mma_phase.stage, cta_group=CTA_GROUP, cta_mask=3)
+                                 mma_phase.advance()
++                                T.cuda.func_call("tirx_profile_add_work", profile_state.data, True, source_code=PROFILE_SOURCE)
+                             mma2ld.arrive(warp_id, cta_group=CTA_GROUP, cta_mask=3)
++                            T.cuda.func_call("tirx_profile_finish", profile_state.data, Profile.ptr_to([bx, tile_scheduler.tile_count, warp_id, 0]), tile_scheduler.m_idx, tile_scheduler.n_idx, True, source_code=PROFILE_SOURCE)
+                             tile_scheduler.next_tile()
+         elif wg_id < NUM_CONSUMER:
+             m_out = T.meta_var(m_st + wg_id * MMA_M)

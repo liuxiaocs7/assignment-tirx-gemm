@@ -1,0 +1,244 @@
+/usr/local/cuda/include/cuda_fp8.hpp(1461): warning #1444-D: class "double4" was declared deprecated ("use double4_16a or double4_32a")
+      explicit __CUDA_HOSTDEVICE_FP8__ __nv_fp8x4_e5m2(const double4 f) {
+                                       ^
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+/usr/local/cuda/include/cuda_fp8.hpp(2090): warning #1444-D: class "double4" was declared deprecated ("use double4_16a or double4_32a")
+      explicit __CUDA_HOSTDEVICE_FP8__ __nv_fp8x4_e4m3(const double4 f) {
+                                       ^
+
+/usr/local/cuda/include/cuda_fp8.hpp(2739): warning #1444-D: class "double4" was declared deprecated ("use double4_16a or double4_32a")
+      explicit __CUDA_HOSTDEVICE_FP8__ __nv_fp8x4_e8m0(const double4 f) {
+                                       ^
+
+/usr/local/cuda/include/cuda_fp6.hpp(953): warning #1444-D: class "double4" was declared deprecated ("use double4_16a or double4_32a")
+      explicit __CUDA_HOSTDEVICE_FP6__ __nv_fp6x4_e3m2(const double4 f) {
+                                       ^
+
+/usr/local/cuda/include/cuda_fp6.hpp(1535): warning #1444-D: class "double4" was declared deprecated ("use double4_16a or double4_32a")
+      explicit __CUDA_HOSTDEVICE_FP6__ __nv_fp6x4_e2m3(const double4 f) {
+                                       ^
+
+/usr/local/cuda/include/cuda_fp4.hpp(908): warning #1444-D: class "double4" was declared deprecated ("use double4_16a or double4_32a")
+      explicit __CUDA_HOSTDEVICE_FP4__ __nv_fp4x4_e2m1(const double4 f) {
+                                       ^
+
+tvm_kernels.cu(787): warning #177-D: variable "cse_v4" was declared but never referenced
+      int cse_v4 = (((int)blockIdx.x) >> 7);
+          ^
+
+tvm_kernels.cu(788): warning #177-D: variable "group_id" was declared but never referenced
+      int group_id = (((int)blockIdx.x) >> 7);
+          ^
+
+tvm_kernels.cu(789): warning #177-D: variable "cse_v5" was declared but never referenced
+      int cse_v5 = (((int)blockIdx.x) & 127);
+          ^
+
+tvm_kernels.cu(790): warning #177-D: variable "within_group" was declared but never referenced
+      int within_group = (((int)blockIdx.x) & 127);
+          ^
+
+tvm_kernels.cu(791): warning #177-D: variable "cse_v20" was declared but never referenced
+      int cse_v20 = (((((int)blockIdx.x) >> 7) * 8) + (((int)blockIdx.x) & 7));
+          ^
+
+tvm_kernels.cu(792): warning #177-D: variable "tile_row" was declared but never referenced
+      int tile_row = (((((int)blockIdx.x) >> 7) * 8) + (((int)blockIdx.x) & 7));
+          ^
+
+tvm_kernels.cu(793): warning #177-D: variable "cse_v16" was declared but never referenced
+      int cse_v16 = ((((int)blockIdx.x) & 127) >> 3);
+          ^
+
+tvm_kernels.cu(794): warning #177-D: variable "tile_col" was declared but never referenced
+      int tile_col = ((((int)blockIdx.x) & 127) >> 3);
+          ^
+
+tvm_kernels.cu(825): warning #177-D: variable "cse_v6" was declared but never referenced
+              int cse_v6 = (k * 64);
+                  ^
+
+tvm_kernels.cu(840): warning #177-D: variable "cse_v17" was declared but never referenced
+              int cse_v17 = ((group_id_1 * 8) + (within_group_1 & 7));
+                  ^
+
+tvm_kernels.cu(841): warning #177-D: variable "tile_row_1" was declared but never referenced
+              int tile_row_1 = ((group_id_1 * 8) + (within_group_1 & 7));
+                  ^
+
+tvm_kernels.cu(842): warning #177-D: variable "cse_v7" was declared but never referenced
+              int cse_v7 = (within_group_1 >> 3);
+                  ^
+
+tvm_kernels.cu(843): warning #177-D: variable "tile_col_1" was declared but never referenced
+              int tile_col_1 = (within_group_1 >> 3);
+                  ^
+
+tvm_kernels.cu(880): warning #177-D: variable "cse_v18" was declared but never referenced
+                int cse_v18 = ((group_id_2 * 8) + (within_group_2 & 7));
+                    ^
+
+tvm_kernels.cu(881): warning #177-D: variable "tile_row_2" was declared but never referenced
+                int tile_row_2 = ((group_id_2 * 8) + (within_group_2 & 7));
+                    ^
+
+tvm_kernels.cu(882): warning #177-D: variable "cse_v8" was declared but never referenced
+                int cse_v8 = (within_group_2 >> 3);
+                    ^
+
+tvm_kernels.cu(883): warning #177-D: variable "tile_col_2" was declared but never referenced
+                int tile_col_2 = (within_group_2 >> 3);
+                    ^
+
+tvm_kernels.cu(912): warning #550-D: variable "dst_lane_indices_0_0_ptr" was set but never used
+            alignas(64) int dst_lane_indices_0_0_ptr[1];
+                            ^
+
+tvm_kernels.cu(913): warning #177-D: variable "cse_v9" was declared but never referenced
+            int cse_v9 = (f * 2);
+                ^
+
+tvm_kernels.cu(915): warning #550-D: variable "dst_lane_indices_1_0_ptr" was set but never used
+            alignas(64) int dst_lane_indices_1_0_ptr[1];
+                            ^
+
+tvm_kernels.cu(922): warning #550-D: variable "dst_lane_indices_0_0_ptr_1" was set but never used
+            alignas(64) int dst_lane_indices_0_0_ptr_1[1];
+                            ^
+
+tvm_kernels.cu(923): warning #177-D: variable "cse_v10" was declared but never referenced
+            int cse_v10 = (f_1 * 2);
+                ^
+
+tvm_kernels.cu(925): warning #550-D: variable "dst_lane_indices_1_0_ptr_1" was set but never used
+            alignas(64) int dst_lane_indices_1_0_ptr_1[1];
+                            ^
+
+tvm_kernels.cu(932): warning #550-D: variable "dst_lane_indices_0_0_ptr_2" was set but never used
+            alignas(64) int dst_lane_indices_0_0_ptr_2[1];
+                            ^
+
+tvm_kernels.cu(933): warning #177-D: variable "cse_v11" was declared but never referenced
+            int cse_v11 = (f_2 * 2);
+                ^
+
+tvm_kernels.cu(935): warning #550-D: variable "dst_lane_indices_1_0_ptr_2" was set but never used
+            alignas(64) int dst_lane_indices_1_0_ptr_2[1];
+                            ^
+
+tvm_kernels.cu(942): warning #550-D: variable "dst_lane_indices_0_0_ptr_3" was set but never used
+            alignas(64) int dst_lane_indices_0_0_ptr_3[1];
+                            ^
+
+tvm_kernels.cu(943): warning #177-D: variable "cse_v12" was declared but never referenced
+            int cse_v12 = (f_3 * 2);
+                ^
+
+tvm_kernels.cu(945): warning #550-D: variable "dst_lane_indices_1_0_ptr_3" was set but never used
+            alignas(64) int dst_lane_indices_1_0_ptr_3[1];
+                            ^
+
+tvm_kernels.cu(961): warning #550-D: variable "ds_ptr" was set but never used
+            alignas(64) int ds_ptr[1];
+                            ^
+
+tvm_kernels.cu(962): warning #177-D: variable "cse_v13" was declared but never referenced
+            int cse_v13 = (f_4 * 8);
+                ^
+
+tvm_kernels.cu(987): warning #550-D: variable "ds_ptr_1" was set but never used
+            alignas(64) int ds_ptr_1[1];
+                            ^
+
+tvm_kernels.cu(988): warning #177-D: variable "cse_v14" was declared but never referenced
+            int cse_v14 = (f_5 * 8);
+                ^
+
+tvm_kernels.cu(1013): warning #177-D: variable "cse_v19" was declared but never referenced
+            int cse_v19 = ((group_id_3 * 8) + (within_group_3 & 7));
+                ^
+
+tvm_kernels.cu(1014): warning #177-D: variable "tile_row_3" was declared but never referenced
+            int tile_row_3 = ((group_id_3 * 8) + (within_group_3 & 7));
+                ^
+
+tvm_kernels.cu(1015): warning #177-D: variable "cse_v15" was declared but never referenced
+            int cse_v15 = (within_group_3 >> 3);
+                ^
+
+tvm_kernels.cu(1016): warning #177-D: variable "tile_col_3" was declared but never referenced
+            int tile_col_3 = (within_group_3 >> 3);
+                ^
+
+tvm_kernels.cu(954): warning #177-D: variable "cse_v21" was declared but never referenced
+          int cse_v21 = ((warp_id_in_cta * 2048) + ((((int)threadIdx.x) & 31) * 64));
+              ^
+
+tvm_kernels.cu(741): warning #177-D: variable "bx" was declared but never referenced
+    int bx = ((int)blockIdx.x);
+        ^
+
+tvm_kernels.cu(742): warning #177-D: variable "cse_v1" was declared but never referenced
+    int cse_v1 = (warp_id_in_cta >> 2);
+        ^
+
+tvm_kernels.cu(743): warning #177-D: variable "wg_id" was declared but never referenced
+    int wg_id = (warp_id_in_cta >> 2);
+        ^
+
+tvm_kernels.cu(744): warning #177-D: variable "cse_v2" was declared but never referenced
+    int cse_v2 = (warp_id_in_cta & 3);
+        ^
+
+tvm_kernels.cu(745): warning #177-D: variable "warp_id" was declared but never referenced
+    int warp_id = (warp_id_in_cta & 3);
+        ^
+
+tvm_kernels.cu(746): warning #177-D: variable "cse_v3" was declared but never referenced
+    int cse_v3 = (((int)threadIdx.x) & 31);
+        ^
+
+tvm_kernels.cu(747): warning #177-D: variable "lane_id" was declared but never referenced
+    int lane_id = (((int)threadIdx.x) & 31);
+        ^
+
+tvm_kernels.cu(779): warning #177-D: variable "tmem" was declared but never referenced
+    float* tmem = ((float*)((float*)((uint*)pool_buf_ptr)[0]));
+           ^
+
+tvm_kernels.cu(805): warning #550-D: variable "ld_phase_stage_ptr" was set but never used
+    alignas(64) int ld_phase_stage_ptr[1];
+                    ^
+
+tvm_kernels.cu(807): warning #550-D: variable "wb_phase_stage_ptr" was set but never used
+    alignas(64) int wb_phase_stage_ptr[1];
+                    ^
+
+tvm_kernels.cu(85): warning #177-D: function "__pack_half2" was declared but never referenced
+  __pack_half2(const half x, const half y) {
+  ^
+
+tvm_kernels.cu(111): warning #177-D: function "hpow" was declared but never referenced
+  CUDA_UNSUPPORTED_HALF_MATH_BINARY(hpow, powf)
+  ^
+
+tvm_kernels.cu(115): warning #177-D: function "htan" was declared but never referenced
+  CUDA_UNSUPPORTED_HALF_MATH_UNARY(htan, tanf)
+  ^
+
+tvm_kernels.cu(116): warning #177-D: function "hatan" was declared but never referenced
+  CUDA_UNSUPPORTED_HALF_MATH_UNARY(hatan, atanf)
+  ^
+
+tvm_kernels.cu(117): warning #177-D: function "herf" was declared but never referenced
+  CUDA_UNSUPPORTED_HALF_MATH_UNARY(herf, erf)
+  ^
+
+ptxas info    : 6298 bytes gmem
+ptxas info    : Compiling entry function 'kernel_kernel' for 'sm_103a'
+ptxas info    : Function properties for kernel_kernel
+ptxas         .     0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 125 registers, used 11 barriers
+ptxas info    : Compile time = 30.316 ms

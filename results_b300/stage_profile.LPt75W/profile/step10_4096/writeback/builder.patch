@@ -1,0 +1,50 @@
+--- baseline.py
++++ writeback.py
+@@ -19,11 +19,14 @@
+     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
+     D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (NUM_CONSUMER, BLK_M, EPI_N))
+ 
++    PROFILE_SOURCE = '\n#ifndef TIRX_PROFILE_TIMERS_DEFINED\n#define TIRX_PROFILE_TIMERS_DEFINED\n__forceinline__ __device__ uint64_t tirx_profile_ns() {\n    uint64_t value;\n    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(value) :: "memory");\n    return value;\n}\n__forceinline__ __device__ uint64_t tirx_profile_cycles() {\n    uint64_t value;\n    asm volatile("mov.u64 %0, %%clock64;" : "=l"(value) :: "memory");\n    return value;\n}\n__forceinline__ __device__ void tirx_profile_start(uint64_t* s, bool leader) {\n    if (leader) {\n        s[0] = tirx_profile_ns();\n        s[1] = tirx_profile_cycles();\n        unsigned int sm;\n        asm volatile("mov.u32 %0, %%smid;" : "=r"(sm));\n        s[2] = sm;\n        s[3] = 0; s[4] = 0; s[5] = 0; s[6] = 0;\n    }\n}\n__forceinline__ __device__ void tirx_profile_mark(uint64_t* s, bool leader) {\n    if (leader) s[7] = tirx_profile_ns();\n}\n__forceinline__ __device__ void tirx_profile_add_wait(uint64_t* s, bool leader) {\n    if (leader) s[3] += tirx_profile_ns() - s[7];\n}\n__forceinline__ __device__ void tirx_profile_add_work(uint64_t* s, bool leader) {\n    if (leader) s[4] += tirx_profile_ns() - s[7];\n}\n__forceinline__ __device__ void tirx_profile_add_handoff(uint64_t* s, bool leader) {\n    if (leader) s[5] += tirx_profile_ns() - s[7];\n}\n__forceinline__ __device__ void tirx_profile_add_epilogue(uint64_t* s, bool leader) {\n    if (leader) s[6] += tirx_profile_ns() - s[7];\n}\n__forceinline__ __device__ void tirx_profile_finish(\n        uint64_t* s, int64_t* out, int m, int n, bool leader) {\n    if (leader) {\n        uint64_t end = tirx_profile_ns();\n        uint64_t cycles = tirx_profile_cycles();\n        out[0] = s[0]; out[1] = end;\n        out[2] = s[3]; out[3] = s[4]; out[4] = s[5]; out[5] = s[6];\n        out[6] = s[1]; out[7] = cycles; out[8] = s[2];\n        out[9] = m; out[10] = n;\n    }\n}\n#endif\n'
++
+     @T.prim_func
+     def kernel(
+         A: T.Buffer((M, K), a_type),
+         B: T.Buffer((N, K), b_type),
+         D: T.Buffer((M, N), d_type),
++        Profile: T.Buffer((148, 2, 2, 11), "int64"),
+     ):
+         # fmt: off
+         T.device_entry()
+@@ -124,9 +127,14 @@
+             Dreg_f16 = T.alloc_local((MMA_N,), d_type)
+             Dreg_wg = Dreg.view(128, TMEM_LD_N,
+                 layout=TileLayout(S[(128, TMEM_LD_N) : (1@axis_tid_in_wg, 1)]))
++            profile_state = T.alloc_local((8,), "uint64")
+             while tile_scheduler.valid():
++                T.cuda.func_call("tirx_profile_start", profile_state.data, (warp_id == 0) & (lane_id == 0), source_code=PROFILE_SOURCE)
++                T.cuda.func_call("tirx_profile_mark", profile_state.data, (warp_id == 0) & (lane_id == 0), source_code=PROFILE_SOURCE)
+                 mma2ld.wait(wg_id, wb_phase.phase)
++                T.cuda.func_call("tirx_profile_add_wait", profile_state.data, (warp_id == 0) & (lane_id == 0), source_code=PROFILE_SOURCE)
+                 wb_phase.advance()
++                T.cuda.func_call("tirx_profile_mark", profile_state.data, (warp_id == 0) & (lane_id == 0), source_code=PROFILE_SOURCE)
+                 T.ptx.tcgen05.fence.after_thread_sync()
+                 for i in T.unroll(MMA_N // TMEM_LD_N):
+                     col = T.meta_var(i * TMEM_LD_N)
+@@ -136,6 +144,8 @@
+                 # All TMEM reads have finished. MMA can overlap the TMA epilogue.
+                 T.ptx.tcgen05.fence.before_thread_sync()
+                 ld2mma.arrive(wg_id, remote=0)
++                T.cuda.func_call("tirx_profile_add_work", profile_state.data, (warp_id == 0) & (lane_id == 0), source_code=PROFILE_SOURCE)
++                T.cuda.func_call("tirx_profile_mark", profile_state.data, (warp_id == 0) & (lane_id == 0), source_code=PROFILE_SOURCE)
+                 for i in T.unroll(MMA_N // EPI_N):
+                     col = T.meta_var(i * EPI_N)
+                     Tx.copy(Dsmem[wg_id, warp_id * 32 + lane_id, :], Dreg_f16[col:col + EPI_N])
+@@ -148,6 +158,8 @@
+                             T.ptx.cp_async.bulk.commit_group()
+                             T.ptx.cp_async.bulk.wait_group(0)
+                     T.cuda.warpgroup_sync(wg_id + 10)
++                T.cuda.func_call("tirx_profile_add_epilogue", profile_state.data, (warp_id == 0) & (lane_id == 0), source_code=PROFILE_SOURCE)
++                T.cuda.func_call("tirx_profile_finish", profile_state.data, Profile.ptr_to([bx, tile_scheduler.tile_count, wg_id, 0]), tile_scheduler.m_idx, tile_scheduler.n_idx, (warp_id == 0) & (lane_id == 0), source_code=PROFILE_SOURCE)
+                 tile_scheduler.next_tile()
+ 
+         T.cuda.cluster_sync()

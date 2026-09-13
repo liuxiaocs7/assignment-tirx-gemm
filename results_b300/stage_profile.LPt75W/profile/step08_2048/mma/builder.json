@@ -1,0 +1,28 @@
+{
+  "role": "mma",
+  "layout": {
+    "ctas": 148,
+    "clusters": 148,
+    "group": 1,
+    "consumers": 1,
+    "total_tiles": 256,
+    "max_tiles": 2,
+    "m_tiles": 16,
+    "n_tiles": 16
+  },
+  "fields": [
+    "start_ns",
+    "end_ns",
+    "wait_ns",
+    "work_ns",
+    "handoff_ns",
+    "epilogue_ns",
+    "start_cycles",
+    "end_cycles",
+    "sm_id",
+    "tile_m",
+    "tile_n"
+  ],
+  "before_sha256": "cacea229c20b03e792bb39a7514fa22dab60c04b164481f22c4b28ef52048540",
+  "compiled_sha256": "1039e3813abe4144fc13945ae8894479742559a79e4b43692c022af50345ee56"
+}
