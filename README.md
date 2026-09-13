@@ -8,7 +8,11 @@ rollback recovered the 2048-size regression; further performance work remains.
 The latest production Step 4/5 retest passes all 11 numerical checks and 9 tests
 overall. Early TMEM permit release fixes the 2048/4096 slow cases; both 1024
 performance assertions still fail (2.73% / 5.74% over the benchmark time limits).
-The next probe isolates TMA/MMA wait behavior on those two remaining shapes.
+The completed `wait1024.UP24Tv` probe reduces Step 5 / 1024 from 0.016515 to
+0.014513 ms with a 64 ns MMA-only wait hint; all five trials pass. Commit `9cfd9f3`
+adopts the measured helper; production GPU retesting across Step 5 shapes remains.
+Step 4 wait variants do not pass. The next probe independently tests its K tile,
+TMEM read width, and explicit loop unrolling.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 

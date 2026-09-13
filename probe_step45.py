@@ -1,10 +1,11 @@
-"""Controlled Step 4/5 CUDA-code experiments; not an assignment implementation.
+"""Controlled Step 4/5 experiments; not an assignment implementation.
 
-Each variant changes one thing after TVM lowering. The original gemm_kernels.py,
-compiler options, verification tolerances, and CUDA-event timer are unchanged.
+Each variant changes one thing in a saved builder or after TVM lowering.
+The original gemm_kernels.py, compiler options, verification tolerances,
+and CUDA-event timer are unchanged.
 Use a fresh --output directory. All actual compiler inputs/binaries are saved.
 Defaults target Step 4 at size 1024; Step 5 has adopted mma_wait_64ns.
-The historical early_release/no_k_unroll variants remain explicit opt-ins.
+The completed wait/early_release/no_k_unroll experiments remain explicit opt-ins.
 """
 
 import argparse
@@ -12,6 +13,7 @@ from contextlib import contextmanager
 import csv
 import difflib
 import hashlib
+import inspect
 import json
 from pathlib import Path
 import re
@@ -21,8 +23,81 @@ from benchmark_diagnostics import capture_compilation, run_metadata, write_json
 
 
 WAIT_VARIANTS = ("wait_64ns", "wait_poll", "tma_wait_64ns", "mma_wait_64ns")
-DEFAULT_VARIANTS = ("baseline", *WAIT_VARIANTS)
-VARIANTS = (*DEFAULT_VARIANTS, "early_release", "no_k_unroll")
+BUILDER_VARIANTS = ("k_tile_128", "tmem_load_64")
+STEP4_VARIANTS = (*BUILDER_VARIANTS, "unroll_k")
+DEFAULT_VARIANTS = ("baseline", *STEP4_VARIANTS)
+VARIANTS = (*DEFAULT_VARIANTS, *WAIT_VARIANTS, "early_release", "no_k_unroll")
+
+
+def replace_once(source, before, after):
+    if source.count(before) != 1:
+        raise ValueError("experiment no longer matches the Step 4 builder")
+    return source.replace(before, after)
+
+
+def variant_builder_source(source, variant):
+    """Change one Step 4 parameter/path; the saved diff makes it reviewable."""
+    if variant == "k_tile_128":
+        source = replace_once(source, "BLK_M, BLK_N, BLK_K = 128, 128, 64",
+                              "BLK_M, BLK_N, BLK_K = 128, 128, 128")
+        source = replace_once(source, "K % 64:", "K % 128:")
+        return replace_once(source, "K divisible by 64", "K divisible by 128")
+    if variant == "tmem_load_64":
+        source = replace_once(source, "    TMEM_COLS = BLK_N\n",
+                              "    TMEM_COLS = BLK_N\n    TMEM_LD_N = 64\n")
+        before = '''        Dreg = T.alloc_local((BLK_N,), acc_type)
+        Dreg_f16 = T.alloc_local((BLK_N,), d_type)
+        Dreg_wg = Dreg.view(128, BLK_N,
+            layout=TileLayout(S[(128, BLK_N) : (1@axis_tid_in_wg, 1)]))
+        Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])
+        T.ptx.tcgen05.wait.ld()
+        # Publish completed TMEM reads before CTA reuse or deallocation.
+        T.ptx.tcgen05.fence.before_thread_sync()
+        Tx.cast(Dreg_f16[:], Dreg[:])
+'''
+        after = '''        Dreg = T.alloc_local((TMEM_LD_N,), acc_type)
+        Dreg_f16 = T.alloc_local((BLK_N,), d_type)
+        Dreg_wg = Dreg.view(128, TMEM_LD_N,
+            layout=TileLayout(S[(128, TMEM_LD_N) : (1@axis_tid_in_wg, 1)]))
+        for chunk in T.unroll(BLK_N // TMEM_LD_N):
+            col = T.meta_var(chunk * TMEM_LD_N)
+            Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, col:col + TMEM_LD_N])
+            T.ptx.tcgen05.wait.ld()
+            Tx.cast(Dreg_f16[col:col + TMEM_LD_N], Dreg[:])
+        # Publish completed TMEM reads before CTA reuse or deallocation.
+        T.ptx.tcgen05.fence.before_thread_sync()
+'''
+        return replace_once(source, before, after)
+    raise ValueError(f"unsupported builder variant: {variant}")
+
+
+def build_variant(step, size, variant, directory):
+    import gemm_kernels
+
+    builder = getattr(gemm_kernels, f"hgemm_v{step}")
+    if variant in BUILDER_VARIANTS:
+        if step != 4:
+            raise ValueError(f"{variant} is a Step 4 experiment")
+        before = inspect.getsource(builder)
+        after = variant_builder_source(before, variant)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "builder.before.py").write_text(before)
+        (directory / "builder.patch").write_text("".join(difflib.unified_diff(
+            before.splitlines(keepends=True), after.splitlines(keepends=True),
+            fromfile="baseline.py", tofile=f"{variant}.py",
+        )))
+        # A real file lets TVMScript inspect the nested prim_func. The new
+        # namespace inherits imports, without replacing production builders.
+        path = directory / "builder.py"
+        path.write_text(after)
+        write_json(directory / "builder.json", dict(
+            before_sha256=hashlib.sha256(before.encode()).hexdigest(),
+            compiled_sha256=hashlib.sha256(after.encode()).hexdigest(),
+        ))
+        namespace = dict(vars(gemm_kernels))
+        exec(compile(after, str(path.resolve()), "exec"), namespace)
+        builder = namespace[f"hgemm_v{step}"]
+    return builder(size, size, size)
 
 
 def change_wait(header, body, step, variant):
@@ -76,12 +151,17 @@ def variant_source(source, step, variant):
     """Fail closed if a non-baseline experiment no longer matches TVM's output."""
     if step not in (4, 5) or variant not in VARIANTS:
         raise ValueError("only Step 4/5 and the declared variants are supported")
+    if variant in STEP4_VARIANTS and step != 4:
+        raise ValueError(f"{variant} is a Step 4 experiment")
     if variant == "baseline":
         return source
     marker = 'extern "C" __global__'
     if marker not in source:
         raise ValueError("CUDA kernel declaration was not found")
     header, body = source.split(marker, 1)
+    if variant in BUILDER_VARIANTS:
+        # The builder diff is saved separately. Capture the emitted CUDA as-is.
+        return source
     if variant == "early_release":
         # Same warp, after its only allocation; deallocation stays at the end.
         release = "    tvm_builtin_ptx_tcgen05_relinquish_alloc_permit_cta_group_1();\n"
@@ -95,12 +175,13 @@ def variant_source(source, step, variant):
         body = alloc.sub(lambda match: match.group() + release, body)
     elif variant in WAIT_VARIANTS:
         header, body = change_wait(header, body, step, variant)
-    elif variant == "no_k_unroll":
+    elif variant in ("no_k_unroll", "unroll_k"):
         name = "k" if step == 4 else "ring"
         loop = re.compile(rf"^( +)(for \(int {name} = 0; {name} < \d+; \+\+{name}\) \{{)$", re.M)
         if len(loop.findall(body)) != 1:
             raise ValueError(f"expected exactly one {name} loop; use a larger K")
-        body = loop.sub(lambda match: f"{match[1]}#pragma unroll 1\n{match[0]}", body)
+        pragma = "unroll 1" if variant == "no_k_unroll" else "unroll"
+        body = loop.sub(lambda match: f"{match[1]}#pragma {pragma}\n{match[0]}", body)
     return header + marker + body
 
 
@@ -176,6 +257,10 @@ def main(argv=None):
     if args.output.exists():
         parser.error("--output must be a fresh directory")
     variants = list(dict.fromkeys(("baseline", *args.variants)))
+    if 5 in args.steps and any(variant in STEP4_VARIANTS for variant in variants):
+        parser.error("new variants target Step 4; use benchmark.py --steps 5 for production Step 5")
+    if 5 in args.steps and any(variant in WAIT_VARIANTS for variant in variants):
+        parser.error("Step 5 has adopted mma_wait_64ns; use benchmark.py --steps 5")
 
     import torch
     import tvm
@@ -204,7 +289,7 @@ def main(argv=None):
     for step in dict.fromkeys(args.steps):
         for variant in variants:
             directory = args.output / f"step{step:02d}_{args.size}_{variant}"
-            kernel = getattr(gemm_kernels, f"hgemm_v{step}")(args.size, args.size, args.size)
+            kernel = build_variant(step, args.size, variant, directory)
             # NaNs make any uninitialized output fail verification.
             output = torch.full((args.size, args.size), float("nan"), dtype=A.dtype, device=A.device)
             with target:

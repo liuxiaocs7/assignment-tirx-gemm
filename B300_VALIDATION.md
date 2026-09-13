@@ -1,6 +1,93 @@
 # B300 验证记录与性能诊断
 
-## 最新正式复测：early_release.dz3roD
+## 最新等待对照：wait1024.UP24Tv
+
+数据：[summary.csv](results_b300/wait1024.UP24Tv/probe/summary.csv)、
+[samples.json](results_b300/wait1024.UP24Tv/probe/samples.json)、
+[run.json](results_b300/wait1024.UP24Tv/probe/run.json)。
+
+**没有整体回退：Step 5 找到了稳定有效的 MMA 等待调整，Step 4 仍未达标。**
+运行版本 `c853534`，内核 SHA256 与前一轮 `early_release.dz3roD` 相同。
+记录虽为 dirty，内核和工具文件的指纹均与该提交一致。
+10 个独立版本全部通过初始数值验证及计时后的输出重用验证。
+
+| Step / 1024 | 变体 | 中位数 ms | 配对加速比 | 五轮结果 |
+|---|---|---|---|---|
+| 4 | baseline | 0.022713 | 1.000× | 全部 SLOW |
+| 4 | 两类等待 64 ns | 0.022605 | 1.005× | 全部 SLOW |
+| 4 | 仅 TMA 64 ns | 0.022688 | 1.002× | 全部 SLOW |
+| 4 | 仅 MMA 64 ns | 0.022699 | 1.001× | 全部 SLOW |
+| 4 | 持续轮询 | 0.023085 | 0.991× | 全部 SLOW |
+| 5 | baseline | 0.016515 | 1.000× | 全部 SLOW |
+| 5 | 两类等待 64 ns | 0.014947 | 1.105× | 全部 PASS |
+| 5 | 仅 TMA 64 ns | 0.016495 | 1.000× | 全部 SLOW |
+| 5 | **仅 MMA 64 ns** | **0.014513** | **1.137×** | **全部 PASS** |
+| 5 | 持续轮询 | 0.017083 | 0.967× | 全部 SLOW |
+
+Step 5 的耗时中位数减少 **12.12%**，最慢一轮 0.014854 ms，仍低于 0.015600 ms 门槛
+约 4.78%。这将收益定位到 MMA completion 等待路径；不能据此断言具体的硬件 stall 原因。
+所有版本的编译选项相同，cubin 均为 `REG:164 STACK:0 SHARED:1024 LOCAL:0`。
+Step 4 的四种等待实验都未解决问题；其中轮询变慢。实验之间独立，不会逐项叠加到正式内核。
+
+### Step 5 已采用实测改动
+
+`9cfd9f3` 只调整 Step 5 的 MMA 等待。通过 `T.cuda.func_call` 嵌入局部 helper，
+保留测过的 PTX retry loop、parity 和默认 acquire.cta 语义；TMA 等待保持原样。
+64 ns 是挂起时间提示，等待仍须反复检查直到 MMA 完成，不能超时后继续使用未完成结果。
+文件保持自包含，不覆盖 TVM 全局 codegen，也不依赖 probe 的编译补丁。
+
+源码对照检查在修改前失败、修改后通过：生成的 1024 CUDA 主体和两个 wait helper
+与实测版本一致（仅新 helper 名不同）。该提交的 **98 项本地检查通过**。
+这不是正式内核的 GPU 复测；512、2048、4096 及短 K 尚需确认有无回退。
+
+### 下一轮：Step 5 验收与 Step 4 独立对照
+
+Step 4 / 1024 baseline 超过 0.022100 ms 门槛约 **0.613 µs / 2.77%**。
+等待实验的收益不足，下一轮按以下可区分的预测分别测试，不组合变体：
+
+1. 若每个 K tile 的串行 TMA/MMA 同步限制速度，`k_tile_128` 将 BLK_K 从 64 增到 128，
+   把 16 轮降到 8 轮，应减少耗时。仍只有一组 A/B SMEM，加载和计算不重叠。
+   代价是 A/B SMEM 用量翻倍；TMA 映射由 TVM 重新生成，byte count 同步从 32768 改为 65536。
+2. 若写回时的寄存器存活量/调度限制速度，`tmem_load_64` 将 x128 TMEM 读取拆为两次 x64，
+   分段转为 FP16，应减少耗时。仍使用完整 128 列 Dsmem 和一次 TMA store；多一次 TMEM wait
+   也可能抵消收益。以实际 cubin 资源报告和耗时检验，不将无 spill 等同于无寄存器影响。
+3. 若 K 循环控制或动态条件限制速度，`unroll_k` 仅增加显式展开提示，应优于 baseline。
+   原来的 `no_k_unroll` 在 2048 更慢，但这不足以证明显式展开在 1024 有效。
+
+新 probe 默认仅测 Step 4 的 baseline 和这三个独立变体，仍为 5 轮交错计时，
+每轮预热 10 次、计时 30 次。builder 改动单独保存 `.py`、diff 和 SHA256；
+所有版本都保存实际 CUDA、编译选项、cubin、资源报告和逐轮耗时。
+Step 4 正式内核保持原样，原评分门槛和计时方法保持不变。
+本地 **106 项工具及源码检查通过**；新实验尚无 B300 数值/性能结果。
+
+同步本次提交后，在服务器顺序执行：
+
+```bash
+cd ~/assignment-tirx-gemm
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/mma64_step4.XXXXXX)
+git log -3 --oneline
+
+# Step 5：4 个评分尺寸及 K=64/192/320，共 7 项原有 GPU 用例
+uv run python -m pytest tests/test_step05.py -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest_step05.log"
+
+# Step 5：确认各尺寸是否稳定，并保留正式编译产物
+uv run python -u benchmark.py --steps 5 --trials 5 \
+  --csv "$tirx_run/step05.csv" --diagnostics-dir "$tirx_run/compiler_step05" \
+  2>&1 | tee "$tirx_run/benchmark_step05.log"
+
+# Step 4：只测尚未解决的 1024，4 个版本
+uv run python -u probe_step45.py --steps 4 --size 1024 \
+  --output "$tirx_run/probe" 2>&1 | tee "$tirx_run/probe.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+回传该目录即可。这轮只验证 Step 5 和定位 Step 4，不能据此认定全部 49 项已达标。
+旧等待 probe 保留供历史复现，但会拒绝对已采用该改动的 Step 5 重复应用。
+
+## 上一轮正式复测：early_release.dz3roD
 
 数据：[pytest.log](results_b300/early_release.dz3roD/pytest.log)、
 [focus.csv](results_b300/early_release.dz3roD/focus.csv)、
@@ -43,9 +130,9 @@ Step 4 / 1024 五轮最低 0.022646 ms，Step 5 / 1024 最低 0.016463 ms，都�
 3. 若潜在挂起和恢复本身限制短循环，保持 acquire 语义的非阻塞 `test_wait` 轮询应优于当前 `try_wait`。
    若没有改善或变慢，该方向不采纳，再定位其他路径。
 
-### 下一轮仅测 1024 等待路径
+### 当时的 1024 等待实验（现已完成）
 
-更新后的 [probe_step45.py](probe_step45.py) 默认用当前正式内核作 baseline，
+`c853534` 的 [probe_step45.py](probe_step45.py) 当时用正式内核作 baseline，
 保留 early_release，并比较以下独立变体：
 
 | 变体 | 相对当前内核的唯一改动 |
@@ -60,7 +147,7 @@ Step 4 / 1024 五轮最低 0.022646 ms，Step 5 / 1024 最低 0.016463 ms，都�
 规定 test_wait 为非阻塞检查，try_wait 可以挂起；未写 `.sem` / `.scope` 时默认 `.acquire.cta`。
 缩短时间提示不会允许提前使用未完成的数据。
 
-同步最新脚本后执行这一条 probe；无需再完整跑 Step 4、5：
+以下是当时的命令，结果已回传为 `wait1024.UP24Tv`，无需重复执行：
 
 ```bash
 cd ~/assignment-tirx-gemm
@@ -75,8 +162,7 @@ printf '结果目录：%s\n' "$tirx_run"
 默认两个 step 各 5 个版本，共 10 次编译，5 轮交错计时，每轮仍预热 10 次、计时 30 次。
 各版本先验算，复用输出后再次验算；保存源码差异、实际 cubin、资源报告及逐轮耗时。
 回传整个目录，重点看 `probe.log` 与 `probe/summary.csv`。
-当前只有本地生成代码和工具验证，**1024 等待变体尚无 B300 实测结果**；
-正式内核没有新增未经测量的等待改动。证明有收益后再按 step 落地，并检查其他尺寸是否回退。
+这轮实验已完成，Step 5 的 MMA 等待改动已采用，详见本文开头。
 
 ## 已完成对照：step45_probe.PS9CFi
 
@@ -130,7 +216,7 @@ printf '结果目录：%s\n' "$tirx_run"
 新增的实测源码对照在修改前失败、修改后通过：2048 形状生成的 CUDA kernel 主体
 与回传的 early_release 源码逐字一致。全部 **82 项本地工具及源码生成检查通过**，
 包括 SM100/SM103 lowering、边界形状构建和编译回调恢复。
-本机没有 NVIDIA GPU；正式版本后续的评分尺寸与短 K 实测已记录于本文开头，仍剩两个 1024 慢项。
+本机没有 NVIDIA GPU；该版本后续的评分尺寸与短 K 实测见 `early_release.dz3roD`，当时剩两个 1024 慢项。
 
 以下为 `early_release.dz3roD` 已完成的正式内核复测命令：
 
@@ -156,7 +242,7 @@ Step 6–10 本轮未改动，后续仍需解决已记录的性能失败。
 
 **不再重跑原 early_release 对照**：正式内核已包含该改动。工具会拒绝把相同变换重复应用，
 避免把相同代码误当作一次新的对照。原实验如需复现，应使用 `683da59` 的完整版本；
-最新脚本的默认实验已改为 1024 等待路径对照。
+最新脚本的默认实验见本文开头的 Step 4 独立对照。
 
 ## 前轮诊断：tmem128.OZkJOD
 

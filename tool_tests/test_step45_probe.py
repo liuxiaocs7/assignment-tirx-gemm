@@ -7,8 +7,9 @@ import sys
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-from probe_step45 import (DEFAULT_VARIANTS, VARIANTS, WAIT_VARIANTS, main, source_experiment,
-                          summarize, trial_order, variant_source)
+from probe_step45 import (BUILDER_VARIANTS, DEFAULT_VARIANTS, VARIANTS, WAIT_VARIANTS,
+                          build_variant, main, source_experiment, summarize, trial_order,
+                          variant_builder_source, variant_source)
 
 
 @pytest.fixture(scope="module", params=[4, 5])
@@ -129,8 +130,8 @@ def test_recorded_1024_wait_probe_preserves_kernel_protocol(step, variant):
         assert header.replace("unsigned int ticks = 64;", "unsigned int ticks = 0x989680;") == original_header
 
 
-def test_defaults_target_waits_on_the_current_kernel():
-    assert DEFAULT_VARIANTS == ("baseline", *WAIT_VARIANTS)
+def test_defaults_target_remaining_step4_case():
+    assert DEFAULT_VARIANTS == ("baseline", "k_tile_128", "tmem_load_64", "unroll_k")
     assert "early_release" not in DEFAULT_VARIANTS
 
 
@@ -143,10 +144,61 @@ def test_adopted_mma_wait_rejects_historical_wait_experiments(variant):
         variant_source(source, 5, variant)
 
 
-@pytest.mark.parametrize("variant", VARIANTS[1:])
+@pytest.mark.parametrize("variant", [v for v in VARIANTS[1:] if v not in BUILDER_VARIANTS])
 def test_changed_compiler_format_fails_closed(variant):
     with pytest.raises(ValueError):
         variant_source('extern "C" __global__ void different() {}', 4, variant)
+
+
+@pytest.mark.parametrize("variant", BUILDER_VARIANTS)
+def test_changed_builder_format_fails_closed(variant):
+    with pytest.raises(ValueError):
+        variant_builder_source("def changed(): pass", variant)
+
+
+@pytest.mark.parametrize("variant", ["k_tile_128", "tmem_load_64", "unroll_k"])
+def test_step4_experiments_lower_and_preserve_single_buffer_protocol(variant, tmp_path):
+    tvm = pytest.importorskip("tvm")
+    import gemm_kernels
+    from test_step45_adoption import generated_source
+
+    original_builder = gemm_kernels.hgemm_v4
+    kernel = build_variant(4, 1024, variant, tmp_path)
+    assert gemm_kernels.hgemm_v4 is original_builder
+    target = tvm.target.Target({"kind": "cuda", "arch": "sm_103a"})
+    with target:
+        executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
+    source = variant_source(executable.mod.imports[0].inspect_source(), 4, variant)
+    marker = 'extern "C" __global__'
+    body = source.split(marker, 1)[1]
+    baseline = generated_source(4, 1024).split(marker, 1)[1]
+    # Both MMA and TMA still complete before the next K tile reuses SMEM.
+    wait = "tvm_builtin_ptx_mbarrier_try_wait"
+    assert body.count(wait + "(") == 2
+    load = body.index("ptx_cp_async_bulk_tensor_g2s_cluster_tile_")
+    tma_wait = body.index(wait + "(", load)
+    mma = body.index("ptx_tcgen05_mma_cta_1_kind_f16_SS(", tma_wait)
+    mma_wait = body.index(wait + "(", mma)
+    assert load < tma_wait < mma < mma_wait
+    if variant == "k_tile_128":
+        assert "k < 8" in body and "k < 16" in baseline
+        assert body.count("ptx_tcgen05_mma_cta_1_kind_f16_SS(") == 8
+        assert "[1])), 65536);" in body  # Updated TMA byte count.
+        assert "[1])), 32768);" in baseline
+    elif variant == "tmem_load_64":
+        # Main loop and output TMA store/cleanup remain exactly the baseline.
+        marker = "  alignas(64) float Dreg_ptr["
+        assert body.split(marker)[0] == baseline.split(marker)[0]
+        marker = "  alignas(64) int s_off_ptr[1];"
+        # The second cast loop shifts TVM's later loop-variable suffix by one.
+        assert body.split(marker)[1].replace("f_2", "f_1") == baseline.split(marker)[1]
+        assert "float Dreg_ptr[64]" in body and "half Dreg_f16_ptr[128]" in body
+        assert body.count("tvm_builtin_ptx_tcgen05_ld_32x32b_x64(") == 2
+        assert body.count("tvm_builtin_ptx_tcgen05_wait_ld();") == 2
+    else:
+        assert body.replace("      #pragma unroll\n", "") == baseline
+    if variant in BUILDER_VARIANTS:
+        assert (tmp_path / "builder.patch").read_text().startswith("--- baseline.py")
 
 
 def test_interleaved_results_use_same_trial_baseline():
@@ -163,7 +215,8 @@ def test_interleaved_results_use_same_trial_baseline():
 
 
 @pytest.mark.parametrize("argv", [["--trials", "0"], ["--repeat", "0"], ["--warmup", "-1"],
-                                  ["--size", "123"], ["--steps", "6"]])
+                                  ["--size", "123"], ["--steps", "6"], ["--steps", "5"],
+                                  ["--steps", "5", "--variants", "mma_wait_64ns"]])
 def test_invalid_arguments_fail_before_gpu_imports(tmp_path, argv):
     with pytest.raises(SystemExit) as error:
         main(["--output", str(tmp_path / "new"), *argv])
