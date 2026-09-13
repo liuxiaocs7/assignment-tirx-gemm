@@ -465,6 +465,8 @@ def hgemm_v5(M, N, K):
     acc_type = tvm.DataType("float32")
     BLK_M, BLK_N, BLK_K = 128, 128, 64
     K_TILES = K // BLK_K
+    # Two SMEM stages share one 128-column accumulator, not 512 columns.
+    TMEM_COLS = BLK_N
     PIPE_DEPTH = 2
     PRE_NUM = min(PIPE_DEPTH, K_TILES)
     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_M, BLK_K))
@@ -498,12 +500,12 @@ def hgemm_v5(M, N, K):
                 for s in T.unroll(PIPE_DEPTH):
                     T.ptx.mbarrier.init(tma_bar.ptr_to([s]), 1)
                 T.ptx.mbarrier.init(mma_bar.ptr_to([0]), 1)
-            T.ptx.tcgen05.alloc(T.address_of(tmem_addr), n_cols=512, cta_group=1)
+            T.ptx.tcgen05.alloc(T.address_of(tmem_addr), n_cols=TMEM_COLS, cta_group=1)
         T.ptx.fence.proxy_async("shared::cta")
         T.ptx.fence.mbarrier_init()
         T.cuda.cta_sync()
-        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=tmem_addr[0],
-            layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
+        tmem = T.decl_buffer((128, TMEM_COLS), acc_type, scope="tmem", allocated_addr=tmem_addr[0],
+            layout=TileLayout(S[(128, TMEM_COLS) : (1@TLane, 1@TCol)]))
         m_st = T.meta_var(bx * BLK_M)
         n_st = T.meta_var(by * BLK_N)
         phase_mma: T.int32
@@ -569,7 +571,7 @@ def hgemm_v5(M, N, K):
         T.cuda.cta_sync()
         if warp_id == 0:
             T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
-            T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=512, cta_group=1)
+            T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=TMEM_COLS, cta_group=1)
 
     return kernel
 
