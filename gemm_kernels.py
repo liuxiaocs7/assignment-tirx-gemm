@@ -414,10 +414,11 @@ def hgemm_v4(M, N, K):
                     T.ptx.tcgen05.fence.after_thread_sync()
                     mma(k != 0)
                     T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
-                    T.ptx.tcgen05.fence.after_thread_sync()
-                    T.ptx.tcgen05.fence.before_thread_sync()
                     phase_tma = phase_tma ^ 1
                     phase_mma = phase_mma ^ 1
+                # Only the final MMA completion is handed off to writeback threads.
+                T.ptx.tcgen05.fence.after_thread_sync()
+                T.ptx.tcgen05.fence.before_thread_sync()
 
         # Publish the elected thread's completion to all writeback threads.
         T.cuda.cta_sync()
