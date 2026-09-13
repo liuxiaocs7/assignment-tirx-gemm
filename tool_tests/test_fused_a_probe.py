@@ -11,13 +11,13 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
 from probe_persistent import build_variant, select_variants, VERIFICATION_SHAPES, fuse_consumer_a_loads
 from test_cache_followup_probe import expand_cse
-from test_persistent_probe import body
+from test_persistent_probe import body, pre_adoption_step10
 
 
 @pytest.mark.parametrize('arch', ['sm_100a', 'sm_103a'])
 @pytest.mark.parametrize('shape', [*VERIFICATION_SHAPES['balanced_fused_a'],
                                    (1024,) * 3, (2048,) * 3, (4096,) * 3, (8192,) * 3])
-def test_fused_a_descriptor_addresses_and_consumer_protocol(arch, shape, tmp_path, monkeypatch):
+def test_fused_a_descriptor_addresses_and_consumer_protocol(arch, shape, tmp_path, monkeypatch, pre_adoption_step10):
     tvm = pytest.importorskip('tvm')
     tma = importlib.import_module('tvm.backend.cuda.tile_primitive.copy_async.tma')
     emit = tma._emit_plan
@@ -129,12 +129,11 @@ def test_fused_a_descriptor_addresses_and_consumer_protocol(arch, shape, tmp_pat
             assert str(getattr(before, field)) == str(getattr(after, field))
 
 
-def test_fused_a_requires_exact_producer_and_keeps_control_chain(tmp_path):
+def test_fused_a_requires_exact_producer_and_keeps_control_chain(tmp_path, pre_adoption_step10):
     pytest.importorskip('tvm')
     build_variant(10, (4096,) * 3, 'balanced_fused_a', tmp_path)
     changed = (tmp_path / 'builder.py').read_text()
     with pytest.raises(ValueError):
         fuse_consumer_a_loads(changed)
     expected = ['baseline', 'cache_tmem_base', 'cache_balanced_clusters', 'balanced_fused_a']
-    assert select_variants(10) == expected
     assert select_variants(10, ['balanced_fused_a']) == expected

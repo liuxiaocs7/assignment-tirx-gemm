@@ -57,6 +57,13 @@ def install_recorded_builder(step, monkeypatch):
     monkeypatch.setattr(gemm_kernels, name, namespace[name])
 
 
+@pytest.fixture
+def pre_adoption_step10(monkeypatch):
+    """Historical probes must keep their recorded baseline after adoption."""
+    pytest.importorskip("tvm")
+    install_recorded_builder(10, monkeypatch)
+
+
 @pytest.mark.parametrize("step", [6, 7, 10])
 @pytest.mark.parametrize("size", [1024, 2048, 4096, 8192])
 def test_recorded_mma_wait_changes_only_selected_calls(step, size):
@@ -178,7 +185,7 @@ def test_adopted_step8_experiment_is_not_applied_again(variant, tmp_path):
 
 
 @pytest.mark.parametrize("variant", ["tmem_load_64", "l2_group_4", "balanced_clusters"])
-def test_step10_new_experiments_preserve_data_and_barrier_protocol(variant, tmp_path):
+def test_step10_new_experiments_preserve_data_and_barrier_protocol(variant, tmp_path, pre_adoption_step10):
     pytest.importorskip("tvm")
     import gemm_kernels
 
@@ -211,7 +218,7 @@ def test_step10_new_experiments_preserve_data_and_barrier_protocol(variant, tmp_
 @pytest.mark.parametrize("M,N,clusters", [(1024, 1024, 8), (2048, 2048, 32),
                                          (4096, 4096, 64), (8192, 8192, 74),
                                          (4096, 3072, 48)])
-def test_balanced_grid_launch_matches_persistent_stride(M, N, clusters, tmp_path, monkeypatch):
+def test_balanced_grid_launch_matches_persistent_stride(M, N, clusters, tmp_path, monkeypatch, pre_adoption_step10):
     pytest.importorskip("tvm")
     import gemm_kernels
 
@@ -248,8 +255,7 @@ def test_tma_wait_only_changes_data_ready_barrier(step, size):
 @pytest.mark.parametrize("step,size", [(8, 2048), (10, 4096)])
 def test_recorded_tma_experiment_lowers_to_recorded_protocol(step, size, tmp_path, monkeypatch):
     pytest.importorskip("tvm")
-    if step == 8:
-        install_recorded_builder(step, monkeypatch)
+    install_recorded_builder(step, monkeypatch)
     actual = generate(build_variant(step, (size,) * 3, "tma_wait_64ns", tmp_path))
     assert body(actual) == body(recorded_source(step, size))
     assert body(variant_source(actual, step, "tma_wait_64ns")) == body(

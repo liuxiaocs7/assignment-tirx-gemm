@@ -12,6 +12,7 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
 from probe_persistent import build_variant, variant_source
 from profile_persistent import layout, trace_records, summarize_traces
+from test_persistent_probe import install_recorded_builder
 
 PROFILE = ROOT / "results_b300/stage_profile.LPt75W/profile"
 
@@ -35,12 +36,14 @@ def test_cached_tmem_base_is_published_before_snapshot_and_keeps_all_operations(
     pytest.importorskip("tvm")
     import gemm_kernels
 
-    # Replay the pre-adoption Step 8 builder; Step 10 is still experimental.
+    # Replay the measured pre-adoption builders for both cache experiments.
     if step == 8:
         path = ROOT / "results_b300/profile_guided.6KUfDZ/step08/step08_2048_baseline/builder.py"
         namespace = dict(vars(gemm_kernels))
         exec(compile(path.read_text(), str(path), "exec"), namespace)
         monkeypatch.setattr(gemm_kernels, "hgemm_v8", namespace["hgemm_v8"])
+    else:
+        install_recorded_builder(step, monkeypatch)
     baseline = body(generate(getattr(gemm_kernels, f"hgemm_v{step}")(*shape)))
     actual = body(generate(build_variant(step, shape, "cache_tmem_base", tmp_path)))
     load = "uint mma_tmem_base = ((uint*)pool_buf_ptr)[0];"
@@ -87,7 +90,9 @@ def test_wait_controls_replay_measured_cuda_and_leave_writeback_waits_intact(ste
 @pytest.mark.parametrize("step,size", [(8, 2048), (10, 4096)])
 @pytest.mark.parametrize("role", ["tma", "mma", "writeback"])
 def test_uploaded_trace_reconstructs_complete_tile_coverage_and_published_summary(step, size, role):
-    info = layout(step, (size,) * 3, 148)
+    # Historical traces retain the grid they actually ran (74 clusters for
+    # Step 10), not today's balanced production grid.
+    info = json.loads((PROFILE / f"step{step:02}_{size}/{role}/builder.json").read_text())["layout"]
     rows = []
     fields = ("start_ns", "end_ns", "wait_ns", "work_ns", "handoff_ns", "epilogue_ns",
               "start_cycles", "end_cycles", "sm_id", "tile_m", "tile_n")

@@ -9,7 +9,7 @@ import pytest
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
 from probe_persistent import build_variant, variant_source, summarize_with_cache_control
-from test_persistent_probe import body, generate, canonicalize_codegen_locals
+from test_persistent_probe import body, generate, canonicalize_codegen_locals, pre_adoption_step10
 
 RECORDED = ROOT / "results_b300/profile_guided.6KUfDZ/step10/step10_4096_cache_tmem_base"
 
@@ -24,7 +24,7 @@ def expand_cse(code):
     return canonicalize_codegen_locals(code)
 
 
-def test_cache_control_replays_actual_b300_compiler_input(tmp_path):
+def test_cache_control_replays_actual_b300_compiler_input(tmp_path, pre_adoption_step10):
     pytest.importorskip("tvm")
     actual = generate(build_variant(10, (4096,) * 3, "cache_tmem_base", tmp_path))
     assert body(actual) == body((RECORDED / "module_01.cu").read_text())
@@ -33,7 +33,7 @@ def test_cache_control_replays_actual_b300_compiler_input(tmp_path):
 @pytest.mark.parametrize("variant,control", [("cache_unroll_ring", "unroll_ring"),
                                             ("cache_balanced_clusters", "balanced_clusters")])
 @pytest.mark.parametrize("K", [64, 320, 768, 4096])
-def test_cached_combinations_keep_existing_protocol_and_partial_ring(variant, control, K, tmp_path):
+def test_cached_combinations_keep_existing_protocol_and_partial_ring(variant, control, K, tmp_path, pre_adoption_step10):
     pytest.importorskip("tvm")
     shape = (4096, 3072, K)
     original = body(generate(build_variant(10, shape, control, tmp_path / "control")))
@@ -66,7 +66,7 @@ def test_mma_no_unroll_changes_only_measured_mma_loop():
 
 
 @pytest.mark.parametrize("size", [1024, 4096, 8192])
-def test_mma_no_unroll_builds_cached_input_and_preserves_all_operands(size, tmp_path):
+def test_mma_no_unroll_builds_cached_input_and_preserves_all_operands(size, tmp_path, pre_adoption_step10):
     pytest.importorskip("tvm")
     original = generate(build_variant(10, (size,) * 3, "cache_tmem_base", tmp_path / "control"))
     source = generate(build_variant(10, (size,) * 3, "cache_mma_no_unroll", tmp_path / "experiment"))

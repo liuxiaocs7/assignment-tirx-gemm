@@ -1267,7 +1267,12 @@ def hgemm_v10(M, N, K):
     EPI_N = 64
     TMEM_LD_N = 32  # Eight loads per consumer, with separate FP16 row buffers.
     WG_NUMBER = 3
-    CLUSTER_COUNT = min(SM_COUNT // CTA_GROUP, (M // (MMA_M * NUM_CONSUMER)) * (N // MMA_N))
+    # Preserve the maximum tiles per cluster while reducing the partial tail.
+    # For 4096 on 148 SMs, 128 tiles use 64 clusters with two tiles each.
+    TOTAL_TILES = (M // (MMA_M * NUM_CONSUMER)) * (N // MMA_N)
+    MAX_CLUSTERS = SM_COUNT // CTA_GROUP
+    TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS
+    CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER
     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
     D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (NUM_CONSUMER, BLK_M, EPI_N))
@@ -1309,7 +1314,9 @@ def hgemm_v10(M, N, K):
         T.ptx.fence.mbarrier_init()
         T.cuda.cta_sync()
         T.cuda.cluster_sync()
-        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=tmem_addr[0],
+        # The allocation result is immutable after the cluster sync.
+        mma_tmem_base: T.let = tmem_addr[0]
+        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=mma_tmem_base,
             layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
 
         tile_scheduler = ClusterPersistentScheduler2D(

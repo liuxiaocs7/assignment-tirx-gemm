@@ -93,6 +93,9 @@ def layout(step, shape, sm_count):
         raise ValueError("shape or SM count does not match the production grid")
     total = (M // tile_m) * (N // tile_n)
     clusters = min(sm_count // group, total)
+    if step == 10:
+        tiles_per_cluster = (total + clusters - 1) // clusters
+        clusters = (total + tiles_per_cluster - 1) // tiles_per_cluster
     return dict(ctas=clusters * group, clusters=clusters, group=group,
                 consumers=consumers, total_tiles=total,
                 max_tiles=(total + clusters - 1) // clusters,

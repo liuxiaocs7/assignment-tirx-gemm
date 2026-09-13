@@ -1,9 +1,9 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
-Step 8 passed its focused production tests. The latest Step 10 depth/epilogue
-experiments did not pass. The default now isolates one TMA issue reduction:
-load both consumers' A blocks with one 3-D box against the measured cached,
-balanced-grid control. Historical experiments remain opt-in.
+Steps 8 and 10 now use the measured TMEM base cache; Step 10 also uses the
+balanced cluster grid. The fused A experiment was slower than that control.
+Defaults measure production baselines. Adopted transforms refuse reapplication;
+validate production using benchmark.py and tests/test_step10.py.
 No production kernel is edited by this tool.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
@@ -37,8 +37,7 @@ STEP_VARIANTS = {
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "cache_tmem_base", "cache_balanced_clusters",
-                              "balanced_fused_a")}
+                         10: ("baseline",)}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -265,6 +264,9 @@ def variant_builder_source(source, step, variant):
         return replace_once(source, "l2_group_size=8, num_clusters=CLUSTER_COUNT",
                             "l2_group_size=4, num_clusters=CLUSTER_COUNT")
     if variant == "balanced_clusters":
+        if "TILES_PER_CLUSTER =" in source:
+            raise ValueError(f"Step {step} has adopted balanced_clusters; validate the production kernel "
+                             f"with benchmark.py --steps {step} and tests/test_step{step:02d}.py")
         # Keep the original maximum number of tiles per cluster while using
         # the smallest grid that can cover them. At 4096: 128 tiles / 64
         # clusters = two each, versus 54 clusters with two and 20 with one.

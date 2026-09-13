@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT))
 from probe_persistent import (build_variant, DEPTH3_VERIFY_SHAPES, select_variants,
                               summarize_with_cache_control)
 from test_cache_followup_probe import expand_cse
-from test_persistent_probe import body
+from test_persistent_probe import body, pre_adoption_step10
 
 RECORDED = ROOT / 'results_b300/cache_step8_step10.FwqbDd/step10'
 
@@ -23,7 +23,7 @@ def generate(kernel, arch):
     return body(result.mod.imports[0].inspect_source())
 
 
-def test_balanced_control_replays_uploaded_compiler_input(tmp_path):
+def test_balanced_control_replays_uploaded_compiler_input(tmp_path, pre_adoption_step10):
     pytest.importorskip('tvm')
     actual = generate(build_variant(10, (4096,) * 3, 'cache_balanced_clusters', tmp_path), 'sm_103a')
     expected = body((RECORDED / 'step10_4096_cache_balanced_clusters/module_01.cu').read_text())
@@ -32,7 +32,7 @@ def test_balanced_control_replays_uploaded_compiler_input(tmp_path):
 
 @pytest.mark.parametrize('arch', ['sm_100a', 'sm_103a'])
 @pytest.mark.parametrize('shape', [*DEPTH3_VERIFY_SHAPES, (4096,) * 3])
-def test_depth3_preserves_ring_handoff_and_wider_epilogue_preserves_producers(arch, shape, tmp_path):
+def test_depth3_preserves_ring_handoff_and_wider_epilogue_preserves_producers(arch, shape, tmp_path, pre_adoption_step10):
     pytest.importorskip('tvm')
     sources = []
     for variant, epi, dynamic_bytes, stores in [('balanced_depth3', 64, 181248, 4),
