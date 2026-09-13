@@ -30,18 +30,21 @@
 但 pytest 仍为 6 passed / 5 failed，主要性能项没有改善。
 `step45_probe.PS9CFi` 的独立对照显示，alloc 后提前 relinquish 使 Step 4、5 / 2048
 分别加速 1.776×、1.352×，五轮全部达标。`142c601` / `43124ff` 已将其落到正式内核。
-最新正式复测 `early_release.dz3roD` 为 **9 passed / 2 failed**，11 项数值检查全部通过，
+此前正式复测 `early_release.dz3roD` 为 **9 passed / 2 failed**，11 项数值检查全部通过，
 剩余两项是 Step 4、5 / 1024 的性能断言；2048 与 4096 的改善已确认。
 `wait1024.UP24Tv` 已将 Step 5 的收益定位到 MMA 等待：1024 中位耗时
 0.016515 → 0.014513 ms，五轮全部达标；Step 4 的等待变体全部未达标。
 `9cfd9f3` 已采用 Step 5 的局部 64 ns 等待 helper。
-下一轮运行 [Step 5 验收与 Step 4 独立对照](B300_VALIDATION.md#下一轮step-5-验收与-step-4-独立对照)，
-检查 Step 5 其他尺寸有无回退，再测 Step 4 的 K tile、TMEM 读取宽度、循环展开三个独立变体。
-尚不能认定全部 49 项达标。
+最新 `mma64_step4.dh9ZC8` 确认 **Step 5 的 7 项测试全部通过**，四个评分尺寸各五轮全过。
+Step 4 / 1024 的 K tile 128 变体为 0.018613 ms，配对加速 1.220×，五轮全过；
+分块 TMEM 读取和显式循环展开均无收益。`9db8b87` 已采用 K tile 改动，并保留 K%128≠0 的
+64 宽度路径。下一轮执行 [Step 4 验收](B300_VALIDATION.md#step-4-已采用与下一轮命令)，
+确认其他尺寸和新增边界用例，再跑完整套件更新 Step 6–10 的剩余性能项。
+当前增加了 4 个 Step 4 边界用例，共 53 个 GPU 用例，尚未全部通过。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（18 个 CLI 用例、36 个构建和源码生成用例、9 个诊断工具用例、41 个对照实验工具用例、
-2 个实测 CUDA 主体/helper 对照用例，共 106 项；
+（18 个 CLI 用例、40 个构建和源码生成用例、9 个诊断工具用例、42 个对照实验工具用例、
+4 个实测 CUDA 主体/helper 及 fallback 对照用例，共 113 项；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
@@ -62,7 +65,7 @@ uv run python -c "import sys, tvm, gemm_kernels; print(sys.executable); print(tv
 # 快速获得所有 step 的 37 组正确性检查、性能、cuBLAS 对照和 CSV
 uv run python -u benchmark.py --steps all --trials 1 --csv results/all_steps.csv 2>&1 | tee results/benchmark.log
 
-# 完整验收：49 个 GPU 用例，包含 12 个额外边界用例
+# 完整验收：53 个 GPU 用例，包含 16 个额外边界用例
 uv run python -m pytest tests/ -v -s --tb=short 2>&1 | tee results/pytest.log
 ```
 
@@ -178,13 +181,13 @@ SH
 python -m pytest tests/ -xvs
 ```
 
-当前共有 **49 个 GPU 用例**。其中原有 37 个用例依次执行：
+当前共有 **53 个 GPU 用例**。其中原有 37 个用例依次执行：
 
 1. 编译并运行 TIRX 内核。
 2. 与 `torch.matmul(A, B.T)` 比较，要求 `rtol=1e-3, atol=1e-2`。
 3. 预热 10 次，CUDA event 测量 30 次，要求平均耗时不超过参考值的 `1.30` 倍。
 
-其余 12 个新增边界用例只检查正确性，没有任意新增性能门槛。
+其余 16 个新增边界用例只检查正确性，没有任意新增性能门槛。
 默认随机种子是 0；通过后可换种子检查稳定性：
 
 ```bash

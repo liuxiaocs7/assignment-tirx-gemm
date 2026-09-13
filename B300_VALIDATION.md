@@ -1,6 +1,90 @@
 # B300 验证记录与性能诊断
 
-## 最新等待对照：wait1024.UP24Tv
+## 最新结果：mma64_step4.dh9ZC8
+
+数据：[pytest_step05.log](results_b300/mma64_step4.dh9ZC8/pytest_step05.log)、
+[step05.csv](results_b300/mma64_step4.dh9ZC8/step05.csv)、
+[probe/summary.csv](results_b300/mma64_step4.dh9ZC8/probe/summary.csv)、
+[probe/run.json](results_b300/mma64_step4.dh9ZC8/probe/run.json)。
+
+**Step 5 正式验收 7 项全过；Step 4 / 1024 的 K tile 变体五轮全部达标。**
+运行版本 `7ef4938`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+内核 SHA256 为 `69734d3c4beaac5a9797fe6875dfe4cc3d9fd19c0cb13c9094f3ca884396346a`。
+虽然记录为 dirty，五个 Python 文件指纹均与该提交一致；各实验实际 CUDA 及 builder
+指纹也与记录一致，八次编译选项相同。
+
+### Step 5：正式实现已通过本轮验收
+
+| 方阵尺寸 | pytest ms | benchmark 中位数 ms | benchmark 最慢 ms | 允许 ms | 五轮结果 |
+|---|---|---|---|---|---|
+| 512 | 0.010601 | 0.010418 | 0.010558 | 0.016900 | 全部 PASS |
+| 1024 | 0.014682 | 0.014597 | 0.014805 | 0.015600 | 全部 PASS |
+| 2048 | 0.032284 | 0.031540 | 0.031948 | 0.042900 | 全部 PASS |
+| 4096 | 0.208406 | 0.208441 | 0.208742 | 0.353600 | 全部 PASS |
+
+K=64、192、320 的三项边界检查也通过。1024 的最慢一轮仍低于门槛 **5.09%**；
+2048 / 4096 未观察到性能回退。该结果验证了 `9cfd9f3` 的正式 MMA 等待实现。
+Step 5 / 4096 为 659.37 TFLOP/s、cuBLAS 吞吐的约 61%，通过作业门槛不代表超过 cuBLAS。
+
+### Step 4：K tile 有效，另外两项无收益
+
+| 变体 | 中位数 ms | 最慢 ms | 配对加速比 | 寄存器数 | 五轮结果 |
+|---|---|---|---|---|---|
+| baseline | 0.022709 | 0.022956 | 1.000× | 164 | 全部 SLOW |
+| **k_tile_128** | **0.018613** | **0.018631** | **1.220×** | 164 | **全部 PASS** |
+| tmem_load_64 | 0.022721 | 0.022766 | 1.000× | 126 | 全部 SLOW |
+| unroll_k | 0.022711 | 0.022850 | 1.000× | 164 | 全部 SLOW |
+
+四个版本均通过初始数值检查及每轮输出重用检查。`k_tile_128` 耗时减少 **18.04%**，
+最慢一轮低于 0.022100 ms 门槛 **15.69%**。增大 K tile 将串行加载/计算的同步轮数
+从 16 降到 8，同时增加每轮数据量并重新生成 TMA 映射；结果支持减少这部分开销的方向，
+不能仅凭这组对照拆分各个硬件延迟的贡献。
+
+`tmem_load_64` 将寄存器数从 164 降到 126，耗时却没有改善；显式展开也无收益，因此均不采用。
+所有资源报告的 STACK/LOCAL 均为 0。`SHARED:1024` 仅是静态部分，K tile 加宽会增加
+动态 SMEM；不能将其理解为共享内存用量不变。日志只有 CUDA 头文件弃用和未使用符号警告。
+
+### Step 4 已采用与下一轮命令
+
+`9db8b87` 将 Step 4 的 `BLK_K` 改为：K 能被 128 整除时取 128，否则取 64。
+继续支持全部正的 K%64=0 形状。单组 A/B SMEM、完成等待、phase 和 FP16 写回路径保留。
+1024 生成的 CUDA 主体与实测有效变体逐字一致；K=64、192 的生成主体与原实现一致。
+新增 K=64、128、192、384 的矩形 GPU 用例，覆盖两条路径各一轮/三轮 barrier phase。
+
+**113 项本地工具和源码生成检查通过**，其中包含新路径的 SM100a/SM103a lowering。
+本机无 NVIDIA GPU，Step 4 正式版本的其他评分尺寸和新增边界用例仍需上机验证。
+Step 5 本轮无需再单独复测；旧 probe 默认只测 baseline，并拒绝重复应用已采用的 K tile 改动。
+
+同步提交后顺序运行：
+
+```bash
+cd ~/assignment-tirx-gemm
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step4_k128.XXXXXX)
+git log -2 --oneline
+
+# Step 4：4 个评分尺寸 + 4 个边界用例
+uv run python -m pytest tests/test_step04.py -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest_step04.log"
+
+uv run python -u benchmark.py --steps 4 --trials 5 \
+  --csv "$tirx_run/step04.csv" --diagnostics-dir "$tirx_run/compiler_step04" \
+  2>&1 | tee "$tirx_run/benchmark_step04.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+Step 4 通过后，再跑一次当前完整套件，更新 Step 6–10 的剩余性能项：
+
+```bash
+# 当前为 53 项；比此前的 49 项新增 4 个 Step 4 边界用例
+uv run python -m pytest tests/ -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest_all.log"
+```
+
+这轮回传的是 Step 5 验收和 Step 4 单个形状的实验结果，不能认定全仓库已全部达标。
+
+## 前轮等待对照：wait1024.UP24Tv
 
 数据：[summary.csv](results_b300/wait1024.UP24Tv/probe/summary.csv)、
 [samples.json](results_b300/wait1024.UP24Tv/probe/samples.json)、
@@ -38,9 +122,9 @@ Step 4 的四种等待实验都未解决问题；其中轮询变慢。实验之�
 
 源码对照检查在修改前失败、修改后通过：生成的 1024 CUDA 主体和两个 wait helper
 与实测版本一致（仅新 helper 名不同）。该提交的 **98 项本地检查通过**。
-这不是正式内核的 GPU 复测；512、2048、4096 及短 K 尚需确认有无回退。
+当时仍需正式 GPU 复测；后续 `mma64_step4.dh9ZC8` 已完成 Step 5 全部评分尺寸及短 K 验收。
 
-### 下一轮：Step 5 验收与 Step 4 独立对照
+### 当时的 Step 5 验收与 Step 4 独立对照（现已完成）
 
 Step 4 / 1024 baseline 超过 0.022100 ms 门槛约 **0.613 µs / 2.77%**。
 等待实验的收益不足，下一轮按以下可区分的预测分别测试，不组合变体：
@@ -58,9 +142,9 @@ Step 4 / 1024 baseline 超过 0.022100 ms 门槛约 **0.613 µs / 2.77%**。
 每轮预热 10 次、计时 30 次。builder 改动单独保存 `.py`、diff 和 SHA256；
 所有版本都保存实际 CUDA、编译选项、cubin、资源报告和逐轮耗时。
 Step 4 正式内核保持原样，原评分门槛和计时方法保持不变。
-本地 **106 项工具及源码检查通过**；新实验尚无 B300 数值/性能结果。
+当时本地 **106 项工具及源码检查通过**；实测现已回传为 `mma64_step4.dh9ZC8`，见本文开头。
 
-同步本次提交后，在服务器顺序执行：
+以下为 `7ef4938` 当时使用的命令，无需重复执行该 probe：
 
 ```bash
 cd ~/assignment-tirx-gemm
@@ -84,7 +168,7 @@ uv run python -u probe_step45.py --steps 4 --size 1024 \
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-回传该目录即可。这轮只验证 Step 5 和定位 Step 4，不能据此认定全部 49 项已达标。
+这轮只验证 Step 5 和定位 Step 4，不能据此认定当时的全部 49 项已达标。
 旧等待 probe 保留供历史复现，但会拒绝对已采用该改动的 Step 5 重复应用。
 
 ## 上一轮正式复测：early_release.dz3roD
@@ -242,7 +326,7 @@ Step 6–10 本轮未改动，后续仍需解决已记录的性能失败。
 
 **不再重跑原 early_release 对照**：正式内核已包含该改动。工具会拒绝把相同变换重复应用，
 避免把相同代码误当作一次新的对照。原实验如需复现，应使用 `683da59` 的完整版本；
-最新脚本的默认实验见本文开头的 Step 4 独立对照。
+最新版本的 Step 4 验收命令见本文开头。
 
 ## 前轮诊断：tmem128.OZkJOD
 
@@ -317,7 +401,7 @@ printf '结果目录：%s\n' "$tirx_run"
 
 结果目录的重点文件为 `probe.log`、`probe/summary.csv`、`probe/samples.json`。
 各版本目录包含 CUDA、cubin、NVRTC 日志、资源报告及 `source_01.patch`，可核实确切改动。
-所有编译完成后才开始计时，编译钩子在计时前恢复。只验证该形状不能代替最终 49 项验收。
+所有编译完成后才开始计时，编译钩子在计时前恢复。只验证该形状不能代替全套验收。
 
 当时本地仅检查了实际 TVM 生成代码的变换、编译回调恢复和统计逻辑。
 现已收到 `step45_probe.PS9CFi` 的 B300 结果并采用 early_release，详见本文开头。

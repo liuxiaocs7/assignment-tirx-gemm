@@ -5,14 +5,13 @@ Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
 source generation checks. User-reported B300 results at `dfc9065` pass all 49 numerical
 checks, with **36 tests passing and 13 performance assertions failing**. The Step 6
 rollback recovered the 2048-size regression; further performance work remains.
-The latest production Step 4/5 retest passes all 11 numerical checks and 9 tests
-overall. Early TMEM permit release fixes the 2048/4096 slow cases; both 1024
-performance assertions still fail (2.73% / 5.74% over the benchmark time limits).
-The completed `wait1024.UP24Tv` probe reduces Step 5 / 1024 from 0.016515 to
-0.014513 ms with a 64 ns MMA-only wait hint; all five trials pass. Commit `9cfd9f3`
-adopts the measured helper; production GPU retesting across Step 5 shapes remains.
-Step 4 wait variants do not pass. The next probe independently tests its K tile,
-TMEM read width, and explicit loop unrolling.
+The latest `mma64_step4.dh9ZC8` production retest passes **all 7 Step 5 tests**;
+all five benchmark trials at each of its four graded sizes also pass.
+Its Step 4 / 1024 probe reduces latency from 0.022709 to 0.018613 ms with a
+128-wide K tile, passing all five trials. Commit `9db8b87` adopts this tile
+and retains the 64-wide path for odd multiples of 64. Other Step 4 sizes and
+its four new boundary tests still require GPU validation. The full suite now
+has 53 GPU cases; it has not yet passed in full.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 
