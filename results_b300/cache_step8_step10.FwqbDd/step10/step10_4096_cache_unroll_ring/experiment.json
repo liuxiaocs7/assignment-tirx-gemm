@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "cache_unroll_ring",
+  "sources": [
+    {
+      "before_sha256": "4de78774782acd8a4d6be20aa16b8bb82660a1b40d7b48a25f7ceb8046385671",
+      "compiled_sha256": "4de78774782acd8a4d6be20aa16b8bb82660a1b40d7b48a25f7ceb8046385671"
+    }
+  ]
+}

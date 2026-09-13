@@ -1,0 +1,10 @@
+--- baseline.cu
++++ cache_mma_no_unroll.cu
+@@ -565,6 +565,7 @@
+               if (!((_ptr_2[0] < 128))) { break; }
+               tvm_builtin_ptx_mbarrier_try_wait((&(((uint64_t*)pool_buf_ptr)[((warp_id_in_cta & 3) + 11)])), (ld_phase_phase_ptr[0] ^ 0));
+               ld_phase_phase_ptr[0] = (ld_phase_phase_ptr[0] ^ 1);
++              #pragma unroll 1
+               for (int k_1 = 0; k_1 < 64; ++k_1) {
+                 tvm_builtin_ptx_mbarrier_try_wait((&(((uint64_t*)pool_buf_ptr)[(mma_phase_stage_ptr[0] + 1)])), (mma_phase_phase_ptr[0] ^ 0));
+                 tvm_builtin_ptx_tcgen05_fence_after_thread_sync();

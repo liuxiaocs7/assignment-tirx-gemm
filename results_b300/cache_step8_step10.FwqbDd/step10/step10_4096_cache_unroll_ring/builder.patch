@@ -1,0 +1,111 @@
+--- baseline.py
++++ cache_unroll_ring.py
+@@ -11,6 +11,7 @@
+     MMA_M, MMA_N = 256, 256
+     K_TILES = K // BLK_K
+     PIPE_DEPTH = 4
++    UNROLL_RING = K_TILES % PIPE_DEPTH == 0
+     EPI_N = 64
+     TMEM_LD_N = 32  # Eight loads per consumer, with separate FP16 row buffers.
+     WG_NUMBER = 3
+@@ -56,7 +57,8 @@
+         T.ptx.fence.mbarrier_init()
+         T.cuda.cta_sync()
+         T.cuda.cluster_sync()
+-        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=tmem_addr[0],
++        mma_tmem_base: T.let = tmem_addr[0]
++        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=mma_tmem_base,
+             layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
+ 
+         tile_scheduler = ClusterPersistentScheduler2D(
+@@ -77,30 +79,42 @@
+         wb_phase.init(0)
+ 
+         @T.inline
+-        def tma_load(k_st):
++        def tma_load(k_st, stage):
+             for consumer in T.unroll(NUM_CONSUMER):
+                 m_consumer = T.meta_var(m_st + consumer * MMA_M)
+-                Tx.copy_async(Asmem[tma_phase.stage, consumer, :, :],
++                Tx.copy_async(Asmem[stage, consumer, :, :],
+                               A[m_consumer:m_consumer + BLK_M, k_st:k_st + BLK_K],
+                               dispatch="tma_auto", cta_group=CTA_GROUP,
+-                              mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
+-            Tx.copy_async(Bsmem[tma_phase.stage, :, :],
++                              mbar=tma2mma_cta0.ptr_to([stage]))
++            Tx.copy_async(Bsmem[stage, :, :],
+                           B[n_st:n_st + BLK_N, k_st:k_st + BLK_K],
+                           dispatch="tma_auto", cta_group=CTA_GROUP,
+-                          mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
++                          mbar=tma2mma_cta0.ptr_to([stage]))
+ 
+         if wg_id == 2:
+             if warp_id == 3:
+                 if T.filter(lane_id, T.ptx.elect_sync()):
+                     while tile_scheduler.valid():
+-                        for k in range(K_TILES):
+-                            mma2tma.wait(tma_phase.stage, tma_phase.phase)
+-                            tma_load(k * BLK_K)
+-                            # Both CTAs complete bytes against CTA 0's barrier.
+-                            if cbx == 0:
+-                                tma2mma_cta0.arrive(tma_phase.stage,
+-                                    CTA_GROUP * (NUM_CONSUMER * BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
+-                            tma_phase.advance()
++                        if UNROLL_RING:
++                            for ring in range(K_TILES // PIPE_DEPTH):
++                                for stage in T.unroll(PIPE_DEPTH):
++                                    k = T.meta_var(ring * PIPE_DEPTH + stage)
++                                    mma2tma.wait(stage, tma_phase.phase)
++                                    tma_load(k * BLK_K, stage)
++                                    # Both CTAs complete bytes against CTA 0's barrier.
++                                    if cbx == 0:
++                                        tma2mma_cta0.arrive(stage,
++                                            CTA_GROUP * (NUM_CONSUMER * BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
++                                tma_phase.phase = tma_phase.phase ^ 1
++                        else:
++                            for k in range(K_TILES):
++                                mma2tma.wait(tma_phase.stage, tma_phase.phase)
++                                tma_load(k * BLK_K, tma_phase.stage)
++                                # Both CTAs complete bytes against CTA 0's barrier.
++                                if cbx == 0:
++                                    tma2mma_cta0.arrive(tma_phase.stage,
++                                        CTA_GROUP * (NUM_CONSUMER * BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
++                                tma_phase.advance()
+                         tile_scheduler.next_tile()
+             elif warp_id < NUM_CONSUMER:
+                 if cbx == 0:
+@@ -108,14 +122,26 @@
+                         while tile_scheduler.valid():
+                             ld2mma.wait(warp_id, ld_phase.phase)
+                             ld_phase.advance()
+-                            for k in range(K_TILES):
+-                                tma2mma.wait(mma_phase.stage, mma_phase.phase)
+-                                T.ptx.tcgen05.fence.after_thread_sync()
+-                                Tx.gemm_async(tmem[:, warp_id * MMA_N:(warp_id + 1) * MMA_N],
+-                                    Asmem[mma_phase.stage, warp_id, :, :], Bsmem[mma_phase.stage, :, :],
+-                                    accum=(k != 0), dispatch="tcgen05", cta_group=CTA_GROUP)
+-                                mma2tma.arrive(mma_phase.stage, cta_group=CTA_GROUP, cta_mask=3)
+-                                mma_phase.advance()
++                            if UNROLL_RING:
++                                for ring in range(K_TILES // PIPE_DEPTH):
++                                    for stage in T.unroll(PIPE_DEPTH):
++                                        k = T.meta_var(ring * PIPE_DEPTH + stage)
++                                        tma2mma.wait(stage, mma_phase.phase)
++                                        T.ptx.tcgen05.fence.after_thread_sync()
++                                        Tx.gemm_async(tmem[:, warp_id * MMA_N:(warp_id + 1) * MMA_N],
++                                            Asmem[stage, warp_id, :, :], Bsmem[stage, :, :],
++                                            accum=(k != 0), dispatch="tcgen05", cta_group=CTA_GROUP)
++                                        mma2tma.arrive(stage, cta_group=CTA_GROUP, cta_mask=3)
++                                    mma_phase.phase = mma_phase.phase ^ 1
++                            else:
++                                for k in range(K_TILES):
++                                    tma2mma.wait(mma_phase.stage, mma_phase.phase)
++                                    T.ptx.tcgen05.fence.after_thread_sync()
++                                    Tx.gemm_async(tmem[:, warp_id * MMA_N:(warp_id + 1) * MMA_N],
++                                        Asmem[mma_phase.stage, warp_id, :, :], Bsmem[mma_phase.stage, :, :],
++                                        accum=(k != 0), dispatch="tcgen05", cta_group=CTA_GROUP)
++                                    mma2tma.arrive(mma_phase.stage, cta_group=CTA_GROUP, cta_mask=3)
++                                    mma_phase.advance()
+                             mma2ld.arrive(warp_id, cta_group=CTA_GROUP, cta_mask=3)
+                             tile_scheduler.next_tile()
+         elif wg_id < NUM_CONSUMER:
