@@ -1,8 +1,8 @@
-"""Independent B300 performance experiments for Steps 6, 7, and 10.
+"""Independent B300 performance experiments for persistent GEMM kernels.
 
-Defaults to Step 10 at 4096: compare wider TMEM loads, L2 grouping, and a
-balanced cluster grid with production. Steps 6/7 have adopted k_tile_128;
-use their production tests for validation. No production kernel is edited.
+Defaults to Step 10 at 4096: compare TMA data-ready waiting and static consumer
+roles. Use --steps 8 --size 2048 for data-ready and epilogue experiments.
+Steps 6/7 have passed production validation. No production kernel is edited.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
 """
@@ -22,20 +22,56 @@ from probe_step45 import replace_once, source_experiment, summarize, trial_order
 STEP_VARIANTS = {
     6: ("baseline", "k_tile_128", "mma_wait_64ns", "final_fence"),
     7: ("baseline", "k_tile_128", "mma_wait_64ns", "epilogue_128"),
+    8: ("baseline", "tma_wait_64ns", "epilogue_128"),
     10: ("baseline", "mma_wait_64ns", "tmem_load_16", "tmem_load_64",
-         "l2_group_4", "balanced_clusters"),
+         "l2_group_4", "balanced_clusters", "tma_wait_64ns",
+         "specialize_mma", "specialize_writeback"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
-                         10: ("baseline", "tmem_load_64", "l2_group_4", "balanced_clusters")}
+                         8: ("baseline", "tma_wait_64ns", "epilogue_128"),
+                         10: ("baseline", "tma_wait_64ns", "specialize_mma", "specialize_writeback")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
+
+
+def specialize_role(source, role):
+    """Unroll the two role branches, keeping each warp/group on its own slot."""
+    if role == "mma":
+        start = "            elif warp_id < NUM_CONSUMER:\n"
+        end = "        elif wg_id < NUM_CONSUMER:\n"
+        index, consumer = "warp_id", "mma_consumer"
+        replacement = ("            else:\n"
+                       "                for mma_consumer in T.unroll(NUM_CONSUMER):\n"
+                       "                    if warp_id == mma_consumer:\n")
+    elif role == "writeback":
+        start = "        elif wg_id < NUM_CONSUMER:\n"
+        end = "\n        T.cuda.cluster_sync()\n"
+        index, consumer = "wg_id", "wb_consumer"
+        replacement = ("        else:\n"
+                       "            for wb_consumer in T.unroll(NUM_CONSUMER):\n"
+                       "                if wg_id == wb_consumer:\n")
+    else:
+        raise ValueError(f"unsupported consumer role: {role}")
+    if source.count(start) != 1:
+        raise ValueError(f"expected exactly one {role} role branch")
+    prefix, tail = source.split(start)
+    if tail.count(end) != 1:
+        raise ValueError(f"expected exactly one end of {role} role branch")
+    block, suffix = tail.split(end)
+    # Whole identifiers only: warp_id inside the writeback remains a lane role.
+    block = re.sub(rf"\b{index}\b", consumer, block)
+    block = "".join("        " + line if line.strip() else line
+                    for line in block.splitlines(keepends=True))
+    return prefix + replacement + block + end + suffix
 
 
 def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
-    if variant in ("baseline", "mma_wait_64ns"):
+    if variant in ("baseline", "mma_wait_64ns", "tma_wait_64ns"):
         return source
+    if variant in ("specialize_mma", "specialize_writeback"):
+        return specialize_role(source, variant.removeprefix("specialize_"))
     if variant == "k_tile_128":
         if "BLK_K = 128 if K % 128 == 0 else 64" in source:
             raise ValueError(f"Step {step} has adopted k_tile_128; validate the production kernel "
@@ -99,19 +135,19 @@ def build_variant(step, shape, variant, directory):
 
 
 def variant_source(source, step, variant):
-    """Change only waits for MMA-signaled barriers, retaining acquire and retry."""
+    """Change selected barrier waits only, retaining acquire, parity, and retry."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
-    if variant != "mma_wait_64ns":
+    if variant not in ("mma_wait_64ns", "tma_wait_64ns"):
         return source
     marker = 'extern "C" __global__'
     if marker not in source:
         raise ValueError("CUDA kernel declaration was not found")
     header, body = source.split(marker, 1)
     name = "tvm_builtin_ptx_mbarrier_try_wait"
-    short_name = "tvm_probe_mma_wait_64ns"
+    short_name = f"tvm_probe_{variant}"
     if short_name in source:
-        raise ValueError("MMA wait experiment is already applied")
+        raise ValueError("wait experiment is already applied")
     helpers = re.findall(rf"^__forceinline__ __device__ void {name}\([^\n]+\) \{{\n.*?^\}}\n",
                          header, re.M | re.S)
     if len(helpers) != 1:
@@ -122,16 +158,20 @@ def variant_source(source, step, variant):
                 ':: "r"(barrier_addr_int), "r"(phase), "r"(ticks) : "memory"')
     if any(helper.count(part) != 1 for part in required):
         raise ValueError("unexpected default wait implementation")
-    # Exact barrier/phase arguments from the saved 4096 production CUDA.
-    # Step 6: mma_bar; Step 7/10: mma2tma and mma2ld. Do not alter tma2mma
-    # (data ready) or ld2mma (accumulator free), nor remote barrier arrivals.
-    arguments = {
-        6: ["(&(((uint64_t*)pool_buf_ptr)[3])), phase_mma_ptr[0]"],
-        7: ["(&(((uint64_t*)pool_buf_ptr)[(tma_phase_stage_ptr[0] + 3)])), (tma_phase_phase_ptr[0] ^ 0)",
-            "(&(((uint64_t*)pool_buf_ptr)[5])), (wb_phase_phase_ptr[0] ^ 0)"],
-        10: ["(&(((uint64_t*)pool_buf_ptr)[(tma_phase_stage_ptr[0] + 5)])), (tma_phase_phase_ptr[0] ^ 0)",
-             "(&(((uint64_t*)pool_buf_ptr)[((warp_id_in_cta >> 2) + 9)])), (wb_phase_phase_ptr[0] ^ 0)"],
-    }[step]
+    # Exact barrier/phase arguments from the saved production CUDA. Change
+    # data-ready OR MMA-completion waits, never both in the same experiment.
+    if variant == "tma_wait_64ns":
+        # Both four-stage kernels use slots 1..4 for tma2mma. This wait is
+        # executed by the MMA warp(s); completion/accumulator-free waits stay.
+        arguments = ["(&(((uint64_t*)pool_buf_ptr)[(mma_phase_stage_ptr[0] + 1)])), (mma_phase_phase_ptr[0] ^ 0)"]
+    else:
+        arguments = {
+            6: ["(&(((uint64_t*)pool_buf_ptr)[3])), phase_mma_ptr[0]"],
+            7: ["(&(((uint64_t*)pool_buf_ptr)[(tma_phase_stage_ptr[0] + 3)])), (tma_phase_phase_ptr[0] ^ 0)",
+                "(&(((uint64_t*)pool_buf_ptr)[5])), (wb_phase_phase_ptr[0] ^ 0)"],
+            10: ["(&(((uint64_t*)pool_buf_ptr)[(tma_phase_stage_ptr[0] + 5)])), (tma_phase_phase_ptr[0] ^ 0)",
+                 "(&(((uint64_t*)pool_buf_ptr)[((warp_id_in_cta >> 2) + 9)])), (wb_phase_phase_ptr[0] ^ 0)"],
+        }[step]
     if body.count(name + "(") != (2 if step == 6 else 4):
         raise ValueError("unexpected TMA/MMA wait count")
     for args in arguments:

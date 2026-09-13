@@ -22,56 +22,48 @@
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
 覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线。
-最近一次完整套件 `step4_k128.6GZwy2`（`c6435e4`）为 **46 passed / 7 failed**，
-53 个用例的数值检查全部通过。Step 1–5、8、9 全部通过；剩余项是
-Step 6、7 各自的 2048 / 4096 / 8192，以及 Step 10 / 4096，均为性能断言。
-详见 [完整套件记录](B300_VALIDATION.md#前轮完整套件step4_k1286gzwy2)。
+最新用户回传的完整套件摘要为 **55 passed / 2 failed，共 57 项**，失败均为性能断言：
+Step 8 / 2048、Step 10 / 4096。Step 1–7、9 全部通过，Step 10 的其他用例通过。
+Step 8 / 2048 此前 0.029792 ms，距离 0.029900 ms 门槛仅约 0.36%；新摘要未包含该项
+具体耗时，需用新对照确认性能余量。代码没有改动 Step 8、10。
 
-Step 4 的 K tile 128 与 64 fallback 已通过正式 8 项验收，四个评分尺寸各五轮 benchmark
-也全部达标。Step 5 的局部 64 ns MMA 等待已通过正式 7 项验收；此前
-`mma64_step4.dh9ZC8` 中四个评分尺寸各五轮 benchmark 全过。
-最新 `persistent_probe.VB42kg` 在 4096 找到 Step 6、7 的 K tile 128 收益：
-中位数分别为 0.249217 / 0.219035 ms，配对加速 1.268× / 1.413×，五轮全部达标。
-`fb7e38b` / `eeb0ae0` 已采用，保留 K%128≠0 的 64 宽度路径与各自两级流水线。
-Step 10 的两个变体无收益，4096 仍未达标。当前增加四个宽 K 边界用例，共 **57 个 GPU 用例**；
-新正式内核还需其他评分尺寸和边界用例验收，详见 [最新实验记录](B300_VALIDATION.md)。
+`k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
+各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
+Step 10 / 4096 的 x64 TMEM、L2 分组、cluster 数实验均未解决性能失败。
+详见 [最新验证和对照记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（覆盖构建、实测 CUDA 重放、fallback、实验隔离与编译回调，共 **181 项本地通过**；
+（覆盖构建、实测 CUDA 重放、fallback、实验隔离与编译回调，共 **198 项本地通过**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：验收 Step 6、7，继续诊断 Step 10
+### 当前进度：只诊断 Step 8 / 2048 和 Step 10 / 4096
 
-将新提交同步到服务器后，按顺序执行。前两条验收 Step 6、7（共 16 个 GPU 用例，
-以及 8 个评分形状各五轮 benchmark）；第三条只在 Step 10 / 4096 对比四个版本。
-各变体在首次计时前和每轮计时后验算。Step 10 新变体的加速效果仍待 GPU 实测。
+将新提交同步到服务器后，按顺序执行下面两个 probe。Step 8 比较三个版本，Step 10
+比较四个版本，均含正式 baseline、五轮交错计时，计时前后验算。本轮无需再跑 Step 6、7
+或全量套件；这两个 step 的生产内核保持原样，新变体待 GPU 实测后再选择。
 
 ```bash
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/k128_step67.XXXXXX)
-git log -3 --oneline
+tirx_run=$(mktemp -d results_b300/step810_probe.XXXXXX)
+git log -2 --oneline
 
-uv run python -m pytest tests/test_step06.py tests/test_step07.py -vs --tb=short \
-  2>&1 | tee "$tirx_run/pytest_step67.log"
+uv run python -u probe_persistent.py --steps 8 --size 2048 \
+  --output "$tirx_run/step08" 2>&1 | tee "$tirx_run/probe_step08.log"
 
-uv run python -u benchmark.py --steps 6,7 --trials 5 \
-  --csv "$tirx_run/step67.csv" --diagnostics-dir "$tirx_run/compiler_step67" \
-  2>&1 | tee "$tirx_run/benchmark_step67.log"
-
-uv run python -u probe_persistent.py --steps 10 --size 4096 --output "$tirx_run/probe" \
-  2>&1 | tee "$tirx_run/probe.log"
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/probe_step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
 `summary.csv` 汇总耗时、门槛、与同轮 baseline 的加速比；目录内保留逐轮结果、
 builder diff、CUDA、编译选项和 cubin 资源报告。`SLOW` 会继续收集并返回 0；
 数值错误或编译失败会停止并返回非零。Step 6、7 已采用的 `k_tile_128` 实验现在会拒绝重复应用。
-变体说明及可选参数见 [B300_VALIDATION.md](B300_VALIDATION.md#下一轮step-67-验收与-step-10-对照)。
+变体说明及可选参数见 [B300_VALIDATION.md](B300_VALIDATION.md#下一轮step-8-与-step-10-独立对照)。
 
 ### 已有 B300 + Torch + TVM 0.26 + uv：直接运行
 

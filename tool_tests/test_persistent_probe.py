@@ -55,7 +55,7 @@ def install_recorded_builder(step, monkeypatch):
     monkeypatch.setattr(gemm_kernels, name, namespace[name])
 
 
-@pytest.mark.parametrize("step", STEP_VARIANTS)
+@pytest.mark.parametrize("step", [6, 7, 10])
 @pytest.mark.parametrize("size", [1024, 2048, 4096, 8192])
 def test_recorded_mma_wait_changes_only_selected_calls(step, size):
     source = recorded_source(step, size)
@@ -75,7 +75,7 @@ def test_recorded_mma_wait_changes_only_selected_calls(step, size):
         variant_source(changed, step, "mma_wait_64ns")
 
 
-@pytest.mark.parametrize("step", STEP_VARIANTS)
+@pytest.mark.parametrize("step", [6, 7, 10])
 def test_changed_wait_layout_fails_closed(step):
     source = recorded_source(step).replace("pool_buf_ptr", "moved_pool_buf_ptr")
     with pytest.raises(ValueError):
@@ -212,6 +212,91 @@ def test_balanced_grid_launch_matches_persistent_stride(M, N, clusters, tmp_path
     assert f"T.cta_id([{clusters * 2}])" in kernel.script()
     source = body(generate(kernel))
     assert source.count(f"_ptr_2[0] = (_ptr_2[0] + {clusters});") == 3
+
+
+@pytest.mark.parametrize("step", [8, 10])
+@pytest.mark.parametrize("size", [1024, 2048, 4096, 8192])
+def test_tma_wait_only_changes_data_ready_barrier(step, size):
+    original = recorded_source(step, size)
+    changed = variant_source(original, step, "tma_wait_64ns")
+    old, new = "tvm_builtin_ptx_mbarrier_try_wait", "tvm_probe_tma_wait_64ns"
+    assert body(changed).replace(new, old) == body(original)
+    expected = (f"{new}((&(((uint64_t*)pool_buf_ptr)[(mma_phase_stage_ptr[0] + 1)])), "
+                "(mma_phase_phase_ptr[0] ^ 0));")
+    assert body(changed).count(expected) == body(changed).count(new + "(") == 1
+    assert body(changed).count(old + "(") == 3
+    pattern = r"^__forceinline__ __device__ void {}\([^\n]+\) \{{\n.*?^\}}\n"
+    old_helper = re.search(pattern.format(old), original, re.M | re.S).group()
+    new_helper = re.search(pattern.format(new), changed, re.M | re.S).group()
+    assert new_helper.replace(new, old).replace("ticks = 64;", "ticks = 0x989680;") == old_helper
+    with pytest.raises(ValueError, match="already applied"):
+        variant_source(changed, step, "tma_wait_64ns")
+    with pytest.raises(ValueError):
+        variant_source(original.replace("mma_phase_stage_ptr", "moved_stage_ptr"), step, "tma_wait_64ns")
+
+
+@pytest.mark.parametrize("step,size", [(8, 2048), (10, 4096)])
+def test_current_tma_experiment_lowers_to_recorded_protocol(step, size, tmp_path):
+    pytest.importorskip("tvm")
+    actual = generate(build_variant(step, (size,) * 3, "tma_wait_64ns", tmp_path))
+    assert body(actual) == body(recorded_source(step, size))
+    assert body(variant_source(actual, step, "tma_wait_64ns")) == body(
+        variant_source(recorded_source(step, size), step, "tma_wait_64ns"))
+
+
+def test_step8_epilogue_keeps_four_stages_and_releases_tmem_after_reads(tmp_path):
+    pytest.importorskip("tvm")
+    kernel = build_variant(8, (2048,) * 3, "epilogue_128", tmp_path)
+    actual, baseline = body(generate(kernel)), body(recorded_source(8, 2048))
+    assert "Asmem = T.decl_buffer((4, 128, 64)" in kernel.script()
+    assert "Bsmem = T.decl_buffer((4, 128, 64)" in kernel.script()
+    assert "Dsmem = T.decl_buffer((128, 128)" in kernel.script()
+    assert actual.count("ptx_cp_async_bulk_tensor_shared_to_global_") == 1
+    assert baseline.count("ptx_cp_async_bulk_tensor_shared_to_global_") == 2
+    assert actual.count("tvm_builtin_ptx_tcgen05_wait_ld();") == 4
+    assert actual.rindex("tvm_builtin_ptx_tcgen05_wait_ld();") < actual.index(
+        "tvm_builtin_ptx_mbarrier_arrive_shared(") < actual.index("ptx_cp_async_bulk_tensor_shared_to_global_")
+    # The two producer roles' barrier addresses, offsets, and MMA calls stay.
+    waits = lambda s: [line.strip() for line in s.splitlines()
+                       if "tvm_builtin_ptx_mbarrier_try_wait(" in line or "ptx_tcgen05_mma_cta_1_kind_f16_SS(" in line]
+    assert waits(actual) == waits(baseline)
+
+
+@pytest.mark.parametrize("variant", ["specialize_mma", "specialize_writeback"])
+@pytest.mark.parametrize("shape", [(4096, 4096, 4096), (4096, 3072, 64), (4096, 3072, 320)])
+def test_static_consumer_roles_keep_barrier_slots_and_cluster_protocol(variant, shape, tmp_path):
+    pytest.importorskip("tvm")
+    kernel = build_variant(10, shape, variant, tmp_path)
+    actual = body(generate(kernel))
+    # Both consumers use CTA-group 2; fixed slot indices do not collapse them.
+    assert actual.count("tvm_builtin_ptx_tcgen05_alloc_cta_group_2(") == 1
+    assert actual.count("tvm_builtin_ptx_tcgen05_dealloc_cta_group_2(") == 1
+    assert actual.count("while (") == 4
+    assert "Asmem = T.decl_buffer((4, 2, 128, 64)" in kernel.script()
+    assert "Bsmem = T.decl_buffer((4, 128, 64)" in kernel.script()
+    if variant == "specialize_mma":
+        assert actual.count("ptx_tcgen05_mma_cta_2_kind_f16_SS(") == 8
+        assert actual.count("tvm_builtin_ptx_tcgen05_wait_ld();") == 8
+        assert actual.count("ptx_cp_async_bulk_tensor_shared_to_global_") == 4
+        for slot in (9, 10):
+            assert f"ptx_tcgen05_commit_cta_group_2_multicast((&(((uint64_t*)pool_buf_ptr)[{slot}])), 3);" in actual
+        for slot in (11, 12):
+            assert f"tvm_builtin_ptx_mbarrier_try_wait((&(((uint64_t*)pool_buf_ptr)[{slot}])), (ld_phase_phase_ptr[0] ^ 0));" in actual
+        assert actual.count("if (((int)tvm_builtin_cluster_ctaid_x()) == 0)") == 3
+        assert "((warp_id_in_cta & 3) * 256)" not in actual
+    else:
+        assert actual.count("ptx_tcgen05_mma_cta_2_kind_f16_SS(") == 4
+        assert actual.count("tvm_builtin_ptx_tcgen05_wait_ld();") == 16
+        assert actual.count("ptx_cp_async_bulk_tensor_shared_to_global_") == 8
+        for consumer in range(2):
+            assert f"tvm_builtin_ptx_mbarrier_try_wait((&(((uint64_t*)pool_buf_ptr)[{9 + consumer}])), (wb_phase_phase_ptr[0] ^ 0));" in actual
+            assert f"tvm_builtin_ptx_mbarrier_arrive_shared_cluster_remote_pred((&(((uint64_t*)pool_buf_ptr)[{11 + consumer}])), 0," in actual
+            assert actual.count(f"tvm_builtin_cuda_warpgroup_sync({10 + consumer});") == 8
+        assert "((warp_id_in_cta >> 2) * 256)" not in actual
+    # Distinct branch sentinels reject reapplying specialization.
+    changed_builder = (tmp_path / "builder.py").read_text()
+    with pytest.raises(ValueError):
+        variant_builder_source(changed_builder, 10, variant)
 
 
 @pytest.mark.parametrize("fail", [False, True])

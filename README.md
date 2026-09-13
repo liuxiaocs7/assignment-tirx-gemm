@@ -2,19 +2,15 @@
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` are implemented using
 Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
-source generation checks. The last full B300 run, `step4_k128.6GZwy2` at `c6435e4`,
-passes all 53 numerical checks, with **46 tests passing and 7 performance
-assertions failing**. Steps 1–5, 8, and 9 pass in full. Remaining failures are
-Steps 6/7 at 2048, 4096, and 8192, plus Step 10 at 4096.
-Step 4's 128-wide K tile and 64-wide fallback pass all eight production tests
-and all 20 benchmark samples. Step 5's MMA wait adjustment also passes all
-seven production tests. The latest `persistent_probe.VB42kg` at `f414130` finds
-1.268× / 1.413× speedups for Steps 6/7 at 4096 using wider K tiles; all five
-samples pass. Commits `fb7e38b` / `eeb0ae0` adopt these measured changes with
-a 64-wide fallback. Their other sizes and four new boundary cases still need
-GPU validation (57 total GPU cases now). Step 10 remains slow at 4096;
-`probe_persistent.py` defaults to four independent Step 10 versions for the
-next diagnosis round, with GPU results pending.
+source generation checks. The latest user-reported full B300 suite has
+**55 passed / 2 performance failures out of 57 tests**: Step 8 at 2048 and
+Step 10 at 4096. Steps 1–7 and 9 pass in full. The uploaded
+`k128_step67.TdkZy5` run at `ade5040` verifies all 16 Step 6/7 tests and all
+40 benchmark samples, including the new short/odd K paths. Step 8 previously
+passed close to its limit; the latest failure needs a fresh paired measurement.
+Step 10's wider TMEM, L2 grouping, and cluster-count probes remain too slow.
+`probe_persistent.py` now compares data-ready waits and Step 8 epilogue / Step 10
+consumer specialization independently. These new variants await GPU validation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 
