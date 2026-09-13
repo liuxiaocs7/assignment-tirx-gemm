@@ -1,8 +1,9 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
-Step 8 passed its focused production tests. Step 10 now tests the tradeoff
-between three input stages and wider epilogue chunks against the measured
-cache-plus-balanced-grid control. Old experiments remain opt-in.
+Step 8 passed its focused production tests. The latest Step 10 depth/epilogue
+experiments did not pass. The default now isolates one TMA issue reduction:
+load both consumers' A blocks with one 3-D box against the measured cached,
+balanced-grid control. Historical experiments remain opt-in.
 No production kernel is edited by this tool.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
@@ -32,12 +33,12 @@ STEP_VARIANTS = {
          "pipe_depth_2", "k128_depth_2", "stream_epilogue",
          "cache_tmem_base", "reuse_wait_64ns", "ring_wait_64ns",
          "cache_unroll_ring", "cache_mma_no_unroll", "cache_balanced_clusters",
-         "balanced_depth3", "balanced_depth3_epi128"),
+         "balanced_depth3", "balanced_depth3_epi128", "balanced_fused_a"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
                          10: ("baseline", "cache_tmem_base", "cache_balanced_clusters",
-                              "balanced_depth3", "balanced_depth3_epi128")}
+                              "balanced_fused_a")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -47,14 +48,19 @@ CACHE_EXPERIMENTS = {
 }
 
 # Every new comparison names its direct control; selecting a leaf includes
-# the whole chain so changing depth and epilogue width remains separable.
+# the whole chain so each added change remains separable.
 EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
                        "balanced_depth3": "cache_balanced_clusters",
-                       "balanced_depth3_epi128": "balanced_depth3"}
+                       "balanced_depth3_epi128": "balanced_depth3",
+                       "balanced_fused_a": "cache_balanced_clusters"}
 DEPTH3_VARIANTS = ("balanced_depth3", "balanced_depth3_epi128")
 # K=1/3/5 stages covers shorter-than-ring, odd complete ring, and partial
 # ring; 96 cluster tiles force reuse of both consumers on the balanced grid.
 DEPTH3_VERIFY_SHAPES = ((4096, 3072, 64), (4096, 3072, 192), (4096, 3072, 320))
+VERIFICATION_SHAPES = {
+    **{variant: DEPTH3_VERIFY_SHAPES for variant in DEPTH3_VARIANTS},
+    "balanced_fused_a": ((4096, 3072, 64), (4096, 3072, 320)),
+}
 
 
 def select_variants(step, requested=None):
@@ -115,6 +121,29 @@ def unroll_pipeline_ring(source):
                                for line in original.splitlines(keepends=True)))
         source = prefix + "\n" + replacement + sentinel.lstrip("\n") + suffix
     return source
+
+
+def fuse_consumer_a_loads(source):
+    """One 3-D TMA box gathers the two A blocks without changing MMA layout."""
+    source = replace_once(source, "        @T.inline\n        def tma_load(k_st):\n",
+                          "        A_blocks = A.view(M // MMA_M, MMA_M, K)\n\n"
+                          "        @T.inline\n        def tma_load(k_st):\n")
+    before = '''            for consumer in T.unroll(NUM_CONSUMER):
+                m_consumer = T.meta_var(m_st + consumer * MMA_M)
+                Tx.copy_async(Asmem[tma_phase.stage, consumer, :, :],
+                              A[m_consumer:m_consumer + BLK_M, k_st:k_st + BLK_K],
+                              dispatch="tma_auto", cta_group=CTA_GROUP,
+                              mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
+'''
+    after = '''            Tx.copy_async(Asmem[tma_phase.stage, :, :, :],
+                          A_blocks[tile_scheduler.m_idx * NUM_CONSUMER:tile_scheduler.m_idx * NUM_CONSUMER + NUM_CONSUMER,
+                                   cbx * BLK_M:cbx * BLK_M + BLK_M, k_st:k_st + BLK_K],
+                          dispatch="tma_auto", cta_group=CTA_GROUP,
+                          mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
+'''
+    # A[(tile*2 + consumer)*256 + rank*128 + row, k]. The view aliases
+    # the original contiguous A buffer; no transpose, packing, or allocation.
+    return replace_once(source, before, after)
 
 
 def stream_epilogue(source):
@@ -180,6 +209,9 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant == "balanced_fused_a":
+        source = variant_builder_source(source, step, "cache_balanced_clusters")
+        return fuse_consumer_a_loads(source)
     if variant in DEPTH3_VARIANTS:
         source = variant_builder_source(source, step, "cache_balanced_clusters")
         source = replace_once(source, "    PIPE_DEPTH = 4\n", "    PIPE_DEPTH = 3\n")
@@ -417,8 +449,8 @@ def main(argv=None):
                     probe_step45_sha256=hashlib.sha256(Path(__file__).with_name("probe_step45.py").read_bytes()).hexdigest(),
                     profile_persistent_sha256=hashlib.sha256(Path(__file__).with_name("profile_persistent.py").read_bytes()).hexdigest(),
                     steps=list(selected), size=args.size, variants=selected,
-                    verification_shapes={v: DEPTH3_VERIFY_SHAPES for variants in selected.values()
-                                         for v in variants if v in DEPTH3_VARIANTS},
+                    verification_shapes={v: VERIFICATION_SHAPES[v] for variants in selected.values()
+                                         for v in variants if v in VERIFICATION_SHAPES},
                     comparison_controls={str(step): {v: EXPERIMENT_CONTROLS[v] for v in variants
                                                     if v in EXPERIMENT_CONTROLS}
                                          for step, variants in selected.items()},
@@ -452,13 +484,13 @@ def main(argv=None):
             executables.append(executable)
             outputs.append(output)
 
-    # Three-stage rings advance across persistent tiles at different offsets
-    # than production. Verify these boundary shapes before any scored timing.
+    # Ring-depth and TMA-layout experiments need boundary/reuse validation.
+    # Run it before any scored timing with the same numerical tolerances.
     for step, variants in selected.items():
         for variant in variants:
-            if variant not in DEPTH3_VARIANTS:
+            if variant not in VERIFICATION_SHAPES:
                 continue
-            for shape in DEPTH3_VERIFY_SHAPES:
+            for shape in VERIFICATION_SHAPES[variant]:
                 directory = args.output / "verification" / f"{variant}_{'_'.join(map(str, shape))}"
                 kernel = build_variant(step, shape, variant, directory)
                 va, vb, _ = prepare_data(*shape)

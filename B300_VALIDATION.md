@@ -1,6 +1,75 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：cache_step8_step10.FwqbDd
+## 最新结果：step10_depth3.1zWPNg
+
+数据：[summary](results_b300/step10_depth3.1zWPNg/step10/summary.csv)、
+[samples](results_b300/step10_depth3.1zWPNg/step10/samples.json)、
+[run.json](results_b300/step10_depth3.1zWPNg/step10/run.json)。
+运行版本 `6301533`；B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+七个 Python 文件指纹与运行提交一致，全部 11 份构建记录（五个计时版本、六个边界版本）
+的 builder、变换前及实际编译 CUDA 指纹核对通过，各版本编译参数一致。
+三个对照的 cubin 均与前轮 `cache_step8_step10.FwqbDd` 完全相同。
+所有版本通过初始、逐轮数值校验；六个矩形边界记录均为两次验算通过、不计时。
+
+### 三级与宽写回均未解决剩余失败
+
+| 版本 | 中位数 ms | 最大值 ms | 直接对照 | 同轮加速比 | REG / STACK |
+|---|---:|---:|---|---:|---:|
+| baseline | 0.142430 | 0.143562 | baseline | 1.000× | 168 / 32 |
+| cache_tmem_base | 0.141151 | 0.141371 | baseline | 1.010× | 167 / 0 |
+| cache_balanced_clusters | 0.140233 | 0.140822 | cache_tmem_base | 1.007× | 167 / 0 |
+| balanced_depth3 | 0.140003 | 0.140631 | cache_balanced_clusters | **1.001×** | 167 / 0 |
+| balanced_depth3_epi128 | 0.141946 | 0.142506 | balanced_depth3 | **0.986×** | 168 / 40 |
+
+门槛为 **0.139100 ms，25 个计时样本全部超限**。三级版本中位数仍超门槛 0.65%，
+相对均衡网格的同轮收益只有约 0.14%；不能把它相对生产 baseline 的收益全部归给三级。
+宽写回比三级对照更慢，SASS 出现 40 字节栈帧、10 处 `LDL` 和 10 处 `STL`；
+三级对照无栈帧，两者均有 16 个静态 `UTCHMMA` 位置。因此停止叠加这个宽写回版本，
+三级也没有足够收益支持正式采用。生产 Step 10 保持原实现。
+
+Step 8 沿用前轮已验证的缓存基址版本：六项 pytest、20 个 benchmark 样本均通过。
+本轮没有新的完整套件结果，最新全量摘要仍为此前 55/57；剩余优化集中在 Step 10 / 4096。
+
+### 下一轮：合并两个 consumer 的 A 加载
+
+旧角色 trace 的 TMA 区间主要在等待空槽，MMA 也有较长等待；这些重叠区间不能相加，
+不能单凭等待比例确定瓶颈。等待提示、循环展开、三级和宽写回实验均没有补上剩余差距。
+下一项检验具体的 TMA 发射开销：原实现每 CTA 每级分别加载两个 A 块和一个 B 块，
+若两次 A 发射及地址准备限制 stage 周转，合并它们应比直接对照更快；若主要受实际搬运
+或其他环节限制，则可能没有收益。3D 描述符也可能改变编译器调度，须核对实际 SASS。
+
+新增独立版本 **`balanced_fused_a`**，以四级 `cache_balanced_clusters` 为直接对照：
+
+- 用 `A.view(M // 256, 256, K)` 表示原连续 A 的别名，不分配、转置或打包输入。
+- 两个 consumer 通过一次 3D TMA box `(64,128,2)` 加载；CUDA 维度顺序为
+  K、CTA 内行、consumer 块。坐标为 `(k*64, rank*128, tile_m*2)`，对应原地址
+  `A[tile_m*512 + consumer*256 + rank*128 + row, k*64 + col]`。
+- 每 CTA 每级由三个加载发射变为两个（一次 A、一次 B），A 仍搬运 32,768 字节，
+  B 仍搬运 16,384 字节。双 CTA 的 barrier 预期事务总量仍为 98,304 字节。
+- 四级输入流水线、230,400 字节动态 SMEM、128 字节 swizzle、MMA、写回、barrier
+  和跨 tile phase 均保持直接对照的协议。
+
+默认四个版本为 `baseline`、`cache_tmem_base`、`cache_balanced_clusters`、
+`balanced_fused_a`；`vs_control` 指向各自的直接对照，不把缓存或网格的收益归给合并加载。
+工具在计时前自动为新版本验算 `(4096,3072,K)`、K=64/320，每个形状运行两次且重填
+NaN 输出；覆盖单级、跨四级 ring 的五级 K 循环，以及两个 consumer 的矩形 tile 复用。
+仍用原数值容差、10 次 warmup / 30 次 repeat / 五轮交错 CUDA-event 计时。
+
+本地已在 SM100a/SM103a 检查四个评分形状及两个边界形状的 TMA 维度、字节数、
+两种 rank/consumer 的首尾地址、共享偏移，并比较所有非加载硬件操作的操作数及 phase。
+完整本地工具回归 **312 项通过，137.03 s**。这些是源码生成与工具检查，
+**尚无新版本的 GPU 编译、数值或性能结论**。下一轮只需运行：
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_fused_a.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：cache_step8_step10.FwqbDd
 
 数据：[Step 8 pytest](results_b300/cache_step8_step10.FwqbDd/pytest_step08.log)、
 [Step 8 benchmark](results_b300/cache_step8_step10.FwqbDd/step08.csv)、
@@ -51,7 +120,7 @@ benchmark 记录的四个、probe 记录的七个 Python 文件指纹与提交�
   约为 cache-only 的 3.3 倍，出现 8 字节栈帧和 `LDL`/`STL`；五轮均比 cache-only 慢。
   因而停止沿这两个循环展开版本继续叠加。
 
-### 下一轮：三级流水线与写回宽度的取舍
+### 已完成实验：三级流水线与写回宽度的取舍
 
 目前只差不到 1 微秒，但旧阶段记录显示写回自身仍占角色区间约 8–9%，存在具体
 可测的尾部开销。它不证明写回是整个 kernel 的唯一瓶颈。原 Step 10 四级输入流水线
@@ -66,7 +135,7 @@ benchmark 记录的四个、probe 记录的七个 Python 文件指纹与提交�
    开销，每个 consumer 的四次写回降为两次后，应快于三级 EPI_N64，并争取越过原门槛。
    保留整行 FP16 暂存，八次 TMEM 读取全部结束后仍先通知 MMA，可保持原重叠机会。
 
-默认五个版本依次为 `baseline`、`cache_tmem_base`、`cache_balanced_clusters`、
+该轮默认五个版本依次为 `baseline`、`cache_tmem_base`、`cache_balanced_clusters`、
 `balanced_depth3`、`balanced_depth3_epi128`。显式选择末级版本也会自动带上各级对照。
 `comparison_control` / `vs_control` 记录直接对照及同轮比值，避免把前一级的收益
 归给后一级；原 baseline、cache-only 比值和原始 PASS/SLOW 规则仍保留。
@@ -79,7 +148,7 @@ K4096 共有 64 个 stage，不能整除三层 ring，阶段与 phase 必须跨�
 
 生产 `gemm_kernels.py`、原评分、容差、10 次 warmup / 30 次 repeat / 五轮交错
 CUDA-event 计时均不改变。新版本已通过本地 SM100a/SM103a 源码生成和协议检查，
-**尚无 GPU 数值或性能结论**；下一轮只需运行 Step 10：
+GPU 结果见本文最新记录；以下为该轮已完成的历史命令：
 
 ```bash
 mkdir -p results_b300

@@ -105,7 +105,6 @@ def test_depth3_preserves_ring_handoff_and_wider_epilogue_preserves_producers(ar
 def test_selecting_wider_epilogue_includes_each_direct_control():
     expected = ['baseline', 'cache_tmem_base', 'cache_balanced_clusters',
                 'balanced_depth3', 'balanced_depth3_epi128']
-    assert select_variants(10) == expected
     assert select_variants(10, ['balanced_depth3_epi128']) == expected
     assert select_variants(10, ['balanced_depth3_epi128', 'balanced_depth3']) == expected
     assert select_variants(10, ['cache_mma_no_unroll']) == ['baseline', 'cache_tmem_base', 'cache_mma_no_unroll']
@@ -114,7 +113,7 @@ def test_selecting_wider_epilogue_includes_each_direct_control():
 
 
 def test_direct_control_summary_does_not_credit_epilogue_for_depth_change():
-    variants = select_variants(10)
+    variants = select_variants(10, ["balanced_depth3_epi128"])
     samples = [[12, 24, 48], [10, 20, 40], [8, 10, 40], [4, 8, 10], [2, 2, 5]]
     cases = [dict(step=10, size=4096, variant=v, samples_ms=s) for v, s in zip(variants, samples)]
     refs = {(10, 4096, 4096, 4096): 1}

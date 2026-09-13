@@ -6,13 +6,16 @@ source generation checks. The latest full B300 suite remains the earlier
 **55 passed / 2 performance failures out of 57 tests**. The subsequent
 `cache_step8_step10.FwqbDd` run at `a7b18d8` confirms all six production Step 8
 tests and all 20 benchmark samples pass; the worst 2048 sample has 3.31% margin.
-Step 10 / 4096 remains unresolved: cache plus balanced clusters improves every
-paired trial against cache-only, but its 0.139947 ms median still exceeds the
-0.139100 ms limit. Neither loop-unrolling experiment adds a measured gain.
-Production kernels remain unchanged this round. New diagnostic controls test
-three input stages, then wider epilogue chunks, with automatic short/partial
-ring correctness checks before timing. All 299 local tool/source-generation
-checks pass; GPU correctness and performance for these new variants are pending.
+Step 10 / 4096 remains unresolved: the latest `step10_depth3.1zWPNg` run at
+`6301533` has all 25 samples above the 0.139100 ms limit. Three stages yield
+only 0.14% paired gain over the balanced-grid control; wider epilogue chunks
+are slower and add a 40-byte stack frame. Neither is adopted.
+Production kernels remain unchanged this round. One new diagnostic variant
+combines both consumers' A loads into one 3-D TMA box, reducing per-stage
+load issues from three to two while preserving transfer bytes and the consumer
+protocol. It includes automatic short-K and rectangular reuse checks before
+timing. All 312 local tool/source-generation checks pass; GPU compilation,
+correctness and performance remain to be measured.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 
