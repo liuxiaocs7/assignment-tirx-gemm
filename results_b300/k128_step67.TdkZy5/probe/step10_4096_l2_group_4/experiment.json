@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "l2_group_4",
+  "sources": [
+    {
+      "before_sha256": "c522e2b20ed34729033d0e5053dba0a59f7060b1312bb077cab6ad39b5c7088f",
+      "compiled_sha256": "c522e2b20ed34729033d0e5053dba0a59f7060b1312bb077cab6ad39b5c7088f"
+    }
+  ]
+}

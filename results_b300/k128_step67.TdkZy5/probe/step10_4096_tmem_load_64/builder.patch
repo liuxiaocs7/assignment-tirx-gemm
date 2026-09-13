@@ -1,0 +1,11 @@
+--- baseline.py
++++ tmem_load_64.py
+@@ -12,7 +12,7 @@
+     K_TILES = K // BLK_K
+     PIPE_DEPTH = 4
+     EPI_N = 64
+-    TMEM_LD_N = 32  # Eight loads per consumer, with separate FP16 row buffers.
++    TMEM_LD_N = 64  # Eight loads per consumer, with separate FP16 row buffers.
+     WG_NUMBER = 3
+     CLUSTER_COUNT = min(SM_COUNT // CTA_GROUP, (M // (MMA_M * NUM_CONSUMER)) * (N // MMA_N))
+     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))

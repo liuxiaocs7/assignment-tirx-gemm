@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "balanced_clusters",
+  "sources": [
+    {
+      "before_sha256": "f3ba1adb10453ae0f74e296de6a2cfd5e63393080fef198d3d29c4896f020c18",
+      "compiled_sha256": "f3ba1adb10453ae0f74e296de6a2cfd5e63393080fef198d3d29c4896f020c18"
+    }
+  ]
+}
