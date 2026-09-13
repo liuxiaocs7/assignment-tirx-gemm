@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-from benchmark_diagnostics import capture_compilation, capture_nvrtc, run_metadata
+from benchmark_diagnostics import capture_compilation, capture_nvrtc, dump_binary_resources, run_metadata
 
 
 @pytest.mark.parametrize("compile_status", [0, 6])
@@ -112,3 +112,32 @@ def test_metadata_works_without_git(tmp_path, monkeypatch):
     metadata = run_metadata(tmp_path)
     assert metadata["git_revision"] == metadata["git_dirty"] == "unknown"
     assert len(metadata["gemm_kernels_sha256"]) == 64
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_resource_dump_reads_saved_binary_without_recompilation(tmp_path, monkeypatch, exit_code):
+    binary = tmp_path / "module_01.cubin"
+    binary.write_bytes(b"ELF fixture")
+    monkeypatch.setattr("benchmark_diagnostics.shutil.which", lambda name: "/cuda/bin/cuobjdump")
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        assert Path(args[-1]).read_bytes() == b"ELF fixture"
+        assert kwargs == dict(capture_output=True, text=True, timeout=30)
+        return subprocess.CompletedProcess(args, exit_code, "REG:168 STACK:32\n", "test diagnostic\n")
+
+    monkeypatch.setattr("benchmark_diagnostics.subprocess.run", run)
+    dump_binary_resources(binary)
+    assert calls == [["/cuda/bin/cuobjdump", "--dump-resource-usage", str(binary)]]
+    report = binary.with_suffix(".resources.txt").read_text()
+    assert f"exit code: {exit_code}" in report
+    assert "REG:168 STACK:32" in report and "test diagnostic" in report
+
+
+def test_resource_dump_is_optional_when_toolkit_is_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr("benchmark_diagnostics.shutil.which", lambda name: None)
+    monkeypatch.setenv("CUDA_PATH", str(tmp_path / "absent"))
+    binary = tmp_path / "module_01.cubin"
+    dump_binary_resources(binary)
+    assert "cuobjdump was not found" in binary.with_suffix(".resources.txt").read_text()

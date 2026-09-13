@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 
@@ -46,9 +47,35 @@ def write_json(path, data):
     Path(path).write_text(json.dumps(data, indent=2) + "\n")
 
 
+def dump_binary_resources(binary_path):
+    """Read resources from the actual binary when CUDA's cuobjdump is available.
+
+    Some NVRTC versions return frontend warnings without ptxas resource statistics,
+    even with -v. Disassembly is outside timing and does not recompile the kernel.
+    """
+    binary_path = Path(binary_path)
+    output_path = binary_path.with_suffix(".resources.txt")
+    executable = shutil.which("cuobjdump")
+    if executable is None:
+        candidate = Path(os.environ.get("CUDA_PATH", "/usr/local/cuda")) / "bin/cuobjdump"
+        if candidate.is_file():
+            executable = str(candidate)
+    if executable is None:
+        output_path.write_text("Resource report unavailable: cuobjdump was not found.\n"
+                               "Run cuobjdump --dump-resource-usage on the saved binary.\n")
+        return
+    try:
+        result = subprocess.run([executable, "--dump-resource-usage", str(binary_path)],
+                                capture_output=True, text=True, timeout=30)
+        output_path.write_text(f"cuobjdump exit code: {result.returncode}\n" + result.stdout + result.stderr)
+    except (OSError, subprocess.SubprocessError) as error:
+        # Resource reporting is optional; retain the saved binary and timing run.
+        output_path.write_text(f"Resource report unavailable: {error}\n")
+
+
 @contextmanager
 def capture_nvrtc(nvrtc, directory):
-    """Read the successful ptxas log before TVM destroys the NVRTC program."""
+    """Read NVRTC's log; some versions omit ptxas resource statistics."""
     original = nvrtc.nvrtcCompileProgram
     count = 0
 
@@ -100,7 +127,9 @@ def capture_compilation(directory):
         prefix.with_suffix(".cu").write_text(str(code))
         binary = original(code)
         suffix = ".cubin" if compiler == "nvrtc" else ".fatbin"
-        prefix.with_suffix(suffix).write_bytes(bytes(binary))
+        binary_path = prefix.with_suffix(suffix)
+        binary_path.write_bytes(bytes(binary))
+        dump_binary_resources(binary_path)
         return binary
 
     tvm_ffi.register_global_func("tvm_callback_cuda_compile", compile_cuda, override=True)
