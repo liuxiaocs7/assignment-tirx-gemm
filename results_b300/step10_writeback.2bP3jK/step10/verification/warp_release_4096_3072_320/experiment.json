@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "warp_release",
+  "sources": [
+    {
+      "before_sha256": "4e3b8356fadcf33f3f9b9e54dce40b83e40137dcf428345ed6e8568f23a841e4",
+      "compiled_sha256": "4e3b8356fadcf33f3f9b9e54dce40b83e40137dcf428345ed6e8568f23a841e4"
+    }
+  ]
+}

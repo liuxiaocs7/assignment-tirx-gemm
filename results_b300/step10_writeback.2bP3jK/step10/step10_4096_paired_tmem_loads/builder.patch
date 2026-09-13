@@ -1,0 +1,32 @@
+--- baseline.py
++++ paired_tmem_loads.py
+@@ -127,19 +127,22 @@
+                             tile_scheduler.next_tile()
+         elif wg_id < NUM_CONSUMER:
+             m_out = T.meta_var(m_st + wg_id * MMA_M)
+-            Dreg = T.alloc_local((TMEM_LD_N,), acc_type)
++            Dreg = T.alloc_local((2 * TMEM_LD_N,), acc_type)
+             Dreg_f16 = T.alloc_local((MMA_N,), d_type)
+-            Dreg_wg = Dreg.view(128, TMEM_LD_N,
+-                layout=TileLayout(S[(128, TMEM_LD_N) : (1@axis_tid_in_wg, 1)]))
++            Dreg_wg = Dreg.view(128, 2 * TMEM_LD_N,
++                layout=TileLayout(S[(128, 2 * TMEM_LD_N) : (1@axis_tid_in_wg, 1)]))
+             while tile_scheduler.valid():
+                 mma2ld.wait(wg_id, wb_phase.phase)
+                 wb_phase.advance()
+                 T.ptx.tcgen05.fence.after_thread_sync()
+-                for i in T.unroll(MMA_N // TMEM_LD_N):
+-                    col = T.meta_var(i * TMEM_LD_N)
+-                    Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, wg_id * MMA_N + col:wg_id * MMA_N + col + TMEM_LD_N])
++                for i in T.unroll(MMA_N // (2 * TMEM_LD_N)):
++                    col = T.meta_var(i * 2 * TMEM_LD_N)
++                    for part in T.unroll(2):
++                        off = T.meta_var(part * TMEM_LD_N)
++                        Tx.wg.copy_async(Dreg_wg[:, off:off + TMEM_LD_N],
++                            tmem[:, wg_id * MMA_N + col + off:wg_id * MMA_N + col + off + TMEM_LD_N])
+                     T.ptx.tcgen05.wait.ld()
+-                    Tx.cast(Dreg_f16[col:col + TMEM_LD_N], Dreg[:])
++                    Tx.cast(Dreg_f16[col:col + 2 * TMEM_LD_N], Dreg[:])
+                 # All TMEM reads have finished. MMA can overlap the TMA epilogue.
+                 T.ptx.tcgen05.fence.before_thread_sync()
+                 ld2mma.arrive(wg_id, remote=0)

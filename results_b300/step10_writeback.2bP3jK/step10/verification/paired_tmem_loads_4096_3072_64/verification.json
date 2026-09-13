@@ -1,0 +1,12 @@
+{
+  "step": 10,
+  "variant": "paired_tmem_loads",
+  "shape": [
+    4096,
+    3072,
+    64
+  ],
+  "launches": 2,
+  "verified": true,
+  "timed": false
+}

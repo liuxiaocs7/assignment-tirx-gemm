@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "paired_tmem_loads",
+  "sources": [
+    {
+      "before_sha256": "317201a440da884d7402260f32f5035b71a6eda7e8c87fa03f18f0c528dbb29e",
+      "compiled_sha256": "317201a440da884d7402260f32f5035b71a6eda7e8c87fa03f18f0c528dbb29e"
+    }
+  ]
+}

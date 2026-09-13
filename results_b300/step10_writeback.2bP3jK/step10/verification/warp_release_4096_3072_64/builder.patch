@@ -1,0 +1,13 @@
+--- baseline.py
++++ warp_release.py
+@@ -142,7 +142,9 @@
+                     Tx.cast(Dreg_f16[col:col + TMEM_LD_N], Dreg[:])
+                 # All TMEM reads have finished. MMA can overlap the TMA epilogue.
+                 T.ptx.tcgen05.fence.before_thread_sync()
+-                ld2mma.arrive(wg_id, remote=0)
++                T.cuda.warp_sync()
++                if T.filter(lane_id, T.ptx.elect_sync()):
++                    ld2mma.arrive(wg_id, remote=0, count=32)
+                 for i in T.unroll(MMA_N // EPI_N):
+                     col = T.meta_var(i * EPI_N)
+                     Tx.copy(Dsmem[wg_id, warp_id * 32 + lane_id, :], Dreg_f16[col:col + EPI_N])
