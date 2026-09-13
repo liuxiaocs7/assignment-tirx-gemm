@@ -1,0 +1,10 @@
+{
+  "step": 7,
+  "variant": "k_tile_128",
+  "sources": [
+    {
+      "before_sha256": "8fc00f231ddb06aacf222226be964c75d14025cc8e066b74223051162d7e691b",
+      "compiled_sha256": "8fc00f231ddb06aacf222226be964c75d14025cc8e066b74223051162d7e691b"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "step": 6,
+  "variant": "final_fence",
+  "sources": [
+    {
+      "before_sha256": "eaa749b30d2fd309f645d06a8b41d292ababc0138d7f64e683eb497f192f9e65",
+      "compiled_sha256": "eaa749b30d2fd309f645d06a8b41d292ababc0138d7f64e683eb497f192f9e65"
+    }
+  ]
+}

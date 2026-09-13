@@ -1,0 +1,82 @@
+Code: f41413071a0b39895f4da147fd3a6aaa75525caf; gemm_sha256=107641c0d559e52fb86b43aeab033d242e7f363d9c5875ee0784596ec0091984
+GPU: NVIDIA B300 SXM6 AC; SMs: 148; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Independent variants; verify all outputs before interleaved CUDA-event timing.
+Verified step 6 / baseline
+Verified step 6 / k_tile_128
+Verified step 6 / mma_wait_64ns
+Verified step 6 / final_fence
+Verified step 7 / baseline
+Verified step 7 / k_tile_128
+Verified step 7 / mma_wait_64ns
+Verified step 7 / epilogue_128
+Verified step 10 / baseline
+Verified step 10 / mma_wait_64ns
+Verified step 10 / tmem_load_16
+Trial 1: step 6 / baseline: 0.315999 ms
+Trial 1: step 6 / k_tile_128: 0.249296 ms
+Trial 1: step 6 / mma_wait_64ns: 0.311706 ms
+Trial 1: step 6 / final_fence: 0.313119 ms
+Trial 1: step 7 / baseline: 0.309836 ms
+Trial 1: step 7 / k_tile_128: 0.218498 ms
+Trial 1: step 7 / mma_wait_64ns: 0.303867 ms
+Trial 1: step 7 / epilogue_128: 0.310850 ms
+Trial 1: step 10 / baseline: 0.142084 ms
+Trial 1: step 10 / mma_wait_64ns: 0.142103 ms
+Trial 1: step 10 / tmem_load_16: 0.143278 ms
+Trial 2: step 6 / baseline: 0.316791 ms
+Trial 2: step 10 / tmem_load_16: 0.142972 ms
+Trial 2: step 10 / mma_wait_64ns: 0.142326 ms
+Trial 2: step 10 / baseline: 0.142082 ms
+Trial 2: step 7 / epilogue_128: 0.311665 ms
+Trial 2: step 7 / mma_wait_64ns: 0.303453 ms
+Trial 2: step 7 / k_tile_128: 0.218671 ms
+Trial 2: step 7 / baseline: 0.308323 ms
+Trial 2: step 6 / final_fence: 0.314326 ms
+Trial 2: step 6 / mma_wait_64ns: 0.312550 ms
+Trial 2: step 6 / k_tile_128: 0.249217 ms
+Trial 3: step 6 / mma_wait_64ns: 0.311460 ms
+Trial 3: step 6 / final_fence: 0.314058 ms
+Trial 3: step 7 / baseline: 0.309405 ms
+Trial 3: step 7 / k_tile_128: 0.219035 ms
+Trial 3: step 7 / mma_wait_64ns: 0.303761 ms
+Trial 3: step 7 / epilogue_128: 0.310998 ms
+Trial 3: step 10 / baseline: 0.142035 ms
+Trial 3: step 10 / mma_wait_64ns: 0.142559 ms
+Trial 3: step 10 / tmem_load_16: 0.143242 ms
+Trial 3: step 6 / baseline: 0.316145 ms
+Trial 3: step 6 / k_tile_128: 0.249423 ms
+Trial 4: step 6 / mma_wait_64ns: 0.311550 ms
+Trial 4: step 6 / k_tile_128: 0.248681 ms
+Trial 4: step 6 / baseline: 0.314380 ms
+Trial 4: step 10 / tmem_load_16: 0.143193 ms
+Trial 4: step 10 / mma_wait_64ns: 0.142196 ms
+Trial 4: step 10 / baseline: 0.142192 ms
+Trial 4: step 7 / epilogue_128: 0.310788 ms
+Trial 4: step 7 / mma_wait_64ns: 0.305982 ms
+Trial 4: step 7 / k_tile_128: 0.219488 ms
+Trial 4: step 7 / baseline: 0.308727 ms
+Trial 4: step 6 / final_fence: 0.314051 ms
+Trial 5: step 7 / baseline: 0.310277 ms
+Trial 5: step 7 / k_tile_128: 0.219124 ms
+Trial 5: step 7 / mma_wait_64ns: 0.305178 ms
+Trial 5: step 7 / epilogue_128: 0.310886 ms
+Trial 5: step 10 / baseline: 0.141994 ms
+Trial 5: step 10 / mma_wait_64ns: 0.142221 ms
+Trial 5: step 10 / tmem_load_16: 0.143234 ms
+Trial 5: step 6 / baseline: 0.316404 ms
+Trial 5: step 6 / k_tile_128: 0.248826 ms
+Trial 5: step 6 / mma_wait_64ns: 0.312639 ms
+Trial 5: step 6 / final_fence: 0.314529 ms
+step variant         median_ms    min_ms    max_ms paired_speedup limit_ms status
+   6 baseline         0.316145  0.314380  0.316791          1.000 0.310700 SLOW
+   6 k_tile_128       0.249217  0.248681  0.249423          1.268 0.310700 PASS
+   6 mma_wait_64ns    0.311706  0.311460  0.312639          1.014 0.310700 SLOW
+   6 final_fence      0.314058  0.313119  0.314529          1.007 0.310700 SLOW
+   7 baseline         0.309405  0.308323  0.310277          1.000 0.299000 SLOW
+   7 k_tile_128       0.219035  0.218498  0.219488          1.413 0.299000 PASS
+   7 mma_wait_64ns    0.303867  0.303453  0.305982          1.017 0.299000 SLOW
+   7 epilogue_128     0.310886  0.310788  0.311665          0.995 0.299000 SLOW
+  10 baseline         0.142082  0.141994  0.142192          1.000 0.139100 SLOW
+  10 mma_wait_64ns    0.142221  0.142103  0.142559          0.998 0.139100 SLOW
+  10 tmem_load_16     0.143234  0.142972  0.143278          0.992 0.139100 SLOW
+Saved results_b300/persistent_probe.VB42kg/probe/summary.csv; SLOW is a measured result, not a tool error.

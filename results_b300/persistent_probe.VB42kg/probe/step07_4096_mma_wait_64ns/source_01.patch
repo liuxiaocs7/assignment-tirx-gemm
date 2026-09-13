@@ -1,0 +1,42 @@
+--- baseline.cu
++++ mma_wait_64ns.cu
+@@ -391,6 +391,21 @@
+     desc.lo += static_cast<uint32_t>(offset);
+     return desc.desc_;
+ }
++__forceinline__ __device__ void tvm_probe_mma_wait_64ns(void* barrier, int phase) {
++    unsigned int barrier_addr_int = __cvta_generic_to_shared(barrier);
++    unsigned int ticks = 64;
++    asm volatile(
++        "{\n"
++        ".reg .pred                P1;\n"
++        "LAB_WAIT:\n"
++        "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1, %2;\n"
++        "@P1                       bra.uni DONE;\n"
++        "bra.uni                   LAB_WAIT;\n"
++        "DONE:\n"
++        "}\n"
++        :: "r"(barrier_addr_int), "r"(phase), "r"(ticks) : "memory");
++}
++
+ extern "C" __global__ void __launch_bounds__(256) kernel_kernel(const __grid_constant__ CUtensorMap A_tensormap, const __grid_constant__ CUtensorMap B_tensormap, const __grid_constant__ CUtensorMap D_tensormap);
+ extern "C" __global__ void __launch_bounds__(256) kernel_kernel(const __grid_constant__ CUtensorMap A_tensormap, const __grid_constant__ CUtensorMap B_tensormap, const __grid_constant__ CUtensorMap D_tensormap) {
+   int warp_id_in_cta = __shfl_sync((uint)4294967295, (((int)threadIdx.x) >> 5), 0, 32);
+@@ -471,7 +486,7 @@
+         while (1) {
+           if (!((_ptr_2[0] < 1024))) { break; }
+           for (int k = 0; k < 64; ++k) {
+-            tvm_builtin_ptx_mbarrier_try_wait((&(((uint64_t*)pool_buf_ptr)[(tma_phase_stage_ptr[0] + 3)])), (tma_phase_phase_ptr[0] ^ 0));
++            tvm_probe_mma_wait_64ns((&(((uint64_t*)pool_buf_ptr)[(tma_phase_stage_ptr[0] + 3)])), (tma_phase_phase_ptr[0] ^ 0));
+             int cse_v6 = (k * 64);
+             ptx_cp_async_bulk_tensor_g2s_cluster_tile_2d((&(((half*)pool_buf_ptr)[((tma_phase_stage_ptr[0] * 8192) + 512)])), (&(((uint64_t*)pool_buf_ptr)[(tma_phase_stage_ptr[0] + 1)])), ((unsigned long long)(&(A_tensormap))), 0, (uint64_t)0, (k * 64), (_ptr[0] * 128));
+             ptx_cp_async_bulk_tensor_g2s_cluster_tile_2d((&(((half*)pool_buf_ptr)[((tma_phase_stage_ptr[0] * 8192) + 16896)])), (&(((uint64_t*)pool_buf_ptr)[(tma_phase_stage_ptr[0] + 1)])), ((unsigned long long)(&(B_tensormap))), 0, (uint64_t)0, (k * 64), (_ptr_1[0] * 128));
+@@ -548,7 +563,7 @@
+       #pragma unroll 1
+       while (1) {
+         if (!((_ptr_2[0] < 1024))) { break; }
+-        tvm_builtin_ptx_mbarrier_try_wait((&(((uint64_t*)pool_buf_ptr)[5])), (wb_phase_phase_ptr[0] ^ 0));
++        tvm_probe_mma_wait_64ns((&(((uint64_t*)pool_buf_ptr)[5])), (wb_phase_phase_ptr[0] ^ 0));
+         wb_phase_phase_ptr[0] = (wb_phase_phase_ptr[0] ^ 1);
+         tvm_builtin_ptx_tcgen05_fence_after_thread_sync();
+         tvm_builtin_ptx_tcgen05_ld_32x32b_x32((&(Dreg_ptr[0])), (&(Dreg_ptr[1])), (&(Dreg_ptr[2])), (&(Dreg_ptr[3])), (&(Dreg_ptr[4])), (&(Dreg_ptr[5])), (&(Dreg_ptr[6])), (&(Dreg_ptr[7])), (&(Dreg_ptr[8])), (&(Dreg_ptr[9])), (&(Dreg_ptr[10])), (&(Dreg_ptr[11])), (&(Dreg_ptr[12])), (&(Dreg_ptr[13])), (&(Dreg_ptr[14])), (&(Dreg_ptr[15])), (&(Dreg_ptr[16])), (&(Dreg_ptr[17])), (&(Dreg_ptr[18])), (&(Dreg_ptr[19])), (&(Dreg_ptr[20])), (&(Dreg_ptr[21])), (&(Dreg_ptr[22])), (&(Dreg_ptr[23])), (&(Dreg_ptr[24])), (&(Dreg_ptr[25])), (&(Dreg_ptr[26])), (&(Dreg_ptr[27])), (&(Dreg_ptr[28])), (&(Dreg_ptr[29])), (&(Dreg_ptr[30])), (&(Dreg_ptr[31])), ((uint*)pool_buf_ptr)[0], 0, 0);

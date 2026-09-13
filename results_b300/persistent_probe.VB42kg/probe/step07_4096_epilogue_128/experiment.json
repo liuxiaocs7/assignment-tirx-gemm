@@ -1,0 +1,10 @@
+{
+  "step": 7,
+  "variant": "epilogue_128",
+  "sources": [
+    {
+      "before_sha256": "c61bcc5f3e78665747ae8b09e6a5bc2a6586b2456ba401339b806a6d1fe77f36",
+      "compiled_sha256": "c61bcc5f3e78665747ae8b09e6a5bc2a6586b2456ba401339b806a6d1fe77f36"
+    }
+  ]
+}

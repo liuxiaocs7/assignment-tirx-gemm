@@ -1,0 +1,10 @@
+{
+  "step": 6,
+  "variant": "mma_wait_64ns",
+  "sources": [
+    {
+      "before_sha256": "280aa896185d773551a1673237583ad65b11e7c4b82060654bd11520f3d0e726",
+      "compiled_sha256": "432027275657b6ca60dd0060d40650717ec4125e8973734a5dc27540a0c7d284"
+    }
+  ]
+}

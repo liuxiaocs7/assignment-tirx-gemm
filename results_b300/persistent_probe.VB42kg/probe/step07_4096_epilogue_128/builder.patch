@@ -1,0 +1,11 @@
+--- baseline.py
++++ epilogue_128.py
+@@ -9,7 +9,7 @@
+     MMA_N = BLK_N
+     K_TILES = K // BLK_K
+     PIPE_DEPTH = 2
+-    EPI_N = 64
++    EPI_N = 128
+     TMEM_LD_N = 32  # Amortize TMEM load/wait overhead without a full-row FP32 buffer.
+     WG_NUMBER = 2
+     CTA_COUNT = min(SM_COUNT, (M // BLK_M) * (N // BLK_N))
