@@ -1,3 +1,10 @@
+"""Blackwell GEMM kernels, adapted from Modern GPU Programming for MLSys.
+
+The assignment uses mlc-ai-tirx-cu130==0.0.1b2, so the kernels deliberately
+retain its scope-based API rather than the book's Apache TVM 0.26 API.
+Reference: https://mlc.ai/modern-gpu-programming-for-mlsys/
+"""
+
 import tvm
 from tvm.script import tirx as Tx
 
@@ -16,6 +23,8 @@ F16_SIZE = 2
 # ======================================================================
 
 def hgemm_v1(M, N, K):
+    if (M, N, K) != (128, 128, 64):
+        raise ValueError("Step 1 requires M=N=128 and K=64")
     a_type = tvm.DataType("float16")
     b_type = tvm.DataType("float16")
     d_type = tvm.DataType("float16")
@@ -72,19 +81,35 @@ def hgemm_v1(M, N, K):
             phase_mma: Tx.int32
             phase_mma = 0
 
-            # TODO: Synchronous load: copy A and B tiles from GMEM to SMEM
-            # Hint: use `with Tx.cta():` and `Tx.copy(dst, src)`
+            # All CTA threads load the operands before the async MMA reads SMEM.
+            with Tx.cta():
+                Tx.copy(Asmem[:, :], A[m_st:m_st + BLK_M, :])
+                Tx.copy(Bsmem[:, :], B[n_st:n_st + BLK_N, :])
+            Tx.cuda.cta_sync()
+            Tx.ptx.tcgen05.fence.after_thread_sync()
 
-            # TODO: Issue MMA (warp 0 only, elected thread)
-            # Hint: Tx.gemm_async(tmem[...], Asmem[...], Bsmem[...],
-            #          accum=False, dispatch="tcgen05", cta_group=1)
-            # Then commit and wait on mma_bar
+            if warp_id == 0:
+                with Tx.thread(parent="warp")[Tx.ptx.elect_sync()]:
+                    Tx.gemm_async(tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],
+                                  accum=False, dispatch="tcgen05", cta_group=1)
+                    Tx.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
 
-            # TODO: Writeback: TMEM → RF → GMEM
-            # Hint: Tx.copy from tmem to Dreg_wg (with warpgroup view),
-            #       Tx.cast to fp16, then Tx.copy to D
+            # Every writeback thread must observe MMA completion.
+            Tx.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
+            Tx.ptx.tcgen05.fence.after_thread_sync()
+            Dreg = Tx.alloc_local((BLK_N,), acc_type)
+            Dreg_f16 = Tx.alloc_local((BLK_N,), d_type)
+            Dreg_wg = Dreg.view(128, BLK_N,
+                layout=TileLayout(S[(128, BLK_N) : (1@axis_tid_in_wg, 1)]))
+            with Tx.warpgroup():
+                Tx.copy(Dreg_wg[:, :], tmem[:, :BLK_N])
+            with Tx.thread():
+                Tx.cast(Dreg_f16[:], Dreg[:])
+                m_thr = Tx.meta_var(m_st + warp_id * 32 + lane_id)
+                Tx.copy(D[m_thr, n_st:n_st + BLK_N], Dreg_f16[:])
 
             # --- TMEM cleanup ---
+            Tx.cuda.cta_sync()
             if warp_id == 0:
                 Tx.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
                 Tx.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=512, cta_group=1)
