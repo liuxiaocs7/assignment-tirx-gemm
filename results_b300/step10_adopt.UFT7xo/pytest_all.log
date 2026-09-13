@@ -1,0 +1,112 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/lcpu/27058528/assignment-tirx-gemm
+collecting ... collected 57 items
+
+tests/test_step01.py::test_single_tile M=128, N=128, K=64: 0.007941 ms, 0.26 TFLOP/S
+PASSED
+tests/test_step02.py::test_k_loop[64] M=128, N=128, K=64: 0.007468 ms, 0.28 TFLOP/S
+PASSED
+tests/test_step02.py::test_k_loop[512] M=128, N=128, K=512: 0.016610 ms, 1.01 TFLOP/S
+PASSED
+tests/test_step02.py::test_k_loop[1024] M=128, N=128, K=1024: 0.024876 ms, 1.35 TFLOP/S
+PASSED
+tests/test_step02.py::test_k_loop[4096] M=128, N=128, K=4096: 0.082219 ms, 1.63 TFLOP/S
+PASSED
+tests/test_step03.py::test_spatial_tiling[256] M=256, N=256, K=256: 0.010738 ms, 3.12 TFLOP/S
+PASSED
+tests/test_step03.py::test_spatial_tiling[512] M=512, N=512, K=512: 0.016624 ms, 16.15 TFLOP/S
+PASSED
+tests/test_step03.py::test_spatial_tiling[1024] M=1024, N=1024, K=1024: 0.026832 ms, 80.03 TFLOP/S
+PASSED
+tests/test_step03.py::test_spatial_tiling[2048] M=2048, N=2048, K=2048: 0.088292 ms, 194.58 TFLOP/S
+PASSED
+tests/test_step04.py::test_tma_async[256] M=256, N=256, K=256: 0.009011 ms, 3.72 TFLOP/S
+PASSED
+tests/test_step04.py::test_tma_async[512] M=512, N=512, K=512: 0.012557 ms, 21.38 TFLOP/S
+PASSED
+tests/test_step04.py::test_tma_async[1024] M=1024, N=1024, K=1024: 0.018765 ms, 114.44 TFLOP/S
+PASSED
+tests/test_step04.py::test_tma_async[2048] M=2048, N=2048, K=2048: 0.034532 ms, 497.50 TFLOP/S
+PASSED
+tests/test_step04.py::test_tma_async_short_and_odd_k[64] PASSED
+tests/test_step04.py::test_tma_async_short_and_odd_k[128] PASSED
+tests/test_step04.py::test_tma_async_short_and_odd_k[192] PASSED
+tests/test_step04.py::test_tma_async_short_and_odd_k[384] PASSED
+tests/test_step05.py::test_pipeline[512] M=512, N=512, K=512: 0.010521 ms, 25.52 TFLOP/S
+PASSED
+tests/test_step05.py::test_pipeline[1024] M=1024, N=1024, K=1024: 0.014761 ms, 145.49 TFLOP/S
+PASSED
+tests/test_step05.py::test_pipeline[2048] M=2048, N=2048, K=2048: 0.031559 ms, 544.36 TFLOP/S
+PASSED
+tests/test_step05.py::test_pipeline[4096] M=4096, N=4096, K=4096: 0.208617 ms, 658.81 TFLOP/S
+PASSED
+tests/test_step05.py::test_pipeline_short_and_odd_k[64] PASSED
+tests/test_step05.py::test_pipeline_short_and_odd_k[192] PASSED
+tests/test_step05.py::test_pipeline_short_and_odd_k[320] PASSED
+tests/test_step06.py::test_persistent[1024] M=1024, N=1024, K=1024: 0.014592 ms, 147.17 TFLOP/S
+PASSED
+tests/test_step06.py::test_persistent[2048] M=2048, N=2048, K=2048: 0.041867 ms, 410.35 TFLOP/S
+PASSED
+tests/test_step06.py::test_persistent[4096] M=4096, N=4096, K=4096: 0.247793 ms, 554.65 TFLOP/S
+PASSED
+tests/test_step06.py::test_persistent[8192] M=8192, N=8192, K=8192: 1.956582 ms, 561.96 TFLOP/S
+PASSED
+tests/test_step06.py::test_persistent_phase_across_tiles[64] PASSED
+tests/test_step06.py::test_persistent_phase_across_tiles[128] PASSED
+tests/test_step06.py::test_persistent_phase_across_tiles[192] PASSED
+tests/test_step06.py::test_persistent_phase_across_tiles[320] PASSED
+tests/test_step06.py::test_persistent_phase_across_tiles[384] PASSED
+tests/test_step07.py::test_warp_spec[1024] M=1024, N=1024, K=1024: 0.014609 ms, 147.00 TFLOP/S
+PASSED
+tests/test_step07.py::test_warp_spec[2048] M=2048, N=2048, K=2048: 0.035143 ms, 488.85 TFLOP/S
+PASSED
+tests/test_step07.py::test_warp_spec[4096] M=4096, N=4096, K=4096: 0.218333 ms, 629.49 TFLOP/S
+PASSED
+tests/test_step07.py::test_warp_spec[8192] M=8192, N=8192, K=8192: 1.872235 ms, 587.27 TFLOP/S
+PASSED
+tests/test_step07.py::test_warp_spec_odd_k_across_tiles[128] PASSED
+tests/test_step07.py::test_warp_spec_odd_k_across_tiles[192] PASSED
+tests/test_step07.py::test_warp_spec_odd_k_across_tiles[384] PASSED
+tests/test_step08.py::test_epilogue_opt[1024] M=1024, N=1024, K=1024: 0.012538 ms, 171.28 TFLOP/S
+PASSED
+tests/test_step08.py::test_epilogue_opt[2048] M=2048, N=2048, K=2048: 0.028993 ms, 592.55 TFLOP/S
+PASSED
+tests/test_step08.py::test_epilogue_opt[4096] M=4096, N=4096, K=4096: 0.161326 ms, 851.93 TFLOP/S
+PASSED
+tests/test_step08.py::test_epilogue_opt[8192] M=8192, N=8192, K=8192: 1.383647 ms, 794.65 TFLOP/S
+PASSED
+tests/test_step08.py::test_deep_pipeline_partial_ring[64] PASSED
+tests/test_step08.py::test_deep_pipeline_partial_ring[320] PASSED
+tests/test_step09.py::test_cluster[1024] M=1024, N=1024, K=1024: 0.018753 ms, 114.51 TFLOP/S
+PASSED
+tests/test_step09.py::test_cluster[2048] M=2048, N=2048, K=2048: 0.028988 ms, 592.66 TFLOP/S
+PASSED
+tests/test_step09.py::test_cluster[4096] M=4096, N=4096, K=4096: 0.143762 ms, 956.02 TFLOP/S
+PASSED
+tests/test_step09.py::test_cluster[8192] M=8192, N=8192, K=8192: 0.904460 ms, 1215.66 TFLOP/S
+PASSED
+tests/test_step09.py::test_cluster_rectangular_persistent_tiles PASSED
+tests/test_step10.py::test_multi_consumer[1024] M=1024, N=1024, K=1024: 0.027472 ms, 78.17 TFLOP/S
+PASSED
+tests/test_step10.py::test_multi_consumer[2048] M=2048, N=2048, K=2048: 0.043359 ms, 396.22 TFLOP/S
+PASSED
+tests/test_step10.py::test_multi_consumer[4096] M=4096, N=4096, K=4096: 0.139278 ms, 986.80 TFLOP/S
+FAILED
+tests/test_step10.py::test_multi_consumer[8192] M=8192, N=8192, K=8192: 0.870678 ms, 1262.82 TFLOP/S
+PASSED
+tests/test_step10.py::test_multi_consumer_rectangular_reuse[64] PASSED
+tests/test_step10.py::test_multi_consumer_rectangular_reuse[320] PASSED
+
+=================================== FAILURES ===================================
+__________________________ test_multi_consumer[4096] ___________________________
+tests/test_step10.py:15: in test_multi_consumer
+    check_timing(kernel, step=10, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 986.80 TFLOP/S(reference 1284.48 TFLOP/S)
+=========================== short test summary info ============================
+FAILED tests/test_step10.py::test_multi_consumer[4096] - AssertionError: Subm...
+=================== 1 failed, 56 passed in 75.28s (0:01:15) ====================

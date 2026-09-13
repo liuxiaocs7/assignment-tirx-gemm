@@ -1,0 +1,31 @@
+{
+  "git_revision": "70287d4df5d2b4c803f56aca277b1990f9dc2ee0",
+  "git_dirty": true,
+  "gemm_kernels_sha256": "2d2a0df6c80ecc809ece3f509d00ea65d6cb3a7af079e4c6fe9b6481143d4ba1",
+  "utils_sha256": "af9cc13549f0726e295a5ae65c91f580c7728d2c795e53e0ffe3547023f38d30",
+  "benchmark_sha256": "37d91ddbec1e74682eec22f7c64abc2b606095d04ec947aa031d889b253ef009",
+  "benchmark_diagnostics_sha256": "5db36328f88d5a5758659814bdec098cf0e5ac20823ac5b713b0ef41d0e06f74",
+  "compiler": "nvrtc",
+  "ptxas_reg_level": "10",
+  "TVM_CUDA_PTXAS_EXTRA_OPTS": "",
+  "TVM_CUDA_NVRTC_EXTRA_OPTS": "",
+  "TVM_CUDA_NVCC_NO_FAST_MATH": "",
+  "TVM_KERNEL_DEBUG": "",
+  "TVM_KERNEL_DUMP": "",
+  "CUDA_LAUNCH_BLOCKING": "",
+  "CUDA_VISIBLE_DEVICES": "0",
+  "target": "{\"kind\":\"cuda\",\"tag\":\"\",\"keys\":[\"cuda\",\"gpu\"],\"max_num_threads\":1024,\"thread_warp_size\":32,\"arch\":\"sm_103a\"}",
+  "gpu": "NVIDIA B300 SXM6 AC",
+  "sm_count": 148,
+  "tvm": "0.26.0",
+  "torch": "2.14.0+cu130",
+  "cuda": "13.0",
+  "steps": [
+    10
+  ],
+  "sizes": null,
+  "warmup": 10,
+  "repeat": 30,
+  "trials": 5,
+  "seed": 0
+}
