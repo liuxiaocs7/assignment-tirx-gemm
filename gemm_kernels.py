@@ -701,19 +701,19 @@ def hgemm_v6(M, N, K):
 # ======================================================================
 
 def hgemm_v7(M, N, K):
+    if min(M, N, K) <= 0 or M % 128 or N % 128 or K % 64:
+        raise ValueError("Step 7 requires positive M,N divisible by 128 and K divisible by 64")
     a_type = tvm.DataType("float16")
     b_type = tvm.DataType("float16")
     d_type = tvm.DataType("float16")
     acc_type = tvm.DataType("float32")
-
     BLK_M, BLK_N, BLK_K = 128, 128, 64
     MMA_N = BLK_N
     K_TILES = K // BLK_K
     PIPE_DEPTH = 2
-    EPI_N = 64       # Optional, can be any value that divides MMA_N (e.g., 64, 128)
-    TMEM_LD_N = 8    # Optional, can be any value that divides MMA_N (e.g., 8, 16, 128)
+    EPI_N = 64
+    TMEM_LD_N = 8
     WG_NUMBER = 2
-
     A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_M, BLK_K))
     B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
     D_layout = tma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, EPI_N))
@@ -726,21 +726,127 @@ def hgemm_v7(M, N, K):
     ):
         # fmt: off
         with Tx.kernel():
-            # TODO: 2 warpgroups, 4 barrier types (TMABar, TCGen05Bar, MBarrier).
-            # Use PipelineState for phase tracking.
-            #
-            # WG1, warp3: TMA producer loop
-            #   mma2tma.wait → copy_async A,B → tma2mma.arrive
-            #
-            # WG1, warp0: MMA consumer loop
-            #   ld2mma.wait → K-loop { tma2mma.wait → gemm_async → mma2tma.arrive }
-            #   → mma2ld.arrive
-            #
-            # WG0: writeback loop
-            #   mma2ld.wait → TMEM→RF→SMEM→GMEM (TMA store) → ld2mma.arrive
-            #
-            # Note: use cta_mask=1 for TCGen05Bar.arrive (non-cluster kernel).
-            pass
+            bx = Tx.cta_id([SM_COUNT], parent="kernel")
+            wg_id = Tx.warpgroup_id([WG_NUMBER], parent="cta")
+            warp_id = Tx.warp_id([4], parent="warpgroup")
+            lane_id = Tx.thread_id([32], parent="warp")
+            pool = Tx.PoolAllocator()
+            tmem_addr = pool.alloc((1,), "uint32")
+            tma2mma = TMABar(pool, PIPE_DEPTH, "tma2mma")
+            mma2tma = TCGen05Bar(pool, PIPE_DEPTH, "mma2tma")
+            mma2ld = TCGen05Bar(pool, 1, "mma2ld")
+            ld2mma = MBarrier(pool, 1, "ld2mma")
+            pool.move_base_to(1024)
+            Asmem = pool.alloc((PIPE_DEPTH, BLK_M, BLK_K), a_type, layout=A_layout)
+            Bsmem = pool.alloc((PIPE_DEPTH, BLK_N, BLK_K), b_type, layout=B_layout)
+            Dsmem = pool.alloc((BLK_M, EPI_N), d_type, layout=D_layout)
+            pool.commit()
+
+            # These helpers elect CTA thread zero internally; keep them at CTA scope.
+            tma2mma.init(1)
+            mma2tma.init(1)
+            mma2ld.init(1)
+            ld2mma.init(128)
+            if wg_id == 0:
+                if warp_id == 0:
+                    Tx.ptx.tcgen05.alloc(Tx.address_of(tmem_addr), n_cols=512, cta_group=1)
+            Tx.ptx.fence.proxy_async("shared::cta")
+            Tx.ptx.fence.mbarrier_init()
+            Tx.cuda.cta_sync()
+            tmem = Tx.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=0,
+                layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
+
+            tile_scheduler = ClusterPersistentScheduler2D(
+                "ts", num_m_tiles=M // BLK_M, num_n_tiles=N // BLK_N,
+                l2_group_size=8, num_clusters=SM_COUNT)
+            tile_scheduler.init(bx)
+            m_st = Tx.meta_var(tile_scheduler.m_idx * BLK_M)
+            n_st = Tx.meta_var(tile_scheduler.n_idx * BLK_N)
+            tma_phase = PipelineState("tma", PIPE_DEPTH)
+            mma_phase = PipelineState("mma", PIPE_DEPTH)
+            ld_phase = PipelineState("ld", 1)
+            wb_phase = PipelineState("wb", 1)
+            tma_phase.init(is_producer=True)
+            mma_phase.init(is_producer=False)
+            ld_phase.init(is_producer=True)
+            wb_phase.init(is_producer=False)
+
+            @Tx.inline
+            def tma_load(k_st):
+                Tx.copy_async(Asmem[tma_phase.stage, :, :],
+                              A[m_st:m_st + BLK_M, k_st:k_st + BLK_K],
+                              dispatch="tma", cta_group=1,
+                              mbar=tma2mma.ptr_to([tma_phase.stage]))
+                Tx.copy_async(Bsmem[tma_phase.stage, :, :],
+                              B[n_st:n_st + BLK_N, k_st:k_st + BLK_K],
+                              dispatch="tma", cta_group=1,
+                              mbar=tma2mma.ptr_to([tma_phase.stage]))
+
+            if wg_id == 1:
+                if warp_id == 3:
+                    with Tx.thread(parent="warp")[Tx.ptx.elect_sync()]:
+                        while tile_scheduler.valid():
+                            for k in range(K_TILES):
+                                mma2tma.wait(tma_phase.stage, tma_phase.phase)
+                                tma_load(k * BLK_K)
+                                tma2mma.arrive(tma_phase.stage,
+                                    (BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
+                                tma_phase.move_to_next_stage()
+                            tile_scheduler.next_tile()
+                elif warp_id == 0:
+                    with Tx.thread(parent="warp")[Tx.ptx.elect_sync()]:
+                        while tile_scheduler.valid():
+                            ld2mma.wait(0, ld_phase.phase)
+                            ld_phase.move_to_next_stage()
+                            for k in range(K_TILES):
+                                tma2mma.wait(mma_phase.stage, mma_phase.phase)
+                                Tx.ptx.tcgen05.fence.after_thread_sync()
+                                Tx.gemm_async(tmem[:, :MMA_N],
+                                    Asmem[mma_phase.stage, :, :], Bsmem[mma_phase.stage, :, :],
+                                    accum=(k != 0), dispatch="tcgen05", cta_group=1)
+                                mma2tma.arrive(mma_phase.stage, cta_group=1, cta_mask=1)
+                                mma_phase.move_to_next_stage()
+                            mma2ld.arrive(0, cta_group=1, cta_mask=1)
+                            tile_scheduler.next_tile()
+            elif wg_id == 0:
+                Dreg = Tx.alloc_local((TMEM_LD_N,), acc_type)
+                Dreg_f16 = Tx.alloc_local((MMA_N,), d_type)
+                Dreg_wg = Dreg.view(128, TMEM_LD_N,
+                    layout=TileLayout(S[(128, TMEM_LD_N) : (1@axis_tid_in_wg, 1)]))
+                while tile_scheduler.valid():
+                    mma2ld.wait(0, wb_phase.phase)
+                    wb_phase.move_to_next_stage()
+                    Tx.ptx.tcgen05.fence.after_thread_sync()
+                    for i in Tx.unroll(MMA_N // TMEM_LD_N):
+                        col = Tx.meta_var(i * TMEM_LD_N)
+                        with Tx.warpgroup():
+                            Tx.copy(Dreg_wg[:, :], tmem[:, col:col + TMEM_LD_N])
+                        with Tx.thread():
+                            Tx.cast(Dreg_f16[col:col + TMEM_LD_N], Dreg[:])
+                    # All TMEM reads have finished. MMA can overlap the TMA epilogue.
+                    with Tx.thread():
+                        ld2mma.arrive(0, cta_id=0, pred=True)
+                    for i in Tx.unroll(MMA_N // EPI_N):
+                        col = Tx.meta_var(i * EPI_N)
+                        with Tx.thread():
+                            Tx.copy(Dsmem[warp_id * 32 + lane_id, :], Dreg_f16[col:col + EPI_N])
+                        Tx.ptx.fence.proxy_async("shared::cta")
+                        Tx.cuda.warpgroup_sync(10)
+                        if warp_id == 0:
+                            with Tx.thread(parent="warp")[Tx.ptx.elect_sync()]:
+                                Tx.copy_async(D[m_st:m_st + BLK_M, n_st + col:n_st + col + EPI_N],
+                                              Dsmem[:, :], dispatch="tma")
+                                Tx.ptx.cp_async.bulk.commit_group()
+                                Tx.ptx.cp_async.bulk.wait_group(0)
+                        Tx.cuda.warpgroup_sync(10)
+                    tile_scheduler.next_tile()
+
+            Tx.cuda.cta_sync()
+            # Exactly the allocating warp releases the TMEM allocation.
+            if wg_id == 0:
+                if warp_id == 0:
+                    Tx.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
+                    Tx.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=512, cta_group=1)
 
     return kernel
 
