@@ -1,6 +1,96 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：stage_profile.LPt75W
+## 最新结果：profile_guided.6KUfDZ 与全量回归
+
+用户最新粘贴的全量结果仍是 **55 passed / 2 failed，74.41 s**，均为性能断言：
+Step 8 / 2048 为 572.34 TFLOP/s（约 0.030017 ms，超门槛 0.39%），
+Step 10 / 4096 为 957.41 TFLOP/s（约 0.143553 ms，超门槛 3.20%）。
+这次摘要未附运行提交与源文件指纹，不把它绑定到某个提交。
+本地 `dba5316` 的标题虽为 “finish step 8”，但它只增加日志；直到本轮采用前，
+生产内核仍未包含 `cache_tmem_base`。probe 的成功不会自动改变 pytest 测量的代码。
+
+数据：[Step 8 summary](results_b300/profile_guided.6KUfDZ/step08/summary.csv)、
+[Step 8 samples](results_b300/profile_guided.6KUfDZ/step08/samples.json)、
+[Step 10 summary](results_b300/profile_guided.6KUfDZ/step10/summary.csv)、
+[Step 10 samples](results_b300/profile_guided.6KUfDZ/step10/samples.json)。
+运行版本 `570b680`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+两份 run.json 中各七个 Python 源文件指纹与运行提交一致，全部八个版本的
+builder、变换前 CUDA、实际编译 CUDA 指纹核对通过，各 step 内编译选项相同。
+全部版本均通过初始和逐轮数值校验。
+
+| Step / 大小 | 版本 | 中位数 ms | 同轮加速比 | 达标轮次 | REG / STACK |
+|---|---|---:|---:|---:|---:|
+| 8 / 2048 | baseline | 0.029491 | 1.000× | 4/5 | 106 / 0 |
+| 8 / 2048 | cache_tmem_base | **0.028849** | **1.024×** | **5/5** | 128 / 0 |
+| 8 / 2048 | reuse_wait_64ns | 0.029706 | 0.988× | 4/5 | 106 / 0 |
+| 10 / 4096 | baseline | 0.142305 | 1.000× | 0/5 | 168 / 32 |
+| 10 / 4096 | cache_tmem_base | **0.140656** | **1.010×** | **0/5** | 167 / 0 |
+| 10 / 4096 | reuse_wait_64ns | 0.142170 | 1.001× | 0/5 | 168 / 32 |
+| 10 / 4096 | tma_wait_64ns | 0.142100 | 1.002× | 0/5 | 168 / 32 |
+| 10 / 4096 | ring_wait_64ns | 0.142229 | 1.000× | 0/5 | 168 / 32 |
+
+门槛分别为 0.029900 / 0.139100 ms。Step 8 缓存赢得 4/5 轮配对比较，
+最慢样本 0.029453 ms 仍有约 1.50% 余量。Step 10 缓存赢得全部五轮，但中位数
+仍超门槛约 1.12%；等待变体没有实质收益，暂不继续调等待提示。
+
+### 本轮采用与验证边界
+
+`3bb51c9` **仅采用 Step 8 的缓存基址**：在原 CTA 初始化同步之后用 `T.let`
+读取一次 TMEM 分配结果，供 MMA 和写回使用；原 64 ns 数据就绪等待、分配释放、
+全部 barrier 和数值运算保留。2048 生成 CUDA 与实测缓存版本完全一致，另重放
+SM100a / SM103a 的其余评分形状及短 K、矩形形状。Step 8 的 REG 虽增加到 128，
+实测仍更快；不能用寄存器数本身代替性能测量。**该生产改动还需要六项 GPU pytest
+及四个评分形状 benchmark，不能宣称 Step 8 已稳定全过。**
+
+Step 10 生产内核尚未修改。缓存版本的 SASS 在 MMA 主循环内消除了 TMEM 基址
+`LDS`，STACK 32→0，整个 kernel 无 `LDL`/`STL`。初始化和清理处仍有共享读取。
+编译器同时把 MMA K 循环展开为四个 stage（16 个静态 `UTCHMMA` 发射位置），
+循环内仍有描述符准备和 `R2UR`。这些是下一轮可改变的具体代码路径，尚不能证明
+它们占据了剩余的全部耗时。
+
+### 下一轮：Step 8 正式验证与 Step 10 缓存对照
+
+Step 10 默认五个独立构建：原版 `baseline`、已测 `cache_tmem_base`，及以下三个
+分别在缓存基础上只增加一个因素的版本。三者不互相叠加。
+
+1. **`cache_unroll_ring`**：完整 K-ring 使用固定 stage 地址。预测：若动态 stage
+   地址和描述符准备仍限制缓存后的循环，固定地址应比 cache-only 更快。未缓存时
+   这一变体只有约 0.5% 收益；本轮检验移除基址读取之后是否改变收益。短 K 和不完整
+   ring 保持缓存版原路径，phase 仍跨输出 tile 保留。
+2. **`cache_mma_no_unroll`**：只给生成 CUDA 的 MMA K 循环加 `#pragma unroll 1`，
+   不改变 TMA 循环。预测：若自动四次展开造成描述符同时存活和调度开销，限制展开
+   应减少这些指令并缩短耗时；若延迟隐藏依赖展开，则会变慢。须同时检查 SASS
+   是否实际改变，不能以源码 pragma 推断编译器结果。
+3. **`cache_balanced_clusters`**：保留每个 cluster 的最大输出 tile 数，缩小至足够
+   覆盖它们的网格；4096 下为 64 个 cluster，每个两 tile。预测：若缓存后仍受
+   74-cluster 网格的部分空闲尾部影响，应改善整次 launch；也可能因并发减少而变慢。
+   未缓存时只有约 0.6% 收益，本轮单独检验与缓存的组合。
+
+工具自动为这些组合保留 cache-only 对照，`vs_cache` / `paired_cache_speedup`
+报告逐轮相对缓存版的比值中位数；`paired_speedup` 仍相对生产 baseline。
+PASS/SLOW 仍只用原始时延门槛。原数值校验、10 次 warmup、30 次 repeat、五轮交错
+CUDA-event 计时保持不变；编译输入、diff、资源和可用的 SASS 均保存。
+整套本地工具与 CUDA 源码生成检查 **288 passed，106.91 s**；其中新增 14 项覆盖
+缓存组合的操作数、phase 与短 K 路径、MMA pragma 重放和配对汇总。本机没有 NVIDIA GPU，
+这些检查不替代 GPU 数值和性能验证。详见 [RUNNING.md](RUNNING.md)。
+
+同步本轮两个提交后运行：
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/cache_step8_step10.XXXXXX)
+uv run python -m pytest tests/test_step08.py -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest_step08.log"
+uv run python -u benchmark.py --steps 8 --trials 5 \
+  --csv "$tirx_run/step08.csv" --diagnostics-dir "$tirx_run/compiler_step08" \
+  2>&1 | tee "$tirx_run/benchmark_step08.log"
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：stage_profile.LPt75W
 
 数据：[profile.log](results_b300/stage_profile.LPt75W/profile.log)、
 [timings.json](results_b300/stage_profile.LPt75W/profile/timings.json)、
@@ -58,7 +148,7 @@ TMA 和 MMA 同时有高等待占比，说明应先检查 K-ring 的交接和发
 `((uint*)pool_buf_ptr)[0]`，而该分配结果从初始化同步后直到最后 dealloc 都不改变。
 这给出一个具体、可验证的缓存机会，但静态指令存在不等于已证明其性能占比。
 
-### 下一轮：缓存 TMEM 基址与 K-ring 等待对照
+### 已完成实验：缓存 TMEM 基址与 K-ring 等待对照
 
 本轮生产 `gemm_kernels.py` 和评分不变，`probe_persistent.py` 增加以下对照：
 
@@ -80,9 +170,9 @@ Step 10 默认五个版本（含同轮 `tma_wait_64ns` 控制）。不重复无�
 工具现也保存可用的 SASS，便于检查缓存是否真正消除了循环内读取。
 
 整套 **273 项本地检查通过**，新增 15 项覆盖缓存发布顺序、全部硬件操作及地址等价、短 K/矩形路径、
-实测等待代码重放，以及上传 trace/summary 重建。GPU 性能结论仍待这轮无插桩实验。
+实测等待代码重放，以及上传 trace/summary 重建。当时 GPU 性能结论待回传；实测结果现见本文开头。
 
-同步提交后依次运行：
+以下为已完成的历史命令，无需重复：
 
 ```bash
 mkdir -p results_b300

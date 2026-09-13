@@ -169,11 +169,12 @@ def test_adopted_k_tile_is_not_applied_again(step, tmp_path):
         build_variant(step, (4096,) * 3, "k_tile_128", tmp_path)
 
 
-def test_adopted_step8_tma_wait_is_not_applied_again(tmp_path):
+@pytest.mark.parametrize("variant", ["tma_wait_64ns", "cache_tmem_base"])
+def test_adopted_step8_experiment_is_not_applied_again(variant, tmp_path):
     pytest.importorskip("tvm")
-    assert "tma_wait_64ns" not in DEFAULT_STEP_VARIANTS[8]
-    with pytest.raises(ValueError, match="Step 8 has adopted tma_wait_64ns"):
-        build_variant(8, (2048,) * 3, "tma_wait_64ns", tmp_path)
+    assert variant not in DEFAULT_STEP_VARIANTS[8]
+    with pytest.raises(ValueError, match=f"Step 8 has adopted {variant}"):
+        build_variant(8, (2048,) * 3, variant, tmp_path)
 
 
 @pytest.mark.parametrize("variant", ["tmem_load_64", "l2_group_4", "balanced_clusters"])

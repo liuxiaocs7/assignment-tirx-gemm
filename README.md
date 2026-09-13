@@ -4,22 +4,16 @@
 Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
 source generation checks. The latest user-reported full B300 suite has
 **55 passed / 2 performance failures out of 57 tests**: Step 8 at 2048 and
-Step 10 at 4096. Steps 1–7 and 9 pass in full. The uploaded
-`k128_step67.TdkZy5` run at `ade5040` verifies all 16 Step 6/7 tests and all
-40 benchmark samples, including the new short/odd K paths. The latest
-`step8_wait_step10_pipeline.VnSWDg` at `59464cf` passes all six production
-Step 8 tests, but only two of five benchmark samples at 2048 meet the limit.
-Its cubin is identical to the earlier successful wait probe; performance
-margin remains insufficient. All 25 Step 10 pipeline/writeback samples miss
-the limit, including the streamed variant that reduces registers from 168 to 77.
-No new full suite was run, and no Step 10 variant was adopted.
-The subsequent `stage_profile.LPt75W` run validates all profiling copies and
-8,960 trace records. TMA spends about 80% / 90% of its role interval waiting
-for stage reuse in Steps 8 / 10; the two Step 10 consumers finish nearly
-together. SASS also shows repeated loads of the immutable TMEM base inside
-the MMA loop. New probes test caching that base and K-ring wait scheduling;
-these are hypotheses awaiting GPU timing. All 273 local tool/source-generation
-checks pass. Baselines still lack performance margin.
+Step 10 at 4096 (74.41 s). Steps 1–7 and 9 pass in full.
+The `profile_guided.6KUfDZ` run at `570b680` validates the immutable TMEM base
+cache: Step 8 / 2048 passes all five samples at a 0.028849 ms median; Step 10 /
+4096 improves to 0.140656 ms but still misses its 0.139100 ms limit.
+Step 8 now adopts that exact cache in `3bb51c9`; all production GPU shapes
+still need validation. Step 10 remains unchanged, with new cache-based
+experiments for ring addressing, MMA loop unrolling, and cluster count.
+The tool retains both production and cache-only controls and reports paired
+speedups against each. All 288 local tool/source-generation checks pass;
+these checks do not establish GPU correctness or performance.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 

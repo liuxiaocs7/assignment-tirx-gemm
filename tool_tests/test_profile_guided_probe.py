@@ -31,10 +31,16 @@ def generate(kernel):
 @pytest.mark.parametrize("step,shape", [(8, (2048,) * 3), (8, (1024, 3072, 64)),
                                        (8, (1024, 3072, 320)), (10, (4096,) * 3),
                                        (10, (4096, 3072, 64)), (10, (4096, 3072, 320))])
-def test_cached_tmem_base_is_published_before_snapshot_and_keeps_all_operations(step, shape, tmp_path):
+def test_cached_tmem_base_is_published_before_snapshot_and_keeps_all_operations(step, shape, tmp_path, monkeypatch):
     pytest.importorskip("tvm")
     import gemm_kernels
 
+    # Replay the pre-adoption Step 8 builder; Step 10 is still experimental.
+    if step == 8:
+        path = ROOT / "results_b300/profile_guided.6KUfDZ/step08/step08_2048_baseline/builder.py"
+        namespace = dict(vars(gemm_kernels))
+        exec(compile(path.read_text(), str(path), "exec"), namespace)
+        monkeypatch.setattr(gemm_kernels, "hgemm_v8", namespace["hgemm_v8"])
     baseline = body(generate(getattr(gemm_kernels, f"hgemm_v{step}")(*shape)))
     actual = body(generate(build_variant(step, shape, "cache_tmem_base", tmp_path)))
     load = "uint mma_tmem_base = ((uint*)pool_buf_ptr)[0];"

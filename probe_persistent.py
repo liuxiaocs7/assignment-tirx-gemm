@@ -1,9 +1,9 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
-Defaults focus on the stage-profile findings: cache the immutable TMEM base
-and shorten stage-reuse waits. Step 10 also tests both sides of the K-ring
-handoff together. Each variant starts from production, without profiling.
-Steps 8/10 still need performance margin. Old experiments remain opt-in.
+Step 8 now uses the measured TMEM base cache; validate it with pytest/benchmark.
+Step 10 keeps production and cache-only controls, then changes ring addressing,
+MMA compiler unrolling, or cluster count on top of the cache. Old experiments
+remain opt-in. Each variant is built separately, without profiling.
 No production kernel is edited by this tool.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
@@ -15,6 +15,7 @@ import difflib
 import hashlib
 import inspect
 import re
+import statistics
 from pathlib import Path
 
 from benchmark_diagnostics import capture_compilation, run_metadata, write_json
@@ -30,13 +31,20 @@ STEP_VARIANTS = {
          "l2_group_4", "balanced_clusters", "tma_wait_64ns",
          "specialize_mma", "specialize_writeback", "unroll_ring",
          "pipe_depth_2", "k128_depth_2", "stream_epilogue",
-         "cache_tmem_base", "reuse_wait_64ns", "ring_wait_64ns"),
+         "cache_tmem_base", "reuse_wait_64ns", "ring_wait_64ns",
+         "cache_unroll_ring", "cache_mma_no_unroll", "cache_balanced_clusters"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
-                         8: ("baseline", "cache_tmem_base", "reuse_wait_64ns"),
-                         10: ("baseline", "cache_tmem_base", "reuse_wait_64ns",
-                              "tma_wait_64ns", "ring_wait_64ns")}
+                         8: ("baseline",),
+                         10: ("baseline", "cache_tmem_base", "cache_unroll_ring",
+                              "cache_mma_no_unroll", "cache_balanced_clusters")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
+# Each combination varies exactly one factor relative to cache_tmem_base.
+CACHE_EXPERIMENTS = {
+    "cache_unroll_ring": "unroll_ring",
+    "cache_mma_no_unroll": None,  # CUDA-only pragma; the builder is cache-only.
+    "cache_balanced_clusters": "balanced_clusters",
+}
 
 
 def unroll_pipeline_ring(source):
@@ -148,12 +156,19 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant in CACHE_EXPERIMENTS:
+        cached = variant_builder_source(source, step, "cache_tmem_base")
+        extra = CACHE_EXPERIMENTS[variant]
+        return variant_builder_source(cached, step, extra) if extra else cached
     if variant == "tma_wait_64ns" and "tirx_tma_wait_64ns" in source:
         raise ValueError(f"Step {step} has adopted tma_wait_64ns; validate the production kernel "
                          f"with benchmark.py --steps {step} and tests/test_step{step:02d}.py")
     if variant in ("baseline", "mma_wait_64ns", "tma_wait_64ns", "reuse_wait_64ns", "ring_wait_64ns"):
         return source
     if variant == "cache_tmem_base":
+        if "mma_tmem_base: T.let" in source:
+            raise ValueError(f"Step {step} has adopted cache_tmem_base; validate the production kernel "
+                             f"with benchmark.py --steps {step} and tests/test_step{step:02d}.py")
         # The allocation result is published by the existing CTA/cluster sync.
         # No role changes it until final deallocation. A let snapshots it once,
         # so compiler memory clobbers need not reload SMEM in every MMA stage.
@@ -235,9 +250,25 @@ def build_variant(step, shape, variant, directory):
 
 
 def variant_source(source, step, variant):
-    """Change selected barrier waits only, retaining acquire, parity, and retry."""
+    """Apply isolated CUDA wait hints or the cache-control MMA loop pragma."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant == "cache_mma_no_unroll":
+        # The measured cache-only cubin unrolled the MMA K loop four times.
+        # Isolate that compiler choice; leave the producer loop and every
+        # barrier/descriptor/MMA operand unchanged. Fail on source drift.
+        if source.count("uint mma_tmem_base = ((uint*)pool_buf_ptr)[0];") != 1:
+            raise ValueError("MMA unroll experiment requires the cached TMEM base")
+        loop = re.compile(r"^( +)(for \(int k_1 = 0; k_1 < \d+; \+\+k_1\) \{)$", re.M)
+        matches = list(loop.finditer(source))
+        if len(matches) != 1:
+            raise ValueError("expected exactly one MMA K loop; use a larger K")
+        match = matches[0]
+        if source[:match.start()].rstrip().endswith("#pragma unroll 1"):
+            raise ValueError("MMA unroll experiment is already applied")
+        if not source[match.end():].lstrip().startswith("tvm_builtin_ptx_mbarrier_try_wait("):
+            raise ValueError("unexpected MMA K loop entry")
+        return loop.sub(lambda m: f"{m[1]}#pragma unroll 1\n{m[0]}", source)
     if variant not in ("mma_wait_64ns", "tma_wait_64ns", "reuse_wait_64ns", "ring_wait_64ns"):
         return source
     marker = 'extern "C" __global__'
@@ -286,6 +317,23 @@ def variant_source(source, step, variant):
     return header + shorter + "\n" + marker + body
 
 
+def summarize_with_cache_control(cases, reference_times, tolerance):
+    """Keep original grading and add paired comparisons with the cache control."""
+    rows = summarize(cases, reference_times, tolerance)
+    controls = {(c["step"], c["size"]): c["samples_ms"] for c in cases
+                if c["variant"] == "cache_tmem_base"}
+    for case, row in zip(cases, rows):
+        control = controls.get((case["step"], case["size"]))
+        if control is not None:
+            if len(control) != len(case["samples_ms"]):
+                raise ValueError("cache control and variant need matching trials")
+            row["paired_cache_speedup"] = statistics.median(
+                base / sample for base, sample in zip(control, case["samples_ms"]))
+        else:
+            row["paired_cache_speedup"] = None
+    return rows
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="fresh directory, must not exist")
@@ -305,6 +353,8 @@ def main(argv=None):
     selected = {}
     for step in dict.fromkeys(args.steps):
         variants = list(dict.fromkeys(("baseline", *(args.variants or DEFAULT_STEP_VARIANTS[step]))))
+        if any(v in CACHE_EXPERIMENTS for v in variants) and "cache_tmem_base" not in variants:
+            variants.insert(1, "cache_tmem_base")
         if any(v not in STEP_VARIANTS[step] for v in variants):
             parser.error(f"Step {step} supports: {', '.join(STEP_VARIANTS[step])}")
         selected[step] = variants
@@ -331,11 +381,15 @@ def main(argv=None):
                     probe_step45_sha256=hashlib.sha256(Path(__file__).with_name("probe_step45.py").read_bytes()).hexdigest(),
                     profile_persistent_sha256=hashlib.sha256(Path(__file__).with_name("profile_persistent.py").read_bytes()).hexdigest(),
                     steps=list(selected), size=args.size, variants=selected,
+                    comparison_controls={str(step): {v: "cache_tmem_base" for v in variants
+                                                    if v in CACHE_EXPERIMENTS}
+                                         for step, variants in selected.items()},
                     trials=args.trials, warmup=args.warmup, repeat=args.repeat, seed=args.seed)
     write_json(args.output / "run.json", metadata)
     print(f"Code: {metadata['git_revision']}; gemm_sha256={metadata['gemm_kernels_sha256']}", flush=True)
     print(f"GPU: {device.name}; SMs: {device.multi_processor_count}; {target}", flush=True)
-    print("Independent variants; verify all outputs before interleaved CUDA-event timing.", flush=True)
+    print("Separate builds; cache_* combinations use cache_tmem_base as control. "
+          "Verify all outputs before interleaved CUDA-event timing.", flush=True)
     A, B, _ = prepare_data(args.size, args.size, args.size)
     cases, executables, outputs = [], [], []
     for step, variants in selected.items():
@@ -373,16 +427,18 @@ def main(argv=None):
             print(f"Trial {trial + 1}: step {cases[index]['step']} / "
                   f"{cases[index]['variant']}: {elapsed:.6f} ms", flush=True)
         write_json(args.output / "samples.json", dict(orders=orders, cases=cases))
-    rows = summarize(cases, REFERENCE_TIMES, TIMING_TOLERANCE)
+    rows = summarize_with_cache_control(cases, REFERENCE_TIMES, TIMING_TOLERANCE)
     with (args.output / "summary.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    print("step variant         median_ms    min_ms    max_ms paired_speedup limit_ms status")
+    print("step variant         median_ms    min_ms    max_ms paired_speedup vs_cache limit_ms status")
     for row in rows:
+        cache_ratio = row["paired_cache_speedup"]
+        cache_text = "n/a" if cache_ratio is None else f"{cache_ratio:.3f}"
         print(f"{row['step']:>4} {row['variant']:<15} {row['median_ms']:9.6f} "
               f"{row['min_ms']:9.6f} {row['max_ms']:9.6f} {row['paired_speedup']:14.3f} "
-              f"{row['limit_ms']:8.6f} {row['status']}")
+              f"{cache_text:>8} {row['limit_ms']:8.6f} {row['status']}")
     print(f"Saved {args.output / 'summary.csv'}; SLOW is a measured result, not a tool error.")
     return 0
 
