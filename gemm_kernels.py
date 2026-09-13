@@ -982,7 +982,10 @@ __forceinline__ __device__ void tirx_tma_wait_64ns(void* barrier, int phase) {
         T.ptx.fence.proxy_async("shared::cta")
         T.ptx.fence.mbarrier_init()
         T.cuda.cta_sync()
-        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=tmem_addr[0],
+        # B300 profile_guided.6KUfDZ: snapshot the published, immutable base
+        # so MMA memory clobbers do not force repeated shared-memory loads.
+        mma_tmem_base: T.let = tmem_addr[0]
+        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=mma_tmem_base,
             layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
 
         tile_scheduler = ClusterPersistentScheduler2D(
