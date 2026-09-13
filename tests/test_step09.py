@@ -13,3 +13,11 @@ def test_cluster(size):
     C_tir = compile_and_run(kernel, A, B, C)
     verify(C_tir, A, B)
     check_timing(kernel, step=9, M=M, N=N, K=K)
+
+
+def test_cluster_rectangular_persistent_tiles():
+    # 96 cluster tiles exceed the 74 persistent clusters; K visits a partial ring.
+    M, N, K = 2048, 3072, 320
+    kernel = hgemm_v9(M, N, K)
+    A, B, C = prepare_data(M, N, K)
+    verify(compile_and_run(kernel, A, B, C), A, B)
