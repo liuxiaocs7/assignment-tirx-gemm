@@ -1,0 +1,33 @@
+--- baseline.cu
++++ mma_wait_64ns.cu
+@@ -372,6 +372,21 @@
+     desc.lo += static_cast<uint32_t>(offset);
+     return desc.desc_;
+ }
++__forceinline__ __device__ void tvm_probe_ptx_mbarrier_wait_64ns(void* barrier, int phase) {
++    unsigned int barrier_addr_int = __cvta_generic_to_shared(barrier);
++    unsigned int ticks = 64;
++    asm volatile(
++        "{\n"
++        ".reg .pred                P1;\n"
++        "LAB_WAIT:\n"
++        "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1, %2;\n"
++        "@P1                       bra.uni DONE;\n"
++        "bra.uni                   LAB_WAIT;\n"
++        "DONE:\n"
++        "}\n"
++        :: "r"(barrier_addr_int), "r"(phase), "r"(ticks) : "memory");
++}
++
+ extern "C" __global__ void __launch_bounds__(128) kernel_kernel(const __grid_constant__ CUtensorMap A_tensormap, const __grid_constant__ CUtensorMap B_tensormap, const __grid_constant__ CUtensorMap D_tensormap);
+ extern "C" __global__ void __launch_bounds__(128) kernel_kernel(const __grid_constant__ CUtensorMap A_tensormap, const __grid_constant__ CUtensorMap B_tensormap, const __grid_constant__ CUtensorMap D_tensormap) {
+   int warp_id_in_cta = __shfl_sync((uint)4294967295, (((int)threadIdx.x) >> 5), 0, 32);
+@@ -418,7 +433,7 @@
+         ptx_tcgen05_mma_cta_1_kind_f16_SS(((uint*)pool_buf_ptr)[0], tvm_builtin_smem_desc_add_16B_offset(descA_ptr[0], 4), tvm_builtin_smem_desc_add_16B_offset(descB_ptr[0], 4), (uint)136314896, (bool)1, 0, 0, 0, 0);
+         ptx_tcgen05_mma_cta_1_kind_f16_SS(((uint*)pool_buf_ptr)[0], tvm_builtin_smem_desc_add_16B_offset(descA_ptr[0], 6), tvm_builtin_smem_desc_add_16B_offset(descB_ptr[0], 6), (uint)136314896, (bool)1, 0, 0, 0, 0);
+         ptx_tcgen05_commit_cta_group_1((&(((uint64_t*)pool_buf_ptr)[2])));
+-        tvm_builtin_ptx_mbarrier_try_wait((&(((uint64_t*)pool_buf_ptr)[2])), phase_mma_ptr[0]);
++        tvm_probe_ptx_mbarrier_wait_64ns((&(((uint64_t*)pool_buf_ptr)[2])), phase_mma_ptr[0]);
+         phase_tma_ptr[0] = (phase_tma_ptr[0] ^ 1);
+         phase_mma_ptr[0] = (phase_mma_ptr[0] ^ 1);
+       }

@@ -1,0 +1,10 @@
+{
+  "step": 5,
+  "variant": "wait_poll",
+  "sources": [
+    {
+      "before_sha256": "c5c62ef452bd7e8be9a386a05def820b9dd7a093ec7c4d6d858d51999ba42a83",
+      "compiled_sha256": "59319ced8facf24c3ecee0b95fcbd4760c21002c6e57a24749785de2568264d6"
+    }
+  ]
+}

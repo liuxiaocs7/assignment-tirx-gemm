@@ -1,0 +1,75 @@
+Code: c8535347382772c92f47a2d42f2520cf57a89f30; gemm_sha256=bfa00feb11ee890da2b0e93d47532f8ef2ea7ddf1fcbc822b5343066626fca9c
+GPU: NVIDIA B300 SXM6 AC; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Diagnostic variants only; verify all outputs before interleaved CUDA-event timing.
+Verified step 4 / baseline
+Verified step 4 / wait_64ns
+Verified step 4 / wait_poll
+Verified step 4 / tma_wait_64ns
+Verified step 4 / mma_wait_64ns
+Verified step 5 / baseline
+Verified step 5 / wait_64ns
+Verified step 5 / wait_poll
+Verified step 5 / tma_wait_64ns
+Verified step 5 / mma_wait_64ns
+Trial 1: step 4 / baseline: 0.022780 ms
+Trial 1: step 4 / wait_64ns: 0.022649 ms
+Trial 1: step 4 / wait_poll: 0.023332 ms
+Trial 1: step 4 / tma_wait_64ns: 0.022708 ms
+Trial 1: step 4 / mma_wait_64ns: 0.022704 ms
+Trial 1: step 5 / baseline: 0.016505 ms
+Trial 1: step 5 / wait_64ns: 0.014494 ms
+Trial 1: step 5 / wait_poll: 0.016539 ms
+Trial 1: step 5 / tma_wait_64ns: 0.016495 ms
+Trial 1: step 5 / mma_wait_64ns: 0.014513 ms
+Trial 2: step 4 / baseline: 0.022713 ms
+Trial 2: step 5 / mma_wait_64ns: 0.014482 ms
+Trial 2: step 5 / tma_wait_64ns: 0.016521 ms
+Trial 2: step 5 / wait_poll: 0.017083 ms
+Trial 2: step 5 / wait_64ns: 0.015020 ms
+Trial 2: step 5 / baseline: 0.016515 ms
+Trial 2: step 4 / mma_wait_64ns: 0.022699 ms
+Trial 2: step 4 / tma_wait_64ns: 0.022661 ms
+Trial 2: step 4 / wait_poll: 0.022926 ms
+Trial 2: step 4 / wait_64ns: 0.022599 ms
+Trial 3: step 4 / wait_poll: 0.023085 ms
+Trial 3: step 4 / tma_wait_64ns: 0.022690 ms
+Trial 3: step 4 / mma_wait_64ns: 0.022669 ms
+Trial 3: step 5 / baseline: 0.016454 ms
+Trial 3: step 5 / wait_64ns: 0.014783 ms
+Trial 3: step 5 / wait_poll: 0.016957 ms
+Trial 3: step 5 / tma_wait_64ns: 0.016463 ms
+Trial 3: step 5 / mma_wait_64ns: 0.014854 ms
+Trial 3: step 4 / baseline: 0.023028 ms
+Trial 3: step 4 / wait_64ns: 0.022644 ms
+Trial 4: step 4 / wait_poll: 0.022865 ms
+Trial 4: step 4 / wait_64ns: 0.022597 ms
+Trial 4: step 4 / baseline: 0.022695 ms
+Trial 4: step 5 / mma_wait_64ns: 0.014783 ms
+Trial 4: step 5 / tma_wait_64ns: 0.016525 ms
+Trial 4: step 5 / wait_poll: 0.017088 ms
+Trial 4: step 5 / wait_64ns: 0.014947 ms
+Trial 4: step 5 / baseline: 0.016517 ms
+Trial 4: step 4 / mma_wait_64ns: 0.022691 ms
+Trial 4: step 4 / tma_wait_64ns: 0.022688 ms
+Trial 5: step 4 / mma_wait_64ns: 0.022737 ms
+Trial 5: step 5 / baseline: 0.016530 ms
+Trial 5: step 5 / wait_64ns: 0.014979 ms
+Trial 5: step 5 / wait_poll: 0.017087 ms
+Trial 5: step 5 / tma_wait_64ns: 0.016486 ms
+Trial 5: step 5 / mma_wait_64ns: 0.014474 ms
+Trial 5: step 4 / baseline: 0.022670 ms
+Trial 5: step 4 / wait_64ns: 0.022605 ms
+Trial 5: step 4 / wait_poll: 0.023151 ms
+Trial 5: step 4 / tma_wait_64ns: 0.022660 ms
+step variant         median_ms    min_ms    max_ms paired_speedup limit_ms status
+   4 baseline         0.022713  0.022670  0.023028          1.000 0.022100 SLOW
+   4 wait_64ns        0.022605  0.022597  0.022649          1.005 0.022100 SLOW
+   4 wait_poll        0.023085  0.022865  0.023332          0.991 0.022100 SLOW
+   4 tma_wait_64ns    0.022688  0.022660  0.022708          1.002 0.022100 SLOW
+   4 mma_wait_64ns    0.022699  0.022669  0.022737          1.001 0.022100 SLOW
+   5 baseline         0.016515  0.016454  0.016530          1.000 0.015600 SLOW
+   5 wait_64ns        0.014947  0.014494  0.015020          1.105 0.015600 PASS
+   5 wait_poll        0.017083  0.016539  0.017088          0.967 0.015600 SLOW
+   5 tma_wait_64ns    0.016495  0.016463  0.016525          1.000 0.015600 SLOW
+   5 mma_wait_64ns    0.014513  0.014474  0.014854          1.137 0.015600 PASS
+Saved results_b300/wait1024.UP24Tv/probe/summary.csv; SLOW is a measured result, not a tool error.
