@@ -13,3 +13,11 @@ def test_epilogue_opt(size):
     C_tir = compile_and_run(kernel, A, B, C)
     verify(C_tir, A, B)
     check_timing(kernel, step=8, M=M, N=N, K=K)
+
+
+@pytest.mark.parametrize("K", [64, 320])
+def test_deep_pipeline_partial_ring(K):
+    M, N = 1024, 3072
+    kernel = hgemm_v8(M, N, K)
+    A, B, C = prepare_data(M, N, K)
+    verify(compile_and_run(kernel, A, B, C), A, B)
