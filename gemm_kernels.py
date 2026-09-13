@@ -928,6 +928,25 @@ def hgemm_v8(M, N, K):
     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
     D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, EPI_N))
 
+    # B300 step810_probe.Wl6HTg: shorten only the TMA data-ready suspension
+    # hint. Keep the measured acquire/retry loop and all completion waits.
+    TMA_WAIT_SOURCE = r"""
+__forceinline__ __device__ void tirx_tma_wait_64ns(void* barrier, int phase) {
+    unsigned int barrier_addr_int = __cvta_generic_to_shared(barrier);
+    unsigned int ticks = 64;
+    asm volatile(
+        "{\n"
+        ".reg .pred                P1;\n"
+        "LAB_WAIT:\n"
+        "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1, %2;\n"
+        "@P1                       bra.uni DONE;\n"
+        "bra.uni                   LAB_WAIT;\n"
+        "DONE:\n"
+        "}\n"
+        :: "r"(barrier_addr_int), "r"(phase), "r"(ticks) : "memory");
+}
+"""
+
     @T.prim_func
     def kernel(
         A: T.Buffer((M, K), a_type),
@@ -1009,7 +1028,8 @@ def hgemm_v8(M, N, K):
                         ld2mma.wait(0, ld_phase.phase)
                         ld_phase.advance()
                         for k in range(K_TILES):
-                            tma2mma.wait(mma_phase.stage, mma_phase.phase)
+                            T.cuda.func_call("tirx_tma_wait_64ns", tma2mma.ptr_to([mma_phase.stage]),
+                                             mma_phase.phase ^ 0, source_code=TMA_WAIT_SOURCE)
                             T.ptx.tcgen05.fence.after_thread_sync()
                             Tx.gemm_async(tmem[:, :MMA_N],
                                 Asmem[mma_phase.stage, :, :], Bsmem[mma_phase.stage, :, :],

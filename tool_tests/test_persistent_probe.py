@@ -49,6 +49,8 @@ def install_recorded_builder(step, monkeypatch):
     import gemm_kernels
 
     path = RECORDED_PROBE / f"step{step:02}_4096_baseline/builder.py"
+    if step == 8:
+        path = ROOT / "results_b300/step810_probe.Wl6HTg/step08/step08_2048_baseline/builder.py"
     namespace = dict(vars(gemm_kernels))
     exec(compile(path.read_text(), str(path), "exec"), namespace)
     name = f"hgemm_v{step}"
@@ -167,6 +169,13 @@ def test_adopted_k_tile_is_not_applied_again(step, tmp_path):
         build_variant(step, (4096,) * 3, "k_tile_128", tmp_path)
 
 
+def test_adopted_step8_tma_wait_is_not_applied_again(tmp_path):
+    pytest.importorskip("tvm")
+    assert DEFAULT_STEP_VARIANTS[8] == ("baseline",)
+    with pytest.raises(ValueError, match="Step 8 has adopted tma_wait_64ns"):
+        build_variant(8, (2048,) * 3, "tma_wait_64ns", tmp_path)
+
+
 @pytest.mark.parametrize("variant", ["tmem_load_64", "l2_group_4", "balanced_clusters"])
 def test_step10_new_experiments_preserve_data_and_barrier_protocol(variant, tmp_path):
     pytest.importorskip("tvm")
@@ -236,16 +245,19 @@ def test_tma_wait_only_changes_data_ready_barrier(step, size):
 
 
 @pytest.mark.parametrize("step,size", [(8, 2048), (10, 4096)])
-def test_current_tma_experiment_lowers_to_recorded_protocol(step, size, tmp_path):
+def test_recorded_tma_experiment_lowers_to_recorded_protocol(step, size, tmp_path, monkeypatch):
     pytest.importorskip("tvm")
+    if step == 8:
+        install_recorded_builder(step, monkeypatch)
     actual = generate(build_variant(step, (size,) * 3, "tma_wait_64ns", tmp_path))
     assert body(actual) == body(recorded_source(step, size))
     assert body(variant_source(actual, step, "tma_wait_64ns")) == body(
         variant_source(recorded_source(step, size), step, "tma_wait_64ns"))
 
 
-def test_step8_epilogue_keeps_four_stages_and_releases_tmem_after_reads(tmp_path):
+def test_step8_epilogue_keeps_four_stages_and_releases_tmem_after_reads(tmp_path, monkeypatch):
     pytest.importorskip("tvm")
+    install_recorded_builder(8, monkeypatch)
     kernel = build_variant(8, (2048,) * 3, "epilogue_128", tmp_path)
     actual, baseline = body(generate(kernel)), body(recorded_source(8, 2048))
     assert "Asmem = T.decl_buffer((4, 128, 64)" in kernel.script()

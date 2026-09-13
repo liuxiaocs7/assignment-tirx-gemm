@@ -28,7 +28,7 @@ STEP_VARIANTS = {
          "specialize_mma", "specialize_writeback"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
-                         8: ("baseline", "tma_wait_64ns", "epilogue_128"),
+                         8: ("baseline",),
                          10: ("baseline", "tma_wait_64ns", "specialize_mma", "specialize_writeback")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 
@@ -68,6 +68,9 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant == "tma_wait_64ns" and "tirx_tma_wait_64ns" in source:
+        raise ValueError(f"Step {step} has adopted tma_wait_64ns; validate the production kernel "
+                         f"with benchmark.py --steps {step} and tests/test_step{step:02d}.py")
     if variant in ("baseline", "mma_wait_64ns", "tma_wait_64ns"):
         return source
     if variant in ("specialize_mma", "specialize_writeback"):
