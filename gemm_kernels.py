@@ -380,6 +380,9 @@ def hgemm_v4(M, N, K):
                 T.ptx.mbarrier.init(tma_bar.ptr_to([0]), 1)
                 T.ptx.mbarrier.init(mma_bar.ptr_to([0]), 1)
             T.ptx.tcgen05.alloc(T.address_of(tmem_addr), n_cols=TMEM_COLS, cta_group=1)
+            # This is the CTA's only allocation. Let peer CTAs allocate while
+            # we compute; keep our TMEM live until writeback completes.
+            T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
         T.ptx.fence.proxy_async("shared::cta")
         T.ptx.fence.mbarrier_init()
         T.cuda.cta_sync()
@@ -445,7 +448,6 @@ def hgemm_v4(M, N, K):
                 T.ptx.cp_async.bulk.wait_group(0)
         T.cuda.cta_sync()
         if warp_id == 0:
-            T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
             T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=TMEM_COLS, cta_group=1)
 
     return kernel
