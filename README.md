@@ -6,11 +6,14 @@ source generation checks. The latest user-reported full B300 suite has
 **55 passed / 2 performance failures out of 57 tests**: Step 8 at 2048 and
 Step 10 at 4096. Steps 1–7 and 9 pass in full. The uploaded
 `k128_step67.TdkZy5` run at `ade5040` verifies all 16 Step 6/7 tests and all
-40 benchmark samples, including the new short/odd K paths. Step 8 previously
-passed close to its limit; the latest failure needs a fresh paired measurement.
-Step 10's wider TMEM, L2 grouping, and cluster-count probes remain too slow.
-`probe_persistent.py` now compares data-ready waits and Step 8 epilogue / Step 10
-consumer specialization independently. These new variants await GPU validation.
+40 benchmark samples, including the new short/odd K paths. The latest
+`step810_probe.Wl6HTg` at `adf93eb` finds all five Step 8 data-ready wait samples
+passing, with 1.94% headroom in the slowest sample. Step 8 adopts that measured
+wait; its other sizes and boundary cases still need production GPU validation.
+Step 10's data-ready wait and consumer specialization probes remain too slow.
+`probe_persistent.py` now compares pipeline stage indexing, a two-stage K128
+tile (with a two-stage K64 control), and streamed writeback for Step 10.
+These new diagnostic variants await GPU validation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 

@@ -311,6 +311,103 @@ def test_static_consumer_roles_keep_barrier_slots_and_cluster_protocol(variant, 
         variant_builder_source(changed_builder, 10, variant)
 
 
+@pytest.mark.parametrize("K", [64, 320])
+def test_unrolled_ring_preserves_partial_ring_cuda(K, tmp_path):
+    pytest.importorskip("tvm")
+    import gemm_kernels
+
+    shape = (4096, 3072, K)
+    actual = body(generate(build_variant(10, shape, "unroll_ring", tmp_path)))
+    assert actual == body(generate(gemm_kernels.hgemm_v10(*shape)))
+
+
+@pytest.mark.parametrize("K", [256, 768, 4096])
+def test_unrolled_ring_keeps_slot_order_and_phase_across_tiles(K, tmp_path):
+    pytest.importorskip("tvm")
+    kernel = build_variant(10, (4096, 3072, K), "unroll_ring", tmp_path)
+    actual = body(generate(kernel))
+    # TVM keeps unused declarations/initializers, but no dynamic stage use
+    # may remain inside a persistent role's loop.
+    assert "mma_phase_stage_ptr" not in actual.split("while (1)", 1)[1]
+    assert "tma_phase_stage_ptr" not in actual.split("while (1)", 1)[1]
+    for role in ("tma", "mma"):
+        # Initialize once before all tile loops, then flip only after a ring.
+        init = f"{role}_phase_phase_ptr[0] = {1 if role == 'tma' else 0};"
+        flip = f"{role}_phase_phase_ptr[0] = ({role}_phase_phase_ptr[0] ^ 1);"
+        assert actual.count(init) == actual.count(flip) == 1
+        assert actual.index(init) < actual.index("while (1)")
+    if K > 256:
+        assert len(re.findall(rf"for \(int ring(?:_\d+)? = 0; ring(?:_\d+)? < {K // 256};", actual)) == 2
+    assert actual.count("ptx_cp_async_bulk_tensor_g2s_cluster_tile_2d_mbar_addr(") == 12
+    assert actual.count("ptx_tcgen05_mma_cta_2_kind_f16_SS(") == 16
+    assert actual.count("tvm_builtin_ptx_tcgen05_wait_ld();") == 8
+    assert actual.count("ptx_cp_async_bulk_tensor_shared_to_global_2d(") == 4
+    for stage in range(4):
+        for slot, role in ((stage + 5, "tma"), (stage + 1, "mma")):
+            call = (f"tvm_builtin_ptx_mbarrier_try_wait((&(((uint64_t*)pool_buf_ptr)[{slot}])), "
+                    f"({role}_phase_phase_ptr[0] ^ 0));")
+            assert actual.count(call) == 1
+        commit = f"ptx_tcgen05_commit_cta_group_2_multicast((&(((uint64_t*)pool_buf_ptr)[{stage + 5}])), 3);"
+        assert actual.count(commit) == 1
+    assert actual.index("pool_buf_ptr)[8])), 3);") < actual.index("mma_phase_phase_ptr[0] = (mma_phase_phase_ptr[0] ^ 1);")
+
+
+@pytest.mark.parametrize("variant", ["pipe_depth_2", "k128_depth_2"])
+@pytest.mark.parametrize("K", [64, 128, 320, 384, 4096])
+def test_two_stage_probe_preserves_cluster_work_and_transaction_bytes(variant, K, tmp_path):
+    pytest.importorskip("tvm")
+    kernel = build_variant(10, (4096, 3072, K), variant, tmp_path)
+    actual = body(generate(kernel))
+    width = 128 if variant == "k128_depth_2" and K % 128 == 0 else 64
+    assert f"Asmem = T.decl_buffer((2, 2, 128, {width})" in kernel.script()
+    assert f"Bsmem = T.decl_buffer((2, 128, {width})" in kernel.script()
+    assert "Dsmem = T.decl_buffer((2, 128, 64)" in kernel.script()
+    assert actual.count("ptx_tcgen05_mma_cta_2_kind_f16_SS(") == width // 16
+    # A 128-wide K tile is represented as two 128-byte swizzle atoms using
+    # a three-dimensional TMA box. It still issues one copy per A/B buffer.
+    dimensions = 3 if width == 128 else 2
+    assert actual.count(f"ptx_cp_async_bulk_tensor_g2s_cluster_tile_{dimensions}d_mbar_addr(") == 3
+    assert f"{2 * 3 * 128 * width * 2}, 0, actual_pred_ptr[0]);" in actual
+    assert "(tma_phase_stage_ptr[0] + 3)" in actual
+    assert "(mma_phase_stage_ptr[0] + 1)" in actual
+    assert "((warp_id_in_cta >> 2) + 7)" in actual
+    assert actual.count("tvm_builtin_ptx_tcgen05_wait_ld();") == 8
+    assert actual.count("ptx_cp_async_bulk_tensor_shared_to_global_2d(") == 4
+    # Both consumers must commit before the producer may overwrite a stage.
+    assert "tvm_builtin_ptx_mbarrier_init((&(((uint64_t*)pool_buf_ptr)[3])), 2);" in actual
+    assert "tvm_builtin_ptx_mbarrier_init((&(((uint64_t*)pool_buf_ptr)[4])), 2);" in actual
+    assert actual.count("tvm_builtin_ptx_tcgen05_alloc_cta_group_2(") == 1
+    assert actual.count("tvm_builtin_ptx_tcgen05_dealloc_cta_group_2(") == 1
+
+
+@pytest.mark.parametrize("K", [64, 320, 4096])
+def test_stream_epilogue_keeps_producers_and_releases_after_all_tmem_reads(K, tmp_path):
+    pytest.importorskip("tvm")
+    import gemm_kernels
+
+    shape = (4096, 3072, K)
+    actual = body(generate(build_variant(10, shape, "stream_epilogue", tmp_path)))
+    baseline = body(generate(gemm_kernels.hgemm_v10(*shape)))
+    marker = "    alignas(64) float Dreg_ptr["
+    assert canonicalize_codegen_locals(actual.split(marker)[0]) == canonicalize_codegen_locals(baseline.split(marker)[0])
+    assert "half Dreg_f16_ptr[64]" in actual
+    # Exactly two TMEM loads precede each 64-column TMA store. Only the final
+    # chunk signals reusable TMEM, after all eight loads have completed.
+    events = []
+    for line in actual.splitlines():
+        if "tvm_builtin_ptx_tcgen05_wait_ld();" in line:
+            events.append("read_done")
+        elif "tvm_builtin_ptx_mbarrier_arrive_shared_cluster_remote_pred(" in line:
+            events.append("release")
+        elif "ptx_cp_async_bulk_tensor_shared_to_global_2d(" in line:
+            events.append("store")
+        elif "ptx_cp_async_bulk_wait_group_read_0();" in line:
+            events.append("store_read_done")
+    assert events == (["read_done", "read_done", "store", "store_read_done"] * 3 +
+                      ["read_done", "read_done", "release", "store", "store_read_done"])
+    assert actual.count("tvm_builtin_cuda_warpgroup_sync(((warp_id_in_cta >> 2) + 10));") == 8
+
+
 @pytest.mark.parametrize("fail", [False, True])
 def test_custom_transform_callback_is_captured_and_restored(tmp_path, fail):
     tvm_ffi = pytest.importorskip("tvm_ffi")

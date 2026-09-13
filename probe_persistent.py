@@ -1,8 +1,9 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
-Defaults to Step 10 at 4096: compare TMA data-ready waiting and static consumer
-roles. Use --steps 8 --size 2048 for data-ready and epilogue experiments.
-Steps 6/7 have passed production validation. No production kernel is edited.
+Defaults to Step 10 at 4096: compare stage addressing, K-stage granularity,
+and streamed writeback. The two-stage K64 control isolates the wider K tile.
+Steps 6/7 have passed validation; Step 8 has adopted its measured TMA wait.
+No production kernel is edited by this tool.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
 """
@@ -25,12 +26,88 @@ STEP_VARIANTS = {
     8: ("baseline", "tma_wait_64ns", "epilogue_128"),
     10: ("baseline", "mma_wait_64ns", "tmem_load_16", "tmem_load_64",
          "l2_group_4", "balanced_clusters", "tma_wait_64ns",
-         "specialize_mma", "specialize_writeback"),
+         "specialize_mma", "specialize_writeback", "unroll_ring",
+         "pipe_depth_2", "k128_depth_2", "stream_epilogue"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "tma_wait_64ns", "specialize_mma", "specialize_writeback")}
+                         10: ("baseline", "unroll_ring", "pipe_depth_2",
+                              "k128_depth_2", "stream_epilogue")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
+
+
+def unroll_pipeline_ring(source):
+    """Use fixed stage offsets for complete rings; preserve partial-ring code."""
+    # A partial ring carries its stage into the next output tile. Keep that
+    # path byte-for-byte; for aligned K, each tile starts at stage zero while
+    # phase still lives across tiles (including an odd number of rings).
+    source = replace_once(source, "    PIPE_DEPTH = 4\n",
+                          "    PIPE_DEPTH = 4\n    UNROLL_RING = K_TILES % PIPE_DEPTH == 0\n")
+    source = replace_once(source, "        def tma_load(k_st):\n",
+                          "        def tma_load(k_st, stage):\n")
+    start, end = "        def tma_load(k_st, stage):\n", "        if wg_id == 2:\n"
+    prefix, tail = source.split(start)
+    block, suffix = tail.split(end)
+    source = prefix + start + block.replace("tma_phase.stage", "stage") + end + suffix
+    source = replace_once(source, "                            tma_load(k * BLK_K)\n",
+                          "                            tma_load(k * BLK_K, tma_phase.stage)\n")
+    for phase, indent, sentinel in (
+        ("mma_phase", 28, "                            mma2ld.arrive(warp_id, cta_group=CTA_GROUP, cta_mask=3)\n"),
+        ("tma_phase", 24, "                        tile_scheduler.next_tile()\n"),
+    ):
+        pad = " " * indent
+        start = "\n" + pad + "for k in range(K_TILES):\n"
+        if source.count(start) != 1:
+            raise ValueError("expected one K loop for the pipeline role")
+        prefix, tail = source.split(start)
+        sentinel = "\n" + sentinel
+        if tail.count(sentinel) != 1:
+            raise ValueError("expected one end of the pipeline K loop")
+        block, suffix = tail.split(sentinel)
+        block += "\n"
+        original = start.lstrip("\n") + block
+        static = replace_once(block, pad + f"    {phase}.advance()\n", "")
+        static = static.replace(phase + ".stage", "stage")
+        static = "".join("        " + line if line.strip() else line
+                         for line in static.splitlines(keepends=True))
+        replacement = (pad + "if UNROLL_RING:\n" +
+                       pad + "    for ring in range(K_TILES // PIPE_DEPTH):\n" +
+                       pad + "        for stage in T.unroll(PIPE_DEPTH):\n" +
+                       pad + "            k = T.meta_var(ring * PIPE_DEPTH + stage)\n" +
+                       static + pad + f"        {phase}.phase = {phase}.phase ^ 1\n" +
+                       pad + "else:\n" +
+                       "".join("    " + line if line.strip() else line
+                               for line in original.splitlines(keepends=True)))
+        source = prefix + "\n" + replacement + sentinel.lstrip("\n") + suffix
+    return source
+
+
+def stream_epilogue(source):
+    """Retain only EPI_N FP16 values, releasing TMEM after the final chunk."""
+    source = replace_once(source, "            Dreg_f16 = T.alloc_local((MMA_N,), d_type)\n",
+                          "            Dreg_f16 = T.alloc_local((EPI_N,), d_type)\n")
+    start = "                for i in T.unroll(MMA_N // TMEM_LD_N):\n"
+    end = "                    T.ptx.fence.proxy_async(\"shared::cta\")\n"
+    if source.count(start) != 1:
+        raise ValueError("expected one TMEM read loop")
+    prefix, tail = source.split(start)
+    if tail.count(end) != 1:
+        raise ValueError("expected one epilogue proxy fence")
+    _, suffix = tail.split(end)
+    replacement = '''                for i in T.unroll(MMA_N // EPI_N):
+                    col = T.meta_var(i * EPI_N)
+                    for j in T.unroll(EPI_N // TMEM_LD_N):
+                        offset = T.meta_var(j * TMEM_LD_N)
+                        Tx.wg.copy_async(Dreg_wg[:, :],
+                            tmem[:, wg_id * MMA_N + col + offset:wg_id * MMA_N + col + offset + TMEM_LD_N])
+                        T.ptx.tcgen05.wait.ld()
+                        Tx.cast(Dreg_f16[offset:offset + TMEM_LD_N], Dreg[:])
+                    if i == MMA_N // EPI_N - 1:
+                        T.ptx.tcgen05.fence.before_thread_sync()
+                        ld2mma.arrive(wg_id, remote=0)
+                    Tx.copy(Dsmem[wg_id, warp_id * 32 + lane_id, :], Dreg_f16[:])
+'''
+    return prefix + replacement + end + suffix
 
 
 def specialize_role(source, role):
@@ -72,6 +149,16 @@ def variant_builder_source(source, step, variant):
         raise ValueError(f"Step {step} has adopted tma_wait_64ns; validate the production kernel "
                          f"with benchmark.py --steps {step} and tests/test_step{step:02d}.py")
     if variant in ("baseline", "mma_wait_64ns", "tma_wait_64ns"):
+        return source
+    if variant == "unroll_ring":
+        return unroll_pipeline_ring(source)
+    if variant == "stream_epilogue":
+        return stream_epilogue(source)
+    if variant in ("pipe_depth_2", "k128_depth_2"):
+        source = replace_once(source, "    PIPE_DEPTH = 4\n", "    PIPE_DEPTH = 2\n")
+        if variant == "k128_depth_2":
+            source = replace_once(source, "BLK_M, BLK_N, BLK_K = 128, 128, 64",
+                                  "BLK_M, BLK_N, BLK_K = 128, 128, (128 if K % 128 == 0 else 64)")
         return source
     if variant in ("specialize_mma", "specialize_writeback"):
         return specialize_role(source, variant.removeprefix("specialize_"))

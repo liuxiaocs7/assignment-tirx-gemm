@@ -1,6 +1,96 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：k128_step67.TdkZy5 与完整套件摘要
+## 最新结果：step810_probe.Wl6HTg
+
+数据：[Step 8 summary](results_b300/step810_probe.Wl6HTg/step08/summary.csv)、
+[Step 8 samples](results_b300/step810_probe.Wl6HTg/step08/samples.json)、
+[Step 10 summary](results_b300/step810_probe.Wl6HTg/step10/summary.csv)、
+[Step 10 samples](results_b300/step810_probe.Wl6HTg/step10/samples.json)。
+版本 `adf93eb`；B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+两份 run.json 的六个 Python 文件指纹均与运行提交一致；七个版本的 builder/CUDA
+指纹核对通过，每组编译选项相同。所有版本均通过初始和每轮计时后验算。
+
+### Step 8 采用已测量的 TMA 数据就绪等待
+
+| Step 8 / 2048 | 中位数 ms | 最慢 ms | 配对加速比 | 达标样本 |
+|---|---:|---:|---:|---:|
+| baseline | 0.029859 | 0.030447 | 1.000× | 3/5 |
+| **tma_wait_64ns** | **0.029245** | **0.029321** | **1.018×** | **5/5** |
+| epilogue_128 | 0.029830 | 0.030849 | 0.998× | 3/5 |
+
+门槛为 0.029900 ms。summary 的 PASS 只表示中位数达标，不能掩盖 baseline 和
+epilogue_128 各两次超时。TMA 等待变体五轮都达标，最慢一轮仍有约 **1.94%** 余量；
+因此只采用该变体，不放大 epilogue。REG:106 / STACK:0 / 动态 SMEM:148480 字节
+与 baseline 相同；epilogue_128 则为 REG:113 / STACK:0 / 动态 SMEM:164864 字节。
+
+正式 Step 8 仅将 `tma2mma` 等待接入局部 `tirx_tma_wait_64ns`，沿用实测的 acquire、
+parity 和 retry；其余三个等待点及四级流水线保留。64 ns 为挂起提示，必须等到 barrier
+完成才能执行 MMA。先以实测 CUDA 建立失败对照，再采用改动；正式 2048 的 CUDA 主体和
+等待 helper 与实测版本一致（只规范化 helper 名称），其余评分尺寸及短 K / 矩形路径
+也只改变这一等待点。原有六个 Step 8 GPU 用例仍需在新正式版本上验收。
+
+### Step 10 三个变体仍不足以解决性能失败
+
+| Step 10 / 4096 | 中位数 ms | 最快 ms | 最慢 ms | 配对加速比 | 达标样本 |
+|---|---:|---:|---:|---:|---:|
+| baseline | 0.142630 | 0.142403 | 0.143263 | 1.000× | 0/5 |
+| tma_wait_64ns | 0.142341 | 0.141940 | 0.142759 | 1.003× | 0/5 |
+| specialize_mma | 0.141881 | 0.139570 | 0.142368 | 1.004× | 0/5 |
+| specialize_writeback | 0.142587 | 0.140279 | 0.142994 | 1.002× | 0/5 |
+
+门槛 0.139100 ms，最好的单次样本也未达标。MMA 特化将 REG:168 / STACK:32
+变成 REG:167 / STACK:0，却只有约 0.4% 配对收益，不能将栈帧视为已定位的主要瓶颈。
+写回特化为 REG:168 / STACK:24，数据等待变体为 REG:168 / STACK:32。
+这三项均不进入生产 Step 10；最新完整套件状态仍为 **55/57 通过**。
+
+### 下一轮：Step 8 正式验收与 Step 10 流水线对照
+
+优先检验三个方向。Step 10 默认五个版本，包含 baseline 和四项变体：
+
+1. **K-stage 交接频率**：`pipe_depth_2` 仅把 K64 的四级流水线改为两级，作为控制组；
+   `k128_depth_2` 在同样两级下扩大 K 到 128，K 不整除 128 时仍用 64。若交接限制性能，
+   后者应受益于每输出 tile 64→32 次 K 轮，且胜过两级 K64 控制组。两级 K128 的
+   动态 SMEM 为 230400 字节，与正式 K64 四级相同；两级 K64 为 132096 字节。
+   K128 同时改变 TMA box 的 swizzle 分解，所以收益也可能来自数据搬运方式，需要实测。
+2. **动态流水线索引**：`unroll_ring` 只展开一圈四个 stage，保持 K64、四级、
+   230400 字节 SMEM 和两条 MMA warp。phase 每圈翻转并跨输出 tile 保存；
+   K 不是 256 的倍数时保留原来的动态流水线路径。若地址计算是瓶颈，应优于 baseline。
+3. **写回寄存器占用**：`stream_epilogue` 每读取并转换 64 列就写回，将 FP16 暂存
+   从 256 个元素缩至 64。仍是八次 x32 TMEM load、四次 TMA store，SMEM 不变，
+   最后一次 TMEM 读取完成后才释放 accumulator。它以推迟下一 tile 的 MMA 为代价
+   减少寄存器活跃量；若该代价更大，测量会变慢。它与其他变体不叠加。
+
+**228 项本地工具及源码生成检查通过**，覆盖实测源码重放、两级流水线的完整事务字节、
+两 consumer 的 barrier 计数、展开后的 phase 传递和分块写回的释放顺序。
+新 Step 10 变体仍待 B300 上的 NVRTC 编译、
+数值和性能验证；本机没有 NVIDIA GPU。
+
+同步提交后顺序运行：
+
+```bash
+cd ~/assignment-tirx-gemm
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step8_wait_step10_pipeline.XXXXXX)
+git log -3 --oneline
+
+uv run python -m pytest tests/test_step08.py -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest_step08.log"
+
+uv run python -u benchmark.py --steps 8 --trials 5 \
+  --csv "$tirx_run/step08.csv" --diagnostics-dir "$tirx_run/compiler_step08" \
+  2>&1 | tee "$tirx_run/benchmark_step08.log"
+
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/probe_step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+Step 10 各版本五轮交错计时、每轮预热 10 次、计时 30 次，计时前后验算。
+`SLOW` 会完成采集，数值或编译失败则停止。Step 8 已采用的 `tma_wait_64ns`
+会拒绝重复应用，应以正式 pytest / benchmark 验收。评分、容差和计时方法不变。
+
+## 前轮结果：k128_step67.TdkZy5 与完整套件摘要
 
 数据：[pytest_step67.log](results_b300/k128_step67.TdkZy5/pytest_step67.log)、
 [step67.csv](results_b300/k128_step67.TdkZy5/step67.csv)、
@@ -54,10 +144,10 @@ cluster 调整只有约 0.6% 配对收益，最慢一轮仍超 0.139100 ms 门�
 最新 pytest 摘要给出 Step 10 为 963.33 TFLOP/s，按该舍入值推算约 0.142671 ms，
 超门槛约 2.57%。所需吞吐为参考吞吐 / 1.30，约 988.06 TFLOP/s，而非报错中的 1284.48。
 
-### 下一轮：Step 8 与 Step 10 独立对照
+### 当时的 Step 8 与 Step 10 独立对照（现已完成）
 
-本轮生产内核不改，`probe_persistent.py` 只增加以下独立实验，原评分、容差和
-CUDA event 方法保留。Step 8 默认三个版本，Step 10 默认四个版本，都包含正式 baseline。
+当时生产内核未改，`probe_persistent.py` 增加以下独立实验，原评分、容差和
+CUDA event 方法保留。Step 8 三个版本，Step 10 四个版本，都包含正式 baseline。
 
 1. **TMA 数据就绪等待（Step 8、10）**：`tma_wait_64ns` 只缩短 `tma2mma` 等待的
    挂起提示。如果生产者/消费者交接因等待响应受阻，应降低耗时。此前 Step 10 测的是
@@ -72,12 +162,12 @@ CUDA event 方法保留。Step 8 默认三个版本，Step 10 默认四个版本
    预测减少动态地址运算，代价是代码体积增大。仍由原来的两条 MMA warp / 两组写回执行，
    不合并 consumer，不改变每个输出 tile 的计算量，两个实验不叠加。
 
-**198 项本地工具及源码生成检查通过**：新增八份实测 CUDA 的数据就绪等待重放，
+当时 **198 项本地工具及源码生成检查通过**：新增八份实测 CUDA 的数据就绪等待重放，
 确认只改变一个等待点；生成并检查 Step 8 的完整四级流水线，以及 Step 10 两个独立
 consumer 槽位、10/11 写回同步 ID、cluster 到达和短 K / 矩形重用路径。
-本机没有 NVIDIA GPU，新变体尚未验证 NVRTC 编译、数值结果和性能。
+上述七个版本的 GPU 结果已回传为 `step810_probe.Wl6HTg`，见本文开头。
 
-同步本地提交后只需执行：
+以下为 `adf93eb` 的对照命令，无需重复：
 
 ```bash
 cd ~/assignment-tirx-gemm
@@ -95,7 +185,7 @@ printf '结果目录：%s\n' "$tirx_run"
 ```
 
 两个进程顺序执行，各自五轮交错计时，每轮预热 10 次、计时 30 次，计时前后验算。
-回传整个目录即可；`SLOW` 正常结束采集，数值或编译失败则停止。暂不重复跑全量套件。
+该目录已经回传；`SLOW` 正常结束采集，数值或编译失败则停止。
 
 ## 前轮实验：persistent_probe.VB42kg
 
