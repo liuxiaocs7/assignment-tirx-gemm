@@ -34,6 +34,15 @@ def test_short_and_partial_pipeline_builds(step, M, N, K):
     assert_cuda_source(kernel, "sm_103a")
 
 
+@pytest.mark.parametrize("step,M,N", [(7, 128, 128), (8, 128, 128),
+                                     (9, 256, 256), (10, 512, 256)])
+def test_single_persistent_tile_builds(step, M, N):
+    """Exercise scheduler lowering when the active grid is one CTA/cluster."""
+    kernels = importlib.import_module("gemm_kernels")
+    kernel = getattr(kernels, f"hgemm_v{step}")(M, N, 64)
+    assert_cuda_source(kernel, "sm_103a")
+
+
 def assert_cuda_source(kernel, arch):
     target = tvm.target.Target({"kind": "cuda", "arch": arch})
     with target:

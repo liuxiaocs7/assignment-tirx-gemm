@@ -6,6 +6,8 @@ import statistics
 import sys
 from pathlib import Path
 
+from benchmark_diagnostics import capture_compilation, run_metadata, write_json
+
 
 def parse_steps(value):
     if value == "all":
@@ -51,6 +53,8 @@ def main(argv=None):
     parser.add_argument("--trials", type=int, default=3, help="report median of this many timing trials")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--csv", type=Path, help="write timing results to this file")
+    parser.add_argument("--diagnostics-dir", type=Path,
+                        help="save run metadata, CUDA/binary, and NVRTC compiler logs before timing")
     args = parser.parse_args(argv)
     if args.warmup < 0 or args.repeat < 1 or args.trials < 1:
         parser.error("warmup must be nonnegative; repeat and trials must be positive")
@@ -72,28 +76,50 @@ def main(argv=None):
         parser.error("a CUDA-enabled PyTorch build and a Blackwell GPU are required")
     if torch.cuda.get_device_capability() not in {(10, 0), (10, 3)}:
         parser.error("these kernels require SM100/SM103 (B200/B100/B300)")
-    device = torch.cuda.get_device_properties(0)
+    device = torch.cuda.get_device_properties(torch.cuda.current_device())
     # Match persistent CTA count to the actual device (148 on B200).
     gemm_kernels.SM_COUNT = device.multi_processor_count
     if gemm_kernels.SM_COUNT % 2:
         parser.error("cluster kernels require an even persistent CTA count")
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
+    target = blackwell_target()
+    metadata = run_metadata()
+    metadata["target"] = str(target)
+    print(f"Code: {metadata['git_revision']}; dirty={metadata['git_dirty']}; "
+          f"gemm_sha256={metadata['gemm_kernels_sha256']}")
+    print(f"Compiler: {metadata['compiler']}; ptxas register-usage-level={metadata['ptxas_reg_level']}; "
+          f"target={target}")
+    for key, value in metadata.items():
+        if key.isupper() and value:
+            print(f"  {key}={value}")
     print(f"GPU: {device.name}; SMs: {device.multi_processor_count}")
     print(f"TVM: {tvm.__version__}; PyTorch: {torch.__version__}; CUDA: {torch.version.cuda}")
     print(f"CUDA events: warmup={args.warmup}, repeat={args.repeat}, trials={args.trials}, seed={args.seed}")
+    if args.diagnostics_dir:
+        # A fresh directory prevents stale compiler logs from a previous run.
+        args.diagnostics_dir.mkdir(parents=True, exist_ok=False)
+        write_json(args.diagnostics_dir / "run.json", dict(
+            metadata, gpu=device.name, sm_count=device.multi_processor_count,
+            tvm=tvm.__version__, torch=torch.__version__, cuda=torch.version.cuda,
+            steps=args.steps, sizes=args.sizes, warmup=args.warmup, repeat=args.repeat,
+            trials=args.trials, seed=args.seed,
+        ))
+        print(f"Compiler artifacts: {args.diagnostics_dir} (hooks removed before timing)")
     print("step       M       N       K   median_ms   TFLOP/s   cuBLAS_ms   vs_cuBLAS   limit_ms   status")
 
     rows = []
     failed = False
-    target = blackwell_target()
     for step in args.steps:
         for M, N, K in select_shapes(step, args.sizes, REFERENCE_TIMES):
             kernel = getattr(gemm_kernels, f"hgemm_v{step}")(M, N, K)
             A, B, output = prepare_data(M, N, K)
+            dump_dir = (args.diagnostics_dir / f"step{step:02d}_{M}_{N}_{K}"
+                        if args.diagnostics_dir else None)
             with target:
-                executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
-                executable.mod(A, B, output)
+                with capture_compilation(dump_dir):
+                    executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
+                    executable.mod(A, B, output)
                 verify(output, A, B)
                 samples = [time_cuda_call(lambda: executable.mod(A, B, output), args.warmup, args.repeat)
                            for _ in range(args.trials)]
@@ -118,7 +144,8 @@ def main(argv=None):
                              limit_ms=limit_ms, status=status, seed=args.seed,
                              warmup=args.warmup, repeat=args.repeat, trials=args.trials,
                              gpu=device.name, sm_count=device.multi_processor_count,
-                             tvm=tvm.__version__, torch=torch.__version__, cuda=torch.version.cuda))
+                             tvm=tvm.__version__, torch=torch.__version__, cuda=torch.version.cuda,
+                             samples_ms=samples, cublas_samples_ms=reference_samples, **metadata))
             if args.csv:
                 args.csv.parent.mkdir(parents=True, exist_ok=True)
                 with args.csv.open("w", newline="") as stream:
