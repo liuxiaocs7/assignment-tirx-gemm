@@ -1,6 +1,97 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：mma64_step4.dh9ZC8
+## 最新结果：step4_k128.6GZwy2
+
+数据：[pytest_all.log](results_b300/step4_k128.6GZwy2/pytest_all.log)、
+[pytest_step04.log](results_b300/step4_k128.6GZwy2/pytest_step04.log)、
+[step04.csv](results_b300/step4_k128.6GZwy2/step04.csv)、
+[compiler_step04/run.json](results_b300/step4_k128.6GZwy2/compiler_step04/run.json)。
+
+**完整套件 46 passed / 7 failed，共 53 项；全部数值检查通过，7 项均为性能断言。**
+Step 1–5、8、9 全部通过。运行版本 `c6435e4`，B300 / 148 SM / `sm_103a` /
+TVM 0.26.0 / PyTorch 2.14.0+cu130 / NVRTC 13.0。内核 SHA256 为
+`107641c0d559e52fb86b43aeab033d242e7f363d9c5875ee0784596ec0091984`。
+记录虽为 dirty，内核、utils、benchmark 和 diagnostics 四个文件指纹与当前版本一致。
+以下剩余项来自完整 pytest，未把单次结果当作多轮统计。
+
+| Step | 方阵尺寸 | 实测 ms | 允许 ms | 超过门槛 |
+|---|---:|---:|---:|---:|
+| 6 | 2048 | 0.047647 | 0.045500 | 4.72% |
+| 6 | 4096 | 0.315329 | 0.310700 | 1.49% |
+| 6 | 8192 | 2.799590 | 2.785900 | 0.49% |
+| 7 | 2048 | 0.045373 | 0.040300 | 12.59% |
+| 7 | 4096 | 0.314241 | 0.299000 | 5.10% |
+| 7 | 8192 | 2.777617 | 2.697500 | 2.97% |
+| 10 | 4096 | 0.143087 | 0.139100 | 2.87% |
+
+断言报错中的 `reference TFLOP/S` 是参考值，实际最低吞吐为参考值 / 1.30；
+等价的时间上限是参考时间 × 1.30。表中已包含该容差。接近门槛的项仍是失败，
+不能用浮动解释为已经通过，也不能把 Step 4、5 单独通过理解为全部十步完成性能验收。
+
+### Step 4 正式验收已完成
+
+| 方阵尺寸 | 单独 pytest ms | benchmark 中位数 ms | benchmark 最慢 ms | 允许 ms | 五轮结果 |
+|---|---:|---:|---:|---:|---|
+| 256 | 0.009523 | 0.009453 | 0.009598 | 0.018200 | 全部 PASS |
+| 512 | 0.012595 | 0.012451 | 0.012548 | 0.019500 | 全部 PASS |
+| 1024 | 0.018733 | 0.018606 | 0.018700 | 0.022100 | 全部 PASS |
+| 2048 | 0.035138 | 0.034378 | 0.035036 | 0.067600 | 全部 PASS |
+
+K=64、128、192、384 的矩形用例也通过，正式 `9db8b87` 的两条 K 分块路径得到验证。
+随后全量套件再次通过全部 Step 4 与 Step 5 用例。
+
+### 下一轮独立对照：Step 6、7、10
+
+当前生产内核的 Step 6、7、10 主体与 `RA0gpm` 诊断版本相同；本地生成的 4096 CUDA
+主体与当时记录一致。先选三步共同失败的 4096 作为反馈点，用 `probe_persistent.py`
+逐项检验以下预测，不叠加变体：
+
+1. **K 分块同步开销（Step 6、7）**：若每轮同步是主要开销，`k_tile_128` 将 K tile
+   从 64 加宽至 128、轮数从 64 减至 32，应减少耗时。仍保持两级流水线，A/B SMEM 翻倍；
+   K 不被 128 整除时保留 64 路径，phase 状态仍跨输出 tile 保留。
+2. **MMA 完成等待（Step 6、7、10）**：若等待挂起提示拖慢进度，`mma_wait_64ns`
+   应更快。仅改 MMA 发信号的 barrier：Step 6 的 `mma_bar`，Step 7/10 的
+   `mma2tma`、`mma2ld`。保留 acquire、parity 和 retry，直到完成才继续；
+   `tma2mma` 数据就绪与 `ld2mma` 累加器空闲等待不改。Step 5 的收益只是线索，
+   不能直接推定三个常驻内核也会加速。
+3. **Step 6 重复 fence 开销**：`final_fence` 将每个 K tile 的 MMA 完成后
+   after/before fence 对移至 K 循环结束、交接写回线程之前。每轮 TMA acquire fence、
+   MMA 完成等待和 SMEM 重用条件保留；phase 更新与下一次加载不变。
+4. **写回开销**：Step 7 的 `epilogue_128` 将两个 64 列 TMA store 合成一个 128 列
+   store，预测降低写回同步成本，代价是 Dsmem 增大。Step 10 的 `tmem_load_16`
+   将 FP32 暂存从 32 降为 16，预测减轻寄存器压力，代价是 TMEM load/wait 次数翻倍；
+   256 列 FP16 暂存和四次 TMA store 保留。旧 cubin 资源信息中的 stack 不代表
+   已测到 spill 流量，是否有收益需结合新资源报告和耗时。
+
+默认 Step 6、7 各四个版本（包含 baseline），Step 10 三个版本，总计 **11 个版本**。
+全部版本先验算，再做五轮交错 CUDA event 计时，每轮预热 10 次、计时 30 次，计时后再次验算。
+编译 hook 在计时前移除；原评分、容差和计时方法不变。每个版本保存 builder/source 差异及
+SHA256、实际 CUDA、编译选项、cubin 和资源报告，用于确认实际测了什么。
+
+本轮没有修改生产内核。**153 项本地工具与源码生成检查通过**，包括所有 11 个变体的
+TVM 0.26 CUDA 生成、12 份已有 CUDA 的选择性等待重放，以及短/奇数 K 的分块路径检查。
+本机没有 NVIDIA GPU，新变体尚未完成 GPU 编译、数值与性能验证。
+
+同步本地提交到服务器后运行：
+
+```bash
+cd ~/assignment-tirx-gemm
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/persistent_probe.XXXXXX)
+git log -2 --oneline
+uv run python -u probe_persistent.py --output "$tirx_run/probe" \
+  2>&1 | tee "$tirx_run/probe.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+回传 `probe.log`、`probe/summary.csv` 和整个目录即可分析。`SLOW` 是测量结果，
+脚本会继续收集其他版本并正常结束；编译或数值错误则停止。无需先重跑全部 53 项。
+可选 `--steps 6 7`、`--size 2048` 缩小或切换范围；`--variants mma_wait_64ns`
+只测该实验和 baseline。`--output` 每次必须是尚不存在的新目录。
+选出有效改动后按 step 分别提交，再用全部评分尺寸与边界用例验收。
+
+## 前轮结果：mma64_step4.dh9ZC8
 
 数据：[pytest_step05.log](results_b300/mma64_step4.dh9ZC8/pytest_step05.log)、
 [step05.csv](results_b300/mma64_step4.dh9ZC8/step05.csv)、
@@ -44,18 +135,18 @@ Step 5 / 4096 为 659.37 TFLOP/s、cuBLAS 吞吐的约 61%，通过作业门槛�
 所有资源报告的 STACK/LOCAL 均为 0。`SHARED:1024` 仅是静态部分，K tile 加宽会增加
 动态 SMEM；不能将其理解为共享内存用量不变。日志只有 CUDA 头文件弃用和未使用符号警告。
 
-### Step 4 已采用与下一轮命令
+### 当时的 Step 4 采用与验收命令（现已完成）
 
 `9db8b87` 将 Step 4 的 `BLK_K` 改为：K 能被 128 整除时取 128，否则取 64。
 继续支持全部正的 K%64=0 形状。单组 A/B SMEM、完成等待、phase 和 FP16 写回路径保留。
 1024 生成的 CUDA 主体与实测有效变体逐字一致；K=64、192 的生成主体与原实现一致。
 新增 K=64、128、192、384 的矩形 GPU 用例，覆盖两条路径各一轮/三轮 barrier phase。
 
-**113 项本地工具和源码生成检查通过**，其中包含新路径的 SM100a/SM103a lowering。
-本机无 NVIDIA GPU，Step 4 正式版本的其他评分尺寸和新增边界用例仍需上机验证。
-Step 5 本轮无需再单独复测；旧 probe 默认只测 baseline，并拒绝重复应用已采用的 K tile 改动。
+当时 **113 项本地工具和源码生成检查通过**，其中包含新路径的 SM100a/SM103a lowering。
+Step 4 正式版本的其他评分尺寸和新增边界用例，已由后续 `step4_k128.6GZwy2` 全部验证。
+旧 probe 默认只测 baseline，并拒绝重复应用已采用的 K tile 改动。
 
-同步提交后顺序运行：
+以下为当时的验收命令，结果现已回传：
 
 ```bash
 cd ~/assignment-tirx-gemm
@@ -74,7 +165,7 @@ uv run python -u benchmark.py --steps 4 --trials 5 \
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-Step 4 通过后，再跑一次当前完整套件，更新 Step 6–10 的剩余性能项：
+随后执行了完整套件，更新 Step 6–10 的剩余性能项：
 
 ```bash
 # 当前为 53 项；比此前的 49 项新增 4 个 Step 4 边界用例
@@ -82,7 +173,7 @@ uv run python -m pytest tests/ -vs --tb=short \
   2>&1 | tee "$tirx_run/pytest_all.log"
 ```
 
-这轮回传的是 Step 5 验收和 Step 4 单个形状的实验结果，不能认定全仓库已全部达标。
+本节当时只有 Step 5 验收和 Step 4 单个形状的实验结果；最新完整验收结论见本文开头。
 
 ## 前轮等待对照：wait1024.UP24Tv
 

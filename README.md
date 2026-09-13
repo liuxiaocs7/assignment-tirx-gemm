@@ -2,16 +2,15 @@
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` are implemented using
 Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
-source generation checks. User-reported B300 results at `dfc9065` pass all 49 numerical
-checks, with **36 tests passing and 13 performance assertions failing**. The Step 6
-rollback recovered the 2048-size regression; further performance work remains.
-The latest `mma64_step4.dh9ZC8` production retest passes **all 7 Step 5 tests**;
-all five benchmark trials at each of its four graded sizes also pass.
-Its Step 4 / 1024 probe reduces latency from 0.022709 to 0.018613 ms with a
-128-wide K tile, passing all five trials. Commit `9db8b87` adopts this tile
-and retains the 64-wide path for odd multiples of 64. Other Step 4 sizes and
-its four new boundary tests still require GPU validation. The full suite now
-has 53 GPU cases; it has not yet passed in full.
+source generation checks. The latest B300 run, `step4_k128.6GZwy2` at `c6435e4`,
+passes all 53 numerical checks, with **46 tests passing and 7 performance
+assertions failing**. Steps 1–5, 8, and 9 pass in full. Remaining failures are
+Steps 6/7 at 2048, 4096, and 8192, plus Step 10 at 4096.
+Step 4's 128-wide K tile and 64-wide fallback pass all eight production tests
+and all 20 benchmark samples. Step 5's MMA wait adjustment also passes all
+seven production tests. `probe_persistent.py` now compares 11 independent
+variants at 4096 to diagnose the remaining failures; these experiments have
+local source-generation coverage but await GPU correctness and timing results.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 

@@ -32,7 +32,7 @@ VARIANTS = (*DEFAULT_VARIANTS, *STEP4_VARIANTS, *WAIT_VARIANTS, "early_release",
 
 def replace_once(source, before, after):
     if source.count(before) != 1:
-        raise ValueError("experiment no longer matches the Step 4 builder")
+        raise ValueError("experiment no longer matches the expected source")
     return source.replace(before, after)
 
 
@@ -190,7 +190,7 @@ def variant_source(source, step, variant):
 
 
 @contextmanager
-def source_experiment(step, variant, directory):
+def source_experiment(step, variant, directory, *, transform=variant_source):
     """Install inside capture_compilation so it records the transformed source."""
     import tvm_ffi
 
@@ -200,7 +200,7 @@ def source_experiment(step, variant, directory):
 
     def compile_cuda(code):
         before = str(code)
-        after = variant_source(before, step, variant)
+        after = transform(before, step, variant)
         stem = f"source_{len(calls) + 1:02d}"
         (directory / f"{stem}.before.cu").write_text(before)
         (directory / f"{stem}.patch").write_text("".join(difflib.unified_diff(
