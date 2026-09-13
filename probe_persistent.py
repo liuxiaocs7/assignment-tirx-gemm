@@ -1,7 +1,7 @@
 """Independent B300 performance experiments for Steps 6, 7, and 10.
 
-Defaults to 4096: Step 6 measures the adopted K-tile baseline;
-Step 7/10 compare independent changes with production. No kernel is edited.
+Defaults to 4096: Steps 6/7 measure the adopted K-tile baseline;
+Step 10 compares independent changes with production. No kernel is edited.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
 """
@@ -23,7 +23,7 @@ STEP_VARIANTS = {
     7: ("baseline", "k_tile_128", "mma_wait_64ns", "epilogue_128"),
     10: ("baseline", "mma_wait_64ns", "tmem_load_16"),
 }
-DEFAULT_STEP_VARIANTS = {**STEP_VARIANTS, 6: ("baseline",)}
+DEFAULT_STEP_VARIANTS = {**STEP_VARIANTS, 6: ("baseline",), 7: ("baseline",)}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 
 

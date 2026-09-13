@@ -24,7 +24,7 @@ def source_body(builder, shape, arch="sm_103a"):
     return executable.mod.imports[0].inspect_source().split('extern "C" __global__', 1)[1]
 
 
-@pytest.mark.parametrize("step", [6])
+@pytest.mark.parametrize("step", [6, 7])
 def test_production_matches_measured_wider_k_tile(step):
     pytest.importorskip("tvm")
     kernels = importlib.import_module("gemm_kernels")
@@ -33,7 +33,7 @@ def test_production_matches_measured_wider_k_tile(step):
         'extern "C" __global__', 1)[1]
 
 
-@pytest.mark.parametrize("step", [6])
+@pytest.mark.parametrize("step", [6, 7])
 @pytest.mark.parametrize("K", [64, 128, 192, 384])
 @pytest.mark.parametrize("arch", ["sm_100a", "sm_103a"])
 def test_short_k_matches_recorded_builder(step, K, arch, tmp_path):

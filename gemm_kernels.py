@@ -757,7 +757,9 @@ def hgemm_v7(M, N, K):
     b_type = tvm.DataType("float16")
     d_type = tvm.DataType("float16")
     acc_type = tvm.DataType("float32")
-    BLK_M, BLK_N, BLK_K = 128, 128, 64
+    BLK_M, BLK_N = 128, 128
+    # Halve producer/consumer rounds when aligned; retain odd-multiple support.
+    BLK_K = 128 if K % 128 == 0 else 64
     MMA_N = BLK_N
     K_TILES = K // BLK_K
     PIPE_DEPTH = 2

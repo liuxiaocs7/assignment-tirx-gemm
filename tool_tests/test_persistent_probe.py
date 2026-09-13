@@ -155,7 +155,7 @@ def test_k_tile_variant_retains_short_and_odd_phase_support(step, K, tmp_path, m
         assert "k < 3" in body(actual)
 
 
-@pytest.mark.parametrize("step", [6])
+@pytest.mark.parametrize("step", [6, 7])
 def test_adopted_k_tile_is_not_applied_again(step, tmp_path):
     pytest.importorskip("tvm")
     assert DEFAULT_STEP_VARIANTS[step] == ("baseline",)

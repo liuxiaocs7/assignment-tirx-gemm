@@ -15,8 +15,10 @@ def test_warp_spec(size):
     check_timing(kernel, step=7, M=M, N=N, K=K)
 
 
-def test_warp_spec_odd_k_across_tiles():
-    M, N, K = 1024, 3072, 192
+@pytest.mark.parametrize("K", [128, 192, 384])
+def test_warp_spec_odd_k_across_tiles(K):
+    """Persist one/three 128-wide stages and the odd 64-wide fallback across tiles."""
+    M, N = 1024, 3072
     kernel = hgemm_v7(M, N, K)
     A, B, C = prepare_data(M, N, K)
     verify(compile_and_run(kernel, A, B, C), A, B)
