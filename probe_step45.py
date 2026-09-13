@@ -4,8 +4,9 @@ Each variant changes one thing in a saved builder or after TVM lowering.
 The original gemm_kernels.py, compiler options, verification tolerances,
 and CUDA-event timer are unchanged.
 Use a fresh --output directory. All actual compiler inputs/binaries are saved.
-Defaults target Step 4 at size 1024; Step 5 has adopted mma_wait_64ns.
-The completed wait/early_release/no_k_unroll experiments remain explicit opt-ins.
+Defaults measure only the production baseline: Step 4 has adopted k_tile_128
+and Step 5 has adopted mma_wait_64ns. Use benchmark.py for production validation.
+Completed experiments remain explicit opt-ins where applicable to the builder.
 """
 
 import argparse
@@ -25,8 +26,8 @@ from benchmark_diagnostics import capture_compilation, run_metadata, write_json
 WAIT_VARIANTS = ("wait_64ns", "wait_poll", "tma_wait_64ns", "mma_wait_64ns")
 BUILDER_VARIANTS = ("k_tile_128", "tmem_load_64")
 STEP4_VARIANTS = (*BUILDER_VARIANTS, "unroll_k")
-DEFAULT_VARIANTS = ("baseline", *STEP4_VARIANTS)
-VARIANTS = (*DEFAULT_VARIANTS, *WAIT_VARIANTS, "early_release", "no_k_unroll")
+DEFAULT_VARIANTS = ("baseline",)
+VARIANTS = (*DEFAULT_VARIANTS, *STEP4_VARIANTS, *WAIT_VARIANTS, "early_release", "no_k_unroll")
 
 
 def replace_once(source, before, after):
@@ -38,6 +39,9 @@ def replace_once(source, before, after):
 def variant_builder_source(source, variant):
     """Change one Step 4 parameter/path; the saved diff makes it reviewable."""
     if variant == "k_tile_128":
+        if "BLK_K = 128 if K % 128 == 0 else 64" in source:
+            raise ValueError("Step 4 has adopted k_tile_128; validate the production kernel "
+                             "with benchmark.py --steps 4 and tests/test_step04.py")
         source = replace_once(source, "BLK_M, BLK_N, BLK_K = 128, 128, 64",
                               "BLK_M, BLK_N, BLK_K = 128, 128, 128")
         source = replace_once(source, "K % 64:", "K % 128:")

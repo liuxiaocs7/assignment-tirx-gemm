@@ -43,6 +43,14 @@ def test_single_persistent_tile_builds(step, M, N):
     assert_cuda_source(kernel, "sm_103a")
 
 
+@pytest.mark.parametrize("arch", ["sm_100a", "sm_103a"])
+@pytest.mark.parametrize("K", [128, 384])
+def test_step4_wider_k_tile_builds(arch, K):
+    """Exercise one and three phases of the wider single-buffer path."""
+    kernels = importlib.import_module("gemm_kernels")
+    assert_cuda_source(kernels.hgemm_v4(256, 384, K), arch)
+
+
 def assert_cuda_source(kernel, arch):
     target = tvm.target.Target({"kind": "cuda", "arch": arch})
     with target:

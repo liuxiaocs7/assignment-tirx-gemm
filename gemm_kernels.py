@@ -345,7 +345,11 @@ def hgemm_v4(M, N, K):
     b_type = tvm.DataType("float16")
     d_type = tvm.DataType("float16")
     acc_type = tvm.DataType("float32")
-    BLK_M, BLK_N, BLK_K = 128, 128, 64
+    BLK_M, BLK_N = 128, 128
+    # B300 mma64_step4.dh9ZC8: a wider K tile halves serial TMA/MMA
+    # synchronization rounds. Keep one SMEM stage and the original K%64
+    # contract: odd multiples of 64 use the previous tile width.
+    BLK_K = 128 if K % 128 == 0 else 64
     K_TILES = K // BLK_K
     # Each CTA accumulates 128 columns; leave the rest of TMEM for peer CTAs.
     TMEM_COLS = BLK_N

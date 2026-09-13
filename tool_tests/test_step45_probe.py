@@ -130,9 +130,14 @@ def test_recorded_1024_wait_probe_preserves_kernel_protocol(step, variant):
         assert header.replace("unsigned int ticks = 64;", "unsigned int ticks = 0x989680;") == original_header
 
 
-def test_defaults_target_remaining_step4_case():
-    assert DEFAULT_VARIANTS == ("baseline", "k_tile_128", "tmem_load_64", "unroll_k")
-    assert "early_release" not in DEFAULT_VARIANTS
+def test_defaults_do_not_repeat_adopted_experiments():
+    assert DEFAULT_VARIANTS == ("baseline",)
+
+
+def test_adopted_k_tile_rejects_duplicate_experiment(tmp_path):
+    pytest.importorskip("tvm")
+    with pytest.raises(ValueError, match="Step 4 has adopted k_tile_128"):
+        build_variant(4, 1024, "k_tile_128", tmp_path)
 
 
 @pytest.mark.parametrize("variant", WAIT_VARIANTS)
@@ -157,11 +162,19 @@ def test_changed_builder_format_fails_closed(variant):
 
 
 @pytest.mark.parametrize("variant", ["k_tile_128", "tmem_load_64", "unroll_k"])
-def test_step4_experiments_lower_and_preserve_single_buffer_protocol(variant, tmp_path):
+def test_step4_experiments_lower_and_preserve_single_buffer_protocol(variant, tmp_path, monkeypatch):
     tvm = pytest.importorskip("tvm")
     import gemm_kernels
     from test_step45_adoption import generated_source
 
+    # Replay the old experiment with its captured builder, before K tile adoption.
+    source = (Path(__file__).parents[1] / "results_b300/mma64_step4.dh9ZC8/probe" /
+              "step04_1024_k_tile_128/builder.before.py").read_text()
+    path = tmp_path / "historical_builder.py"
+    path.write_text(source)
+    namespace = dict(vars(gemm_kernels))
+    exec(compile(source, str(path), "exec"), namespace)
+    monkeypatch.setattr(gemm_kernels, "hgemm_v4", namespace["hgemm_v4"])
     original_builder = gemm_kernels.hgemm_v4
     kernel = build_variant(4, 1024, variant, tmp_path)
     assert gemm_kernels.hgemm_v4 is original_builder
@@ -215,7 +228,8 @@ def test_interleaved_results_use_same_trial_baseline():
 
 
 @pytest.mark.parametrize("argv", [["--trials", "0"], ["--repeat", "0"], ["--warmup", "-1"],
-                                  ["--size", "123"], ["--steps", "6"], ["--steps", "5"],
+                                  ["--size", "123"], ["--steps", "6"],
+                                  ["--steps", "5", "--variants", "k_tile_128"],
                                   ["--steps", "5", "--variants", "mma_wait_64ns"]])
 def test_invalid_arguments_fail_before_gpu_imports(tmp_path, argv):
     with pytest.raises(SystemExit) as error:
