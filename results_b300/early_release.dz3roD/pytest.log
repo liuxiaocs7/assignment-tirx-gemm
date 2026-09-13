@@ -1,0 +1,45 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/lcpu/27058528/assignment-tirx-gemm
+collecting ... collected 11 items
+
+tests/test_step04.py::test_tma_async[256] M=256, N=256, K=256: 0.010470 ms, 3.20 TFLOP/S
+PASSED
+tests/test_step04.py::test_tma_async[512] M=512, N=512, K=512: 0.014560 ms, 18.44 TFLOP/S
+PASSED
+tests/test_step04.py::test_tma_async[1024] M=1024, N=1024, K=1024: 0.022789 ms, 94.23 TFLOP/S
+FAILED
+tests/test_step04.py::test_tma_async[2048] M=2048, N=2048, K=2048: 0.043391 ms, 395.93 TFLOP/S
+PASSED
+tests/test_step05.py::test_pipeline[512] M=512, N=512, K=512: 0.010747 ms, 24.98 TFLOP/S
+PASSED
+tests/test_step05.py::test_pipeline[1024] M=1024, N=1024, K=1024: 0.016196 ms, 132.59 TFLOP/S
+FAILED
+tests/test_step05.py::test_pipeline[2048] M=2048, N=2048, K=2048: 0.033616 ms, 511.06 TFLOP/S
+PASSED
+tests/test_step05.py::test_pipeline[4096] M=4096, N=4096, K=4096: 0.211488 ms, 649.87 TFLOP/S
+PASSED
+tests/test_step05.py::test_pipeline_short_and_odd_k[64] PASSED
+tests/test_step05.py::test_pipeline_short_and_odd_k[192] PASSED
+tests/test_step05.py::test_pipeline_short_and_odd_k[320] PASSED
+
+=================================== FAILURES ===================================
+_____________________________ test_tma_async[1024] _____________________________
+tests/test_step04.py:15: in test_tma_async
+    check_timing(kernel, step=4, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 94.23 TFLOP/S(reference 126.32 TFLOP/S)
+_____________________________ test_pipeline[1024] ______________________________
+tests/test_step05.py:15: in test_pipeline
+    check_timing(kernel, step=5, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 132.59 TFLOP/S(reference 178.96 TFLOP/S)
+=========================== short test summary info ============================
+FAILED tests/test_step04.py::test_tma_async[1024] - AssertionError: Submissio...
+FAILED tests/test_step05.py::test_pipeline[1024] - AssertionError: Submission...
+========================= 2 failed, 9 passed in 13.57s =========================
