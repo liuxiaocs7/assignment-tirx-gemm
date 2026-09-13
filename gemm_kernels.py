@@ -1207,8 +1207,9 @@ def hgemm_v10(M, N, K):
     K_TILES = K // BLK_K
     PIPE_DEPTH = 4
     EPI_N = 64
-    TMEM_LD_N = 8
+    TMEM_LD_N = 32  # Eight loads per consumer, with separate FP16 row buffers.
     WG_NUMBER = 3
+    CLUSTER_COUNT = min(SM_COUNT // CTA_GROUP, (M // (MMA_M * NUM_CONSUMER)) * (N // MMA_N))
     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
     D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (NUM_CONSUMER, BLK_M, EPI_N))
@@ -1221,7 +1222,7 @@ def hgemm_v10(M, N, K):
     ):
         # fmt: off
         T.device_entry()
-        bx = T.cta_id([SM_COUNT])
+        bx = T.cta_id([CLUSTER_COUNT * CTA_GROUP])
         cbx, cby = T.cta_id_in_cluster([CTA_GROUP, 1])
         wg_id = T.warpgroup_id([WG_NUMBER])
         warp_id = T.warp_id_in_wg([4])
@@ -1255,7 +1256,7 @@ def hgemm_v10(M, N, K):
 
         tile_scheduler = ClusterPersistentScheduler2D(
             "ts", num_m_tiles=M // (MMA_M * NUM_CONSUMER), num_n_tiles=N // MMA_N,
-            l2_group_size=8, num_clusters=SM_COUNT // CTA_GROUP)
+            l2_group_size=8, num_clusters=CLUSTER_COUNT)
         tile_scheduler.init(bx // CTA_GROUP)
         m_st = T.meta_var(tile_scheduler.m_idx * MMA_M * NUM_CONSUMER + cbx * BLK_M)
         n_st = T.meta_var(tile_scheduler.n_idx * MMA_N + cbx * BLK_N)
