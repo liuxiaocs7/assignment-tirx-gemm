@@ -1,0 +1,193 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/lcpu/27058528/assignment-tirx-gemm
+configfile: pyproject.toml
+collecting ... collected 49 items
+
+tests/test_step01.py::test_single_tile M=128, N=128, K=64: 0.007904 ms, 0.27 TFLOP/S
+PASSED
+tests/test_step02.py::test_k_loop[64] M=128, N=128, K=64: 0.007405 ms, 0.28 TFLOP/S
+PASSED
+tests/test_step02.py::test_k_loop[512] M=128, N=128, K=512: 0.016597 ms, 1.01 TFLOP/S
+PASSED
+tests/test_step02.py::test_k_loop[1024] M=128, N=128, K=1024: 0.024831 ms, 1.35 TFLOP/S
+PASSED
+tests/test_step02.py::test_k_loop[4096] M=128, N=128, K=4096: 0.082174 ms, 1.63 TFLOP/S
+PASSED
+tests/test_step03.py::test_spatial_tiling[256] M=256, N=256, K=256: 0.010524 ms, 3.19 TFLOP/S
+PASSED
+tests/test_step03.py::test_spatial_tiling[512] M=512, N=512, K=512: 0.016606 ms, 16.17 TFLOP/S
+PASSED
+tests/test_step03.py::test_spatial_tiling[1024] M=1024, N=1024, K=1024: 0.026827 ms, 80.05 TFLOP/S
+PASSED
+tests/test_step03.py::test_spatial_tiling[2048] M=2048, N=2048, K=2048: 0.088269 ms, 194.63 TFLOP/S
+PASSED
+tests/test_step04.py::test_tma_async[256] M=256, N=256, K=256: 0.010480 ms, 3.20 TFLOP/S
+PASSED
+tests/test_step04.py::test_tma_async[512] M=512, N=512, K=512: 0.014557 ms, 18.44 TFLOP/S
+PASSED
+tests/test_step04.py::test_tma_async[1024] M=1024, N=1024, K=1024: 0.022867 ms, 93.91 TFLOP/S
+FAILED
+tests/test_step04.py::test_tma_async[2048] M=2048, N=2048, K=2048: 0.076768 ms, 223.79 TFLOP/S
+FAILED
+tests/test_step05.py::test_pipeline[512] M=512, N=512, K=512: 0.010469 ms, 25.64 TFLOP/S
+PASSED
+tests/test_step05.py::test_pipeline[1024] M=1024, N=1024, K=1024: 0.016631 ms, 129.12 TFLOP/S
+FAILED
+tests/test_step05.py::test_pipeline[2048] M=2048, N=2048, K=2048: 0.045313 ms, 379.14 TFLOP/S
+FAILED
+tests/test_step05.py::test_pipeline[4096] M=4096, N=4096, K=4096: 0.362580 ms, 379.06 TFLOP/S
+FAILED
+tests/test_step05.py::test_pipeline_short_and_odd_k[64] PASSED
+tests/test_step05.py::test_pipeline_short_and_odd_k[192] PASSED
+tests/test_step05.py::test_pipeline_short_and_odd_k[320] PASSED
+tests/test_step06.py::test_persistent[1024] M=1024, N=1024, K=1024: 0.016633 ms, 129.11 TFLOP/S
+PASSED
+tests/test_step06.py::test_persistent[2048] M=2048, N=2048, K=2048: 0.061570 ms, 279.03 TFLOP/S
+FAILED
+tests/test_step06.py::test_persistent[4096] M=4096, N=4096, K=4096: 0.311408 ms, 441.35 TFLOP/S
+FAILED
+tests/test_step06.py::test_persistent[8192] M=8192, N=8192, K=8192: 2.785711 ms, 394.70 TFLOP/S
+PASSED
+tests/test_step06.py::test_persistent_phase_across_tiles[64] PASSED
+tests/test_step06.py::test_persistent_phase_across_tiles[192] PASSED
+tests/test_step06.py::test_persistent_phase_across_tiles[320] PASSED
+tests/test_step07.py::test_warp_spec[1024] M=1024, N=1024, K=1024: 0.016588 ms, 129.46 TFLOP/S
+PASSED
+tests/test_step07.py::test_warp_spec[2048] M=2048, N=2048, K=2048: 0.045226 ms, 379.87 TFLOP/S
+FAILED
+tests/test_step07.py::test_warp_spec[4096] M=4096, N=4096, K=4096: 0.309866 ms, 443.54 TFLOP/S
+FAILED
+tests/test_step07.py::test_warp_spec[8192] M=8192, N=8192, K=8192: 2.779229 ms, 395.62 TFLOP/S
+FAILED
+tests/test_step07.py::test_warp_spec_odd_k_across_tiles PASSED
+tests/test_step08.py::test_epilogue_opt[1024] M=1024, N=1024, K=1024: 0.012526 ms, 171.44 TFLOP/S
+PASSED
+tests/test_step08.py::test_epilogue_opt[2048] M=2048, N=2048, K=2048: 0.029804 ms, 576.43 TFLOP/S
+PASSED
+tests/test_step08.py::test_epilogue_opt[4096] M=4096, N=4096, K=4096: 0.168172 ms, 817.25 TFLOP/S
+PASSED
+tests/test_step08.py::test_epilogue_opt[8192] M=8192, N=8192, K=8192: 1.431076 ms, 768.31 TFLOP/S
+PASSED
+tests/test_step08.py::test_deep_pipeline_partial_ring[64] PASSED
+tests/test_step08.py::test_deep_pipeline_partial_ring[320] PASSED
+tests/test_step09.py::test_cluster[1024] M=1024, N=1024, K=1024: 0.018711 ms, 114.77 TFLOP/S
+PASSED
+tests/test_step09.py::test_cluster[2048] M=2048, N=2048, K=2048: 0.028932 ms, 593.80 TFLOP/S
+PASSED
+tests/test_step09.py::test_cluster[4096] M=4096, N=4096, K=4096: 0.143777 ms, 955.92 TFLOP/S
+PASSED
+tests/test_step09.py::test_cluster[8192] M=8192, N=8192, K=8192: 0.905327 ms, 1214.49 TFLOP/S
+PASSED
+tests/test_step09.py::test_cluster_rectangular_persistent_tiles PASSED
+tests/test_step10.py::test_multi_consumer[1024] M=1024, N=1024, K=1024: 0.028954 ms, 74.17 TFLOP/S
+PASSED
+tests/test_step10.py::test_multi_consumer[2048] M=2048, N=2048, K=2048: 0.045870 ms, 374.53 TFLOP/S
+FAILED
+tests/test_step10.py::test_multi_consumer[4096] M=4096, N=4096, K=4096: 0.141168 ms, 973.58 TFLOP/S
+FAILED
+tests/test_step10.py::test_multi_consumer[8192] M=8192, N=8192, K=8192: 0.871549 ms, 1261.56 TFLOP/S
+PASSED
+tests/test_step10.py::test_multi_consumer_rectangular_reuse[64] PASSED
+tests/test_step10.py::test_multi_consumer_rectangular_reuse[320] PASSED
+
+=================================== FAILURES ===================================
+_____________________________ test_tma_async[1024] _____________________________
+tests/test_step04.py:15: in test_tma_async
+    check_timing(kernel, step=4, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 93.91 TFLOP/S(reference 126.32 TFLOP/S)
+_____________________________ test_tma_async[2048] _____________________________
+tests/test_step04.py:15: in test_tma_async
+    check_timing(kernel, step=4, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 223.79 TFLOP/S(reference 330.38 TFLOP/S)
+_____________________________ test_pipeline[1024] ______________________________
+tests/test_step05.py:15: in test_pipeline
+    check_timing(kernel, step=5, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 129.12 TFLOP/S(reference 178.96 TFLOP/S)
+_____________________________ test_pipeline[2048] ______________________________
+tests/test_step05.py:15: in test_pipeline
+    check_timing(kernel, step=5, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 379.14 TFLOP/S(reference 520.60 TFLOP/S)
+_____________________________ test_pipeline[4096] ______________________________
+tests/test_step05.py:15: in test_pipeline
+    check_timing(kernel, step=5, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 379.06 TFLOP/S(reference 505.29 TFLOP/S)
+____________________________ test_persistent[2048] _____________________________
+tests/test_step06.py:15: in test_persistent
+    check_timing(kernel, step=6, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 279.03 TFLOP/S(reference 490.85 TFLOP/S)
+____________________________ test_persistent[4096] _____________________________
+tests/test_step06.py:15: in test_persistent
+    check_timing(kernel, step=6, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 441.35 TFLOP/S(reference 575.06 TFLOP/S)
+_____________________________ test_warp_spec[2048] _____________________________
+tests/test_step07.py:15: in test_warp_spec
+    check_timing(kernel, step=7, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 379.87 TFLOP/S(reference 554.19 TFLOP/S)
+_____________________________ test_warp_spec[4096] _____________________________
+tests/test_step07.py:15: in test_warp_spec
+    check_timing(kernel, step=7, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 443.54 TFLOP/S(reference 597.56 TFLOP/S)
+_____________________________ test_warp_spec[8192] _____________________________
+tests/test_step07.py:15: in test_warp_spec
+    check_timing(kernel, step=7, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 395.62 TFLOP/S(reference 529.89 TFLOP/S)
+__________________________ test_multi_consumer[2048] ___________________________
+tests/test_step10.py:15: in test_multi_consumer
+    check_timing(kernel, step=10, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 374.53 TFLOP/S(reference 490.85 TFLOP/S)
+__________________________ test_multi_consumer[4096] ___________________________
+tests/test_step10.py:15: in test_multi_consumer
+    check_timing(kernel, step=10, M=M, N=N, K=K)
+utils.py:155: in check_timing
+    assert tflops >= min_tflops, (
+           ^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: Submission too slow: 973.58 TFLOP/S(reference 1284.48 TFLOP/S)
+=========================== short test summary info ============================
+FAILED tests/test_step04.py::test_tma_async[1024] - AssertionError: Submissio...
+FAILED tests/test_step04.py::test_tma_async[2048] - AssertionError: Submissio...
+FAILED tests/test_step05.py::test_pipeline[1024] - AssertionError: Submission...
+FAILED tests/test_step05.py::test_pipeline[2048] - AssertionError: Submission...
+FAILED tests/test_step05.py::test_pipeline[4096] - AssertionError: Submission...
+FAILED tests/test_step06.py::test_persistent[2048] - AssertionError: Submissi...
+FAILED tests/test_step06.py::test_persistent[4096] - AssertionError: Submissi...
+FAILED tests/test_step07.py::test_warp_spec[2048] - AssertionError: Submissio...
+FAILED tests/test_step07.py::test_warp_spec[4096] - AssertionError: Submissio...
+FAILED tests/test_step07.py::test_warp_spec[8192] - AssertionError: Submissio...
+FAILED tests/test_step10.py::test_multi_consumer[2048] - AssertionError: Subm...
+FAILED tests/test_step10.py::test_multi_consumer[4096] - AssertionError: Subm...
+=================== 12 failed, 37 passed in 70.18s (0:01:10) ===================
