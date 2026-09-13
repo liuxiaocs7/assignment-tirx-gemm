@@ -1,0 +1,10 @@
+{
+  "step": 4,
+  "variant": "tmem_load_64",
+  "sources": [
+    {
+      "before_sha256": "92947223ee974f45c99b100b95c6aafd72d8d5ca343d3505cc769eb239612742",
+      "compiled_sha256": "92947223ee974f45c99b100b95c6aafd72d8d5ca343d3505cc769eb239612742"
+    }
+  ]
+}

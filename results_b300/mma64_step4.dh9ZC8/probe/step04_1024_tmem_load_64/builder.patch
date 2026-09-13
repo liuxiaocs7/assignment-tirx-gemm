@@ -1,0 +1,34 @@
+--- baseline.py
++++ tmem_load_64.py
+@@ -9,6 +9,7 @@
+     K_TILES = K // BLK_K
+     # Each CTA accumulates 128 columns; leave the rest of TMEM for peer CTAs.
+     TMEM_COLS = BLK_N
++    TMEM_LD_N = 64
+     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
+     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
+     D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_N))
+@@ -88,15 +89,17 @@
+         # Publish the elected thread's completion to all writeback threads.
+         T.cuda.cta_sync()
+         T.ptx.tcgen05.fence.after_thread_sync()
+-        Dreg = T.alloc_local((BLK_N,), acc_type)
++        Dreg = T.alloc_local((TMEM_LD_N,), acc_type)
+         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
+-        Dreg_wg = Dreg.view(128, BLK_N,
+-            layout=TileLayout(S[(128, BLK_N) : (1@axis_tid_in_wg, 1)]))
+-        Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])
+-        T.ptx.tcgen05.wait.ld()
++        Dreg_wg = Dreg.view(128, TMEM_LD_N,
++            layout=TileLayout(S[(128, TMEM_LD_N) : (1@axis_tid_in_wg, 1)]))
++        for chunk in T.unroll(BLK_N // TMEM_LD_N):
++            col = T.meta_var(chunk * TMEM_LD_N)
++            Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, col:col + TMEM_LD_N])
++            T.ptx.tcgen05.wait.ld()
++            Tx.cast(Dreg_f16[col:col + TMEM_LD_N], Dreg[:])
+         # Publish completed TMEM reads before CTA reuse or deallocation.
+         T.ptx.tcgen05.fence.before_thread_sync()
+-        Tx.cast(Dreg_f16[:], Dreg[:])
+         Tx.copy(Dsmem[warp_id * 32 + lane_id, :], Dreg_f16[:])
+         T.ptx.fence.proxy_async("shared::cta")
+         T.cuda.cta_sync()
