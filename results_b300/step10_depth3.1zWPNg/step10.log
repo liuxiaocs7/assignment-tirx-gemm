@@ -1,0 +1,46 @@
+Code: 63015333fba35f32ddb7ad815802d27393a7df58; gemm_sha256=36537ab6799ed82578289c84d68fb14cbe8c985421449365e60f91256c9fc994
+GPU: NVIDIA B300 SXM6 AC; SMs: 148; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Separate builds; each experiment records its direct comparison control. Verify all outputs before interleaved CUDA-event timing.
+Verified step 10 / baseline
+Verified step 10 / cache_tmem_base
+Verified step 10 / cache_balanced_clusters
+Verified step 10 / balanced_depth3
+Verified step 10 / balanced_depth3_epi128
+Verified boundary Step 10 / balanced_depth3 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / balanced_depth3 / (4096, 3072, 192) twice (untimed)
+Verified boundary Step 10 / balanced_depth3 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / balanced_depth3_epi128 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / balanced_depth3_epi128 / (4096, 3072, 192) twice (untimed)
+Verified boundary Step 10 / balanced_depth3_epi128 / (4096, 3072, 320) twice (untimed)
+Trial 1: step 10 / baseline: 0.143562 ms
+Trial 1: step 10 / cache_tmem_base: 0.141214 ms
+Trial 1: step 10 / cache_balanced_clusters: 0.140822 ms
+Trial 1: step 10 / balanced_depth3: 0.140631 ms
+Trial 1: step 10 / balanced_depth3_epi128: 0.141197 ms
+Trial 2: step 10 / baseline: 0.140343 ms
+Trial 2: step 10 / balanced_depth3_epi128: 0.139383 ms
+Trial 2: step 10 / balanced_depth3: 0.139757 ms
+Trial 2: step 10 / cache_balanced_clusters: 0.140269 ms
+Trial 2: step 10 / cache_tmem_base: 0.140996 ms
+Trial 3: step 10 / cache_balanced_clusters: 0.139443 ms
+Trial 3: step 10 / balanced_depth3: 0.140193 ms
+Trial 3: step 10 / balanced_depth3_epi128: 0.142364 ms
+Trial 3: step 10 / baseline: 0.142430 ms
+Trial 3: step 10 / cache_tmem_base: 0.141371 ms
+Trial 4: step 10 / cache_balanced_clusters: 0.140233 ms
+Trial 4: step 10 / cache_tmem_base: 0.141151 ms
+Trial 4: step 10 / baseline: 0.142764 ms
+Trial 4: step 10 / balanced_depth3_epi128: 0.142506 ms
+Trial 4: step 10 / balanced_depth3: 0.139914 ms
+Trial 5: step 10 / balanced_depth3_epi128: 0.141946 ms
+Trial 5: step 10 / baseline: 0.142366 ms
+Trial 5: step 10 / cache_tmem_base: 0.140942 ms
+Trial 5: step 10 / cache_balanced_clusters: 0.139588 ms
+Trial 5: step 10 / balanced_depth3: 0.140003 ms
+step variant         median_ms    min_ms    max_ms paired_speedup vs_cache control                   vs_control limit_ms status
+  10 baseline         0.142430  0.140343  0.143562          1.000    0.990 baseline                       1.000 0.139100 SLOW
+  10 cache_tmem_base  0.141151  0.140942  0.141371          1.010    1.000 baseline                       1.010 0.139100 SLOW
+  10 cache_balanced_clusters  0.140233  0.139443  0.140822          1.019    1.007 cache_tmem_base                1.007 0.139100 SLOW
+  10 balanced_depth3  0.140003  0.139757  0.140631          1.017    1.008 cache_balanced_clusters        1.001 0.139100 SLOW
+  10 balanced_depth3_epi128  0.141946  0.139383  0.142506          1.003    0.993 balanced_depth3                0.986 0.139100 SLOW
+Saved results_b300/step10_depth3.1zWPNg/step10/summary.csv; SLOW is a measured result, not a tool error.

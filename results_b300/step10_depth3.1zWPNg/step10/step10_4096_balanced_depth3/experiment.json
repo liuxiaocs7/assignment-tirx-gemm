@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "balanced_depth3",
+  "sources": [
+    {
+      "before_sha256": "674d98488becaed85aca9f7bafec6a511c22b0c80373743abe5271f44e51eeb9",
+      "compiled_sha256": "674d98488becaed85aca9f7bafec6a511c22b0c80373743abe5271f44e51eeb9"
+    }
+  ]
+}
