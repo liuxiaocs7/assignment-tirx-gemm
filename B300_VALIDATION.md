@@ -1,6 +1,101 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step8_wait_step10_pipeline.VnSWDg
+## 最新结果：stage_profile.LPt75W
+
+数据：[profile.log](results_b300/stage_profile.LPt75W/profile.log)、
+[timings.json](results_b300/stage_profile.LPt75W/profile/timings.json)、
+[stages.csv](results_b300/stage_profile.LPt75W/profile/stages.csv)、
+[trace.csv](results_b300/stage_profile.LPt75W/profile/trace.csv)。运行版本 `4d053c1`；
+B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。六个记录的 Python 文件
+指纹均与运行提交一致，六个插桩 builder 的指纹核对通过，每组编译选项相同。
+八个版本通过初始和逐轮数值校验；**8,960 条记录的完整性和汇总重放通过**。
+两个 baseline 的 cubin 均与前轮 VnSWDg 完全相同。
+
+### 性能状态与插桩影响
+
+| 形状 | baseline 中位数 ms | 门槛 ms | 达标样本 | TMA / baseline | MMA / baseline | 写回 / baseline |
+|---|---:|---:|---:|---:|---:|---:|
+| Step 8 / 2048 | 0.030157 | 0.029900 | 2/5 | 1.010× | 0.996× | 1.021× |
+| Step 10 / 4096 | 0.142354 | 0.139100 | 0/5 | 1.000× | 1.017× | 1.023× |
+
+比值为各轮与同轮 baseline 比值的中位数。0.996× 不代表一次优化成功：插桩改变了
+调度，且不同版本不是同时测量。Step 8 插桩的 REG 分别为 106 / 128 / 125，
+baseline 为 106，STACK 均为 0。Step 10 全部 REG:168；写回插桩的 STACK 从
+32 增至 128，其余仍为 32，写回 trace 的精确比例需考虑这一扰动。
+
+所有轮次前后的 `nvidia-smi` 快照均为 P0 / SM 1095 MHz / 显存 3996 MHz；
+温度 34–38℃，采样功耗约 199–266 W。这些快照在计时批次外，不能据此排除运行中
+的瞬时频率变化，也不能推断整个 kernel 的利用率。cycles/ns 只是另一个区间观察值。
+本轮没有新的完整 pytest；全量仍以此前 **55/57** 摘要为准。
+
+### 阶段数据支持什么、尚不能证明什么
+
+以下百分比是相应角色区间内按总时长加权的占比；前后数字分别对应首次 / 第二个
+输出 tile。它们不是全 GPU 的 stall 百分比，各角色耗时不能相加。
+
+| 观测 | Step 8 / 2048 | Step 10 / 4096 |
+|---|---:|---:|
+| TMA 等待 stage 复用 | 78.4% / 80.2% | 89.5–89.9% / 90.1–90.4% |
+| MMA 等待输入就绪 | 29.4% / 26.6% | 56.2–56.8% / 54.2–54.8% |
+| MMA 等待 accumulator 释放 | 0.4% / 3.2% | 0.1% / 4.5% |
+| 写回等待 MMA 完成 | 82.6% / 81.7% | 88.1–88.4% / 88.7–88.8% |
+| 写回 epilogue | 13.8% / 14.5% | 9.2–9.4% / 8.2% |
+| MMA 未单独计量区间 | 37.7% / 36.6% | 27.1–27.8% / 25.1–25.6% |
+
+Step 10 同一 launch 内两个 consumer 的完成时间差绝对值中位数为 **0 ns**，
+95 分位为 128 ns，最大 352 ns（按本轮计时器记录精度）；没有明显的 consumer 失衡证据。它们的完成时间
+本来就可能因共用 stage barrier 被耦合，不能由此断言两者每个 stage 都没有差异。
+
+TMA 和 MMA 同时有高等待占比，说明应先检查 K-ring 的交接和发射路径；这不是
+“HBM 带宽不足”或“Tensor Core 已满载”的证明。写回自身不是最大的角色区间，
+但仍可能贡献尾部开销。MMA 还有约 25–38% 未单独计量，包含循环、地址计算、
+计时累加和调度间隙，不能把这部分全部归因于任何一种指令。
+
+进一步检查 [Step 10 baseline SASS](results_b300/stage_profile.LPt75W/profile/step10_4096/baseline/module_01.sass.txt)
+发现 MMA K 循环内会重新读取不变的 TMEM 基址：例如 `0x1870` 的 `LDS R2, [R27]`
+之后经地址处理，`0x19d0` 的 `R2UR UR5, R2` 将目标地址交给 `0x19f0` 起的四条
+`UTCHMMA.2CTA`。后续循环体也有同类读取。生成 CUDA 每条 MMA 的目标均引用
+`((uint*)pool_buf_ptr)[0]`，而该分配结果从初始化同步后直到最后 dealloc 都不改变。
+这给出一个具体、可验证的缓存机会，但静态指令存在不等于已证明其性能占比。
+
+### 下一轮：缓存 TMEM 基址与 K-ring 等待对照
+
+本轮生产 `gemm_kernels.py` 和评分不变，`probe_persistent.py` 增加以下对照：
+
+1. **`cache_tmem_base`（Step 8、10）**：在原 CTA/cluster 初始化同步之后用
+   `T.let` 读取一次 TMEM 基址，TMEM buffer 引用该标量。若重复 SMEM 读取及地址
+   传递限制循环，应减少 K 循环中的 `LDS` 并加速。它也可能增加寄存器活跃期；
+   需用新 SASS 确认 NVRTC 是否保留缓存。分配、barrier、MMA 工作量、写回和
+   最终 dealloc 均保持原有语义。
+2. **`reuse_wait_64ns`（Step 8、10）**：只缩短 TMA warp 在 `mma2tma` 上的
+   等待挂起提示。Step 8 已采用 64 ns 数据就绪等待，尚未测试这个复用等待点。
+   Step 10 旧 `mma_wait_64ns` 同时改过复用和写回完成等待；本次只改复用，
+   两个输出交接等待保持原样。若唤醒响应限制 stage 周转，应带来收益。
+3. **`ring_wait_64ns`（仅 Step 10）**：同时缩短 `mma2tma` 和 `tma2mma`，
+   用同轮 baseline、reuse-only 和 data-ready-only 作为控制，检验两侧唤醒是否
+   存在相互影响。所有等待仍保留 acquire、parity 和 retry，不设置跳过完成的超时。
+
+每个变体从正式内核独立生成；缓存不与等待变体叠加。Step 8 默认三个版本，
+Step 10 默认五个版本（含同轮 `tma_wait_64ns` 控制）。不重复无收益的写回块实验。
+工具现也保存可用的 SASS，便于检查缓存是否真正消除了循环内读取。
+
+整套 **273 项本地检查通过**，新增 15 项覆盖缓存发布顺序、全部硬件操作及地址等价、短 K/矩形路径、
+实测等待代码重放，以及上传 trace/summary 重建。GPU 性能结论仍待这轮无插桩实验。
+
+同步提交后依次运行：
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/profile_guided.XXXXXX)
+uv run python -u probe_persistent.py --steps 8 --size 2048 \
+  --output "$tirx_run/step08" 2>&1 | tee "$tirx_run/step08.log"
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：step8_wait_step10_pipeline.VnSWDg
 
 数据：[Step 8 pytest](results_b300/step8_wait_step10_pipeline.VnSWDg/pytest_step08.log)、
 [Step 8 benchmark](results_b300/step8_wait_step10_pipeline.VnSWDg/step08.csv)、
@@ -53,11 +148,11 @@ benchmark 的四个、probe 的六个 Python 文件指纹均与运行提交一�
 本轮没有新的完整套件结果；最近一次全量仍是 **55/57 通过**，发生在 Step 8
 采用等待改动之前。本轮独立结果不能组合成一次新的全量通过数。
 
-### 下一轮：按角色测量等待与执行区间
+### 当时的阶段诊断设计（已回传 stage_profile.LPt75W）
 
-当前改动只增加 [profile_persistent.py](profile_persistent.py) 和诊断说明，生产内核、
+当时改动只增加 [profile_persistent.py](profile_persistent.py) 和诊断说明，生产内核、
 评分门槛、数值容差、原 CUDA-event 计时方法均未修改。已完成的性能变体保留为
-`probe_persistent.py --variants ...` 显式选项，默认只测正式 baseline。
+`probe_persistent.py --variants ...` 显式选项；当时默认只测正式 baseline。
 
 优先区分以下预测；等待占比只能缩小范围，仍需后续无插桩实验验证：
 
@@ -98,9 +193,9 @@ SASS（若可用 `cuobjdump`）；另保存每轮前后 `nvidia-smi` 时钟、�
 
 **258 项本地工具及源码生成检查通过**，其中新增 30 项覆盖插桩保留原硬件操作和地址、
 两个 consumer 的独立记录、跨 tile 覆盖、异常 trace 拒绝与重复 helper 定义防护。
-本机没有 NVIDIA GPU；新工具的 NVRTC 编译、数值和实际扰动仍待 B300 验证。
+本机没有 NVIDIA GPU；工具的 B300 编译、数值和实际扰动已由 LPt75W 回传，见本文开头。
 
-同步提交后运行一次：
+以下为 `4d053c1` 的历史命令，无需重复：
 
 ```bash
 cd ~/assignment-tirx-gemm

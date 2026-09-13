@@ -1,9 +1,9 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
-Defaults to production baseline only. Completed Step 10 stage/K-tile/writeback
-experiments did not meet the limit; use profile_persistent.py for stage timing.
-Steps 6/7 passed validation; Step 8 still has marginal performance after its
-measured TMA wait adoption. Old experiments remain available with --variants.
+Defaults focus on the stage-profile findings: cache the immutable TMEM base
+and shorten stage-reuse waits. Step 10 also tests both sides of the K-ring
+handoff together. Each variant starts from production, without profiling.
+Steps 8/10 still need performance margin. Old experiments remain opt-in.
 No production kernel is edited by this tool.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
@@ -19,20 +19,23 @@ from pathlib import Path
 
 from benchmark_diagnostics import capture_compilation, run_metadata, write_json
 from probe_step45 import replace_once, source_experiment, summarize, trial_order
+from profile_persistent import dump_sass
 
 
 STEP_VARIANTS = {
     6: ("baseline", "k_tile_128", "mma_wait_64ns", "final_fence"),
     7: ("baseline", "k_tile_128", "mma_wait_64ns", "epilogue_128"),
-    8: ("baseline", "tma_wait_64ns", "epilogue_128"),
+    8: ("baseline", "tma_wait_64ns", "epilogue_128", "cache_tmem_base", "reuse_wait_64ns"),
     10: ("baseline", "mma_wait_64ns", "tmem_load_16", "tmem_load_64",
          "l2_group_4", "balanced_clusters", "tma_wait_64ns",
          "specialize_mma", "specialize_writeback", "unroll_ring",
-         "pipe_depth_2", "k128_depth_2", "stream_epilogue"),
+         "pipe_depth_2", "k128_depth_2", "stream_epilogue",
+         "cache_tmem_base", "reuse_wait_64ns", "ring_wait_64ns"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
-                         8: ("baseline",),
-                         10: ("baseline",)}
+                         8: ("baseline", "cache_tmem_base", "reuse_wait_64ns"),
+                         10: ("baseline", "cache_tmem_base", "reuse_wait_64ns",
+                              "tma_wait_64ns", "ring_wait_64ns")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 
 
@@ -148,8 +151,15 @@ def variant_builder_source(source, step, variant):
     if variant == "tma_wait_64ns" and "tirx_tma_wait_64ns" in source:
         raise ValueError(f"Step {step} has adopted tma_wait_64ns; validate the production kernel "
                          f"with benchmark.py --steps {step} and tests/test_step{step:02d}.py")
-    if variant in ("baseline", "mma_wait_64ns", "tma_wait_64ns"):
+    if variant in ("baseline", "mma_wait_64ns", "tma_wait_64ns", "reuse_wait_64ns", "ring_wait_64ns"):
         return source
+    if variant == "cache_tmem_base":
+        # The allocation result is published by the existing CTA/cluster sync.
+        # No role changes it until final deallocation. A let snapshots it once,
+        # so compiler memory clobbers need not reload SMEM in every MMA stage.
+        source = replace_once(source, "        tmem = T.decl_buffer(",
+                              "        mma_tmem_base: T.let = tmem_addr[0]\n        tmem = T.decl_buffer(")
+        return replace_once(source, "allocated_addr=tmem_addr[0]", "allocated_addr=mma_tmem_base")
     if variant == "unroll_ring":
         return unroll_pipeline_ring(source)
     if variant == "stream_epilogue":
@@ -228,7 +238,7 @@ def variant_source(source, step, variant):
     """Change selected barrier waits only, retaining acquire, parity, and retry."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
-    if variant not in ("mma_wait_64ns", "tma_wait_64ns"):
+    if variant not in ("mma_wait_64ns", "tma_wait_64ns", "reuse_wait_64ns", "ring_wait_64ns"):
         return source
     marker = 'extern "C" __global__'
     if marker not in source:
@@ -248,9 +258,14 @@ def variant_source(source, step, variant):
                 ':: "r"(barrier_addr_int), "r"(phase), "r"(ticks) : "memory"')
     if any(helper.count(part) != 1 for part in required):
         raise ValueError("unexpected default wait implementation")
-    # Exact barrier/phase arguments from the saved production CUDA. Change
-    # data-ready OR MMA-completion waits, never both in the same experiment.
-    if variant == "tma_wait_64ns":
+    # Exact barrier/phase arguments from the saved production CUDA. The paired
+    # ring experiment builds on the isolated reuse/data-ready controls; it
+    # leaves accumulator-free and writeback-completion waits unchanged.
+    if variant in ("reuse_wait_64ns", "ring_wait_64ns"):
+        arguments = ["(&(((uint64_t*)pool_buf_ptr)[(tma_phase_stage_ptr[0] + 5)])), (tma_phase_phase_ptr[0] ^ 0)"]
+        if variant == "ring_wait_64ns":
+            arguments.append("(&(((uint64_t*)pool_buf_ptr)[(mma_phase_stage_ptr[0] + 1)])), (mma_phase_phase_ptr[0] ^ 0)")
+    elif variant == "tma_wait_64ns":
         # Both four-stage kernels use slots 1..4 for tma2mma. This wait is
         # executed by the MMA warp(s); completion/accumulator-free waits stay.
         arguments = ["(&(((uint64_t*)pool_buf_ptr)[(mma_phase_stage_ptr[0] + 1)])), (mma_phase_phase_ptr[0] ^ 0)"]
@@ -262,7 +277,8 @@ def variant_source(source, step, variant):
             10: ["(&(((uint64_t*)pool_buf_ptr)[(tma_phase_stage_ptr[0] + 5)])), (tma_phase_phase_ptr[0] ^ 0)",
                  "(&(((uint64_t*)pool_buf_ptr)[((warp_id_in_cta >> 2) + 9)])), (wb_phase_phase_ptr[0] ^ 0)"],
         }[step]
-    if body.count(name + "(") != (2 if step == 6 else 4):
+    expected = 2 if step == 6 else 3 if step == 8 and "tirx_tma_wait_64ns(" in body else 4
+    if body.count(name + "(") != expected:
         raise ValueError("unexpected TMA/MMA wait count")
     for args in arguments:
         body = replace_once(body, f"{name}({args});", f"{short_name}({args});")
@@ -313,6 +329,7 @@ def main(argv=None):
                     torch=torch.__version__, cuda=torch.version.cuda,
                     probe_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                     probe_step45_sha256=hashlib.sha256(Path(__file__).with_name("probe_step45.py").read_bytes()).hexdigest(),
+                    profile_persistent_sha256=hashlib.sha256(Path(__file__).with_name("profile_persistent.py").read_bytes()).hexdigest(),
                     steps=list(selected), size=args.size, variants=selected,
                     trials=args.trials, warmup=args.warmup, repeat=args.repeat, seed=args.seed)
     write_json(args.output / "run.json", metadata)
@@ -335,6 +352,9 @@ def main(argv=None):
                 if len(calls) != 1:
                     raise RuntimeError(f"{directory}: expected one CUDA compilation, got {len(calls)}")
                 verify(output, A, B)
+            # SASS permits checking whether a source-level hoist survived
+            # NVRTC. Disassembly is outside all timed launches.
+            dump_sass(directory)
             print(f"Verified step {step} / {variant}", flush=True)
             cases.append(dict(step=step, size=args.size, variant=variant, samples_ms=[]))
             executables.append(executable)

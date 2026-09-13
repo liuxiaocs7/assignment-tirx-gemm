@@ -30,46 +30,53 @@ Step 8 / 2048、Step 10 / 4096。Step 1–7、9 全部通过，Step 10 的其他
 完全相同，确认改动已采用，但性能还不稳定。Step 10 的流水线和分块写回实验共
 25 个样本全部超时，未采用。最新全量摘要在 Step 8 改动之前，不能据独立结果更新通过数。
 
+随后 `stage_profile.LPt75W`（`4d053c1`）完成八个版本的 GPU 数值验证和 8,960 条
+阶段记录。Step 8 / 2048 baseline 五轮仍只有两轮达标；Step 10 / 4096 五轮全部超时。
+TMA 等待 stage 复用占约 80% / 90%，Step 10 两 consumer 完成时间差中位数为 0 ns。
+SASS 显示 MMA 循环重复读取不变的 TMEM 基址，当前按此线索设计无插桩对照。
+
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
 Step 10 / 4096 的 x64 TMEM、L2 分组、cluster 数实验均未解决性能失败。
 详见 [最新验证和对照记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（覆盖构建、实测 CUDA 重放、fallback、实验隔离、编译回调与角色插桩，共 **258 项本地通过**；
+（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **273 项本地通过**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：测量 Step 8、10 各角色的等待时间
+### 当前进度：缓存 TMEM 基址与流水线等待对照
 
-将新提交同步到服务器后，运行下面一个工具，依次测量 Step 8 / 2048、Step 10 / 4096。
-每个形状包含正式 baseline 和分别对 TMA、MMA、写回插桩的三个副本；五轮交错计时，
-计时前后验算。阶段数据用于区分数据供应、MMA/stage 复用和写回交接瓶颈。
+将新提交同步到服务器后，依次测量 Step 8 / 2048、Step 10 / 4096。缓存 TMEM 基址
+和等待调度分别从正式内核生成，五轮交错计时、计时前后验算。正式生产内核保持不变。
 
 ```bash
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/stage_profile.XXXXXX)
-uv run python -u profile_persistent.py --output "$tirx_run/profile" \
-  2>&1 | tee "$tirx_run/profile.log"
+tirx_run=$(mktemp -d results_b300/profile_guided.XXXXXX)
+uv run python -u probe_persistent.py --steps 8 --size 2048 \
+  --output "$tirx_run/step08" 2>&1 | tee "$tirx_run/step08.log"
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-`trace.csv` 保存各 CTA、consumer、输出 tile 的原始时间戳；`stages.csv` 汇总等待、
-发射/读取、交接及 epilogue 区间。trace 来自每轮**最后一次计时 launch**，CUDA event
-则是 30 次 launch 的平均。工具保留 baseline 比值、builder diff、CUDA、实际二进制、
-编译资源、可用的 SASS，以及每轮前后的 GPU 时钟/功耗快照。
+Step 8 默认 baseline、`cache_tmem_base`、`reuse_wait_64ns` 三个版本。
+Step 10 再加 `tma_wait_64ns` 单侧控制与 `ring_wait_64ns` 双侧组合，共五个版本。
+缓存变体在初始化同步后读取一次 TMEM 基址，保持原来的全部同步和工作量；
+等待变体只改变挂起提示，仍要等到 barrier 完成。每轮保留正确性、原始耗时、
+builder/CUDA diff、编译资源和可用的 SASS，检查改动是否真正进入机器码。
 
-插桩会改变指令、寄存器和调度；各角色在独立副本中测量，不能叠加其耗时或对齐其时间线。
-TMA/MMA 的 work 是发射区间，不是异步引擎完成时长；初始分配、tile 调度间隙和末尾清理
-不在角色区间内。插桩副本不参与性能评分，只有 baseline 报告达标样本数；采集成功返回 0，
-数值、编译或 trace 校验失败返回非零。本地已验证源码生成，NVRTC 与 GPU 执行待回传。
-完整解释见 [阶段诊断说明](B300_VALIDATION.md#下一轮按角色测量等待与执行区间)。
+`summary.csv` 报告与同轮 baseline 的加速比和原评分结果。`SLOW` 不会中断采集；
+数值或编译失败则停止。这些新对照已通过源码生成检查，GPU 性能仍待回传。
+实验预测与依据见 [最新验证记录](B300_VALIDATION.md#下一轮缓存-tmem-基址与-k-ring-等待对照)。
 
-`probe_persistent.py` 默认只测 baseline，已完成的变体通过 `--variants` 显式选择。
+`profile_persistent.py` 保留为诊断工具；各角色独立插桩，记录最后一次计时 launch，
+其区间不能相加，也不能据高等待占比直接判断显存或 Tensor Core 利用率。
+已完成的其他性能变体通过 `probe_persistent.py --variants` 显式选择。
 已采用的 Step 6/7 `k_tile_128` 和 Step 8 `tma_wait_64ns` 会拒绝重复应用。
 
 ### 已有 B300 + Torch + TVM 0.26 + uv：直接运行

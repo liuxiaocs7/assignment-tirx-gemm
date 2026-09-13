@@ -171,7 +171,7 @@ def test_adopted_k_tile_is_not_applied_again(step, tmp_path):
 
 def test_adopted_step8_tma_wait_is_not_applied_again(tmp_path):
     pytest.importorskip("tvm")
-    assert DEFAULT_STEP_VARIANTS[8] == ("baseline",)
+    assert "tma_wait_64ns" not in DEFAULT_STEP_VARIANTS[8]
     with pytest.raises(ValueError, match="Step 8 has adopted tma_wait_64ns"):
         build_variant(8, (2048,) * 3, "tma_wait_64ns", tmp_path)
 

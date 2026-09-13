@@ -13,9 +13,13 @@ Its cubin is identical to the earlier successful wait probe; performance
 margin remains insufficient. All 25 Step 10 pipeline/writeback samples miss
 the limit, including the streamed variant that reduces registers from 168 to 77.
 No new full suite was run, and no Step 10 variant was adopted.
-`profile_persistent.py` now measures TMA, MMA and writeback in separate
-instrumented copies, with an original baseline to report measurement overhead.
-All 258 local tool/source-generation checks pass; GPU profiling is pending.
+The subsequent `stage_profile.LPt75W` run validates all profiling copies and
+8,960 trace records. TMA spends about 80% / 90% of its role interval waiting
+for stage reuse in Steps 8 / 10; the two Step 10 consumers finish nearly
+together. SASS also shows repeated loads of the immutable TMEM base inside
+the MMA loop. New probes test caching that base and K-ring wait scheduling;
+these are hypotheses awaiting GPU timing. All 273 local tool/source-generation
+checks pass. Baselines still lack performance margin.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 
