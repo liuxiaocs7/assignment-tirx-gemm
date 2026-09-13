@@ -5,10 +5,10 @@ Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
 source generation checks. User-reported B300 results at `dfc9065` pass all 49 numerical
 checks, with **36 tests passing and 13 performance assertions failing**. The Step 6
 rollback recovered the 2048-size regression; further performance work remains.
-The latest B300 probe shows that releasing the TMEM allocation permit immediately
-after allocation speeds up Step 4/5 at size 2048 by 1.776× / 1.352× versus their
-baselines, passing the timing limits in all five trials. Both changes are now in
-the production kernels; other sizes and short-K cases still need GPU revalidation.
+The latest production Step 4/5 retest passes all 11 numerical checks and 9 tests
+overall. Early TMEM permit release fixes the 2048/4096 slow cases; both 1024
+performance assertions still fail (2.73% / 5.74% over the benchmark time limits).
+The next probe isolates TMA/MMA wait behavior on those two remaining shapes.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 

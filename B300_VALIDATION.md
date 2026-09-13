@@ -1,6 +1,84 @@
 # B300 验证记录与性能诊断
 
-## 最新诊断：step45_probe.PS9CFi
+## 最新正式复测：early_release.dz3roD
+
+数据：[pytest.log](results_b300/early_release.dz3roD/pytest.log)、
+[focus.csv](results_b300/early_release.dz3roD/focus.csv)、
+[run.json](results_b300/early_release.dz3roD/compiler/run.json)。
+
+**正式 Step 4、5 的 11 项测试为 9 passed / 2 failed，剩余失败都是 1024 的性能断言。**
+11 项数值检查全部通过，包含 Step 5 的 K=64、192、320。
+运行版本 `98636d3`，四个 Python 文件的指纹均与该版本一致；内核 SHA256 为
+`bfa00feb11ee890da2b0e93d47532f8ef2ea7ddf1fcbc822b5343066626fca9c`。
+
+| Step / 方阵尺寸 | pytest ms | benchmark 中位数 ms | 允许 ms | 五轮 benchmark |
+|---|---|---|---|---|
+| 4 / 1024 | 0.022789 | 0.022704 | 0.022100 | 全部 SLOW，超标 2.73% |
+| 4 / 2048 | 0.043391 | 0.042995 | 0.067600 | 全部 PASS |
+| 5 / 1024 | 0.016196 | 0.016495 | 0.015600 | 全部 SLOW，超标 5.74% |
+| 5 / 2048 | 0.033616 | 0.033203 | 0.042900 | 全部 PASS |
+| 5 / 4096 | 0.211488 | 0.212002 | 0.353600 | 全部 PASS |
+
+其余 Step 4 / 256、512 及 Step 5 / 512 也全部通过。Step 5 / 4096 相对
+`tmem128.OZkJOD` 的 0.362154 ms 降低 41.5%，说明提前释放分配许可也改善了更大的网格。
+这轮 benchmark 共 6 PASS / 2 SLOW，不等同于全仓库 49 项验收。
+
+### 为什么 1024 仍慢
+
+128×128 输出 tile 在 1024 方阵上只产生 **64 个 CTA**，少于该 B300 的 **148 个 SM**；
+2048 / 4096 则分别产生 256 / 1024 个 CTA。小网格从释放额外分配许可中能获得的并发收益有限，
+与实测“1024 几乎未改善、大网格显著提速”一致。此处是网格规模分析，不是 profiler 的实际调度记录。
+Step 4 / 1024 五轮最低 0.022646 ms，Step 5 / 1024 最低 0.016463 ms，都仍高于门槛，
+不能靠取最小值或重跑认定通过。
+
+两个 1024 cubin 均为 `REG:164 STACK:0 SHARED:1024 LOCAL:0`，仍无 spill 证据。
+目前需要分别减少约 **0.604 µs / 0.895 µs** 的中位耗时。
+优先验证等待路径，依据是上一轮 `wait_64ns` 在 2048 已带来可重复的 4.8%–6.7% 配对加速。
+它当时没有与 early_release 组合，也没有测过 1024，不能直接断言在此处有效。
+
+按以下顺序检验可区分的预测：
+
+1. 若 MMA completion 的等待/恢复开销占主要差距，仅缩短 MMA 等待提示应接近两类等待都缩短的收益。
+2. 若 TMA 数据就绪的等待/恢复开销更重要，仅缩短 TMA 等待提示应获得主要收益。
+3. 若潜在挂起和恢复本身限制短循环，保持 acquire 语义的非阻塞 `test_wait` 轮询应优于当前 `try_wait`。
+   若没有改善或变慢，该方向不采纳，再定位其他路径。
+
+### 下一轮仅测 1024 等待路径
+
+更新后的 [probe_step45.py](probe_step45.py) 默认用当前正式内核作 baseline，
+保留 early_release，并比较以下独立变体：
+
+| 变体 | 相对当前内核的唯一改动 |
+|---|---|
+| `wait_64ns` | TMA、MMA 的 try_wait 挂起时间提示都改为 64 ns |
+| `tma_wait_64ns` | 仅 TMA 的提示改为 64 ns |
+| `mma_wait_64ns` | 仅 MMA 的提示改为 64 ns |
+| `wait_poll` | 两类等待改为 test_wait 持续轮询到完成 |
+
+所有变体保留 phase、完成条件、fence、原有 acquire.cta 语义及评分标准。
+[CUDA 13.0 PTX 规范](https://docs.nvidia.com/cuda/archive/13.0.0/parallel-thread-execution/index.html#parallel-synchronization-and-communication-instructions-mbarrier-test-wait-try-wait)
+规定 test_wait 为非阻塞检查，try_wait 可以挂起；未写 `.sem` / `.scope` 时默认 `.acquire.cta`。
+缩短时间提示不会允许提前使用未完成的数据。
+
+同步最新脚本后执行这一条 probe；无需再完整跑 Step 4、5：
+
+```bash
+cd ~/assignment-tirx-gemm
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/wait1024.XXXXXX)
+uv run python -u probe_step45.py --size 1024 --output "$tirx_run/probe" \
+  2>&1 | tee "$tirx_run/probe.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+默认两个 step 各 5 个版本，共 10 次编译，5 轮交错计时，每轮仍预热 10 次、计时 30 次。
+各版本先验算，复用输出后再次验算；保存源码差异、实际 cubin、资源报告及逐轮耗时。
+回传整个目录，重点看 `probe.log` 与 `probe/summary.csv`。
+当前只有本地生成代码和工具验证，**1024 等待变体尚无 B300 实测结果**；
+正式内核没有新增未经测量的等待改动。证明有收益后再按 step 落地，并检查其他尺寸是否回退。
+
+## 已完成对照：step45_probe.PS9CFi
 
 数据：[probe.log](results_b300/step45_probe.PS9CFi/probe.log)、
 [summary.csv](results_b300/step45_probe.PS9CFi/probe/summary.csv)、
@@ -52,9 +130,9 @@
 新增的实测源码对照在修改前失败、修改后通过：2048 形状生成的 CUDA kernel 主体
 与回传的 early_release 源码逐字一致。全部 **82 项本地工具及源码生成检查通过**，
 包括 SM100/SM103 lowering、边界形状构建和编译回调恢复。
-本机没有 NVIDIA GPU，正式版本在其他评分尺寸和短 K 上仍需上机验证。
+本机没有 NVIDIA GPU；正式版本后续的评分尺寸与短 K 实测已记录于本文开头，仍剩两个 1024 慢项。
 
-同步以上提交后，直接跑正式内核的 11 项测试及 8 组评分形状：
+以下为 `early_release.dz3roD` 已完成的正式内核复测命令：
 
 ```bash
 cd ~/assignment-tirx-gemm
@@ -72,12 +150,13 @@ uv run python -u benchmark.py --steps 4,5 --trials 5 \
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-回传整个新目录。pytest 包含 Step 5 的 K=64、192、320，benchmark 覆盖 Step 4 的
-256–2048 及 Step 5 的 512–4096。这里只宣称 2048 对照已达标，不能据此宣布全仓库 49 项通过。
+pytest 包含 Step 5 的 K=64、192、320，benchmark 覆盖 Step 4 的
+256–2048 及 Step 5 的 512–4096。后续结果见本文开头，不能据此宣布全仓库 49 项通过。
 Step 6–10 本轮未改动，后续仍需解决已记录的性能失败。
 
-**不再重跑原 probe**：正式内核已包含 early_release。工具会拒绝把相同变换重复应用，
-避免把相同代码误当作一次新的对照。原实验如需复现，应使用 `683da59` 的完整版本。
+**不再重跑原 early_release 对照**：正式内核已包含该改动。工具会拒绝把相同变换重复应用，
+避免把相同代码误当作一次新的对照。原实验如需复现，应使用 `683da59` 的完整版本；
+最新脚本的默认实验已改为 1024 等待路径对照。
 
 ## 前轮诊断：tmem128.OZkJOD
 

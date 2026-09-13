@@ -3,8 +3,8 @@
 Each variant changes one thing after TVM lowering. The original gemm_kernels.py,
 compiler options, verification tolerances, and CUDA-event timer are unchanged.
 Use a fresh --output directory. All actual compiler inputs/binaries are saved.
-The early-release experiment was adopted after step45_probe.PS9CFi. On kernels
-that already contain it, use benchmark.py and tests/test_step04.py/test_step05.py.
+Defaults target the remaining size-1024 failures after adopting early_release.
+The historical early_release/no_k_unroll variants remain explicit opt-ins.
 """
 
 import argparse
@@ -20,7 +20,53 @@ import statistics
 from benchmark_diagnostics import capture_compilation, run_metadata, write_json
 
 
-VARIANTS = ("baseline", "early_release", "wait_64ns", "no_k_unroll")
+WAIT_VARIANTS = ("wait_64ns", "wait_poll", "tma_wait_64ns", "mma_wait_64ns")
+DEFAULT_VARIANTS = ("baseline", *WAIT_VARIANTS)
+VARIANTS = (*DEFAULT_VARIANTS, "early_release", "no_k_unroll")
+
+
+def change_wait(header, body, step, variant):
+    """Change wait scheduling while retaining parity, acquire, and retry logic."""
+    name = "tvm_builtin_ptx_mbarrier_try_wait"
+    helper = re.compile(rf"^__forceinline__ __device__ void {name}\([^\n]+\) \{{\n.*?^\}}\n",
+                        re.M | re.S)
+    matches = list(helper.finditer(header))
+    if len(matches) != 1:
+        raise ValueError("expected exactly one default mbarrier wait helper")
+    original = matches[0].group()
+    ticks = "    unsigned int ticks = 0x989680;\n"
+    instruction = "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1, %2;"
+    operands = ':: "r"(barrier_addr_int), "r"(phase), "r"(ticks) : "memory"'
+    if any(original.count(part) != 1 for part in (ticks, instruction, operands)):
+        raise ValueError("unexpected default mbarrier wait implementation")
+    if variant == "wait_poll":
+        # test_wait is non-blocking; the existing loop still retries until ready.
+        # No relaxed qualifier: default acquire.cta semantics are preserved.
+        changed = original.replace(ticks, "").replace(
+            instruction, "mbarrier.test_wait.parity.shared::cta.b64 P1, [%0], %1;"
+        ).replace(operands, ':: "r"(barrier_addr_int), "r"(phase) : "memory"')
+    else:
+        changed = original.replace(ticks, "    unsigned int ticks = 64;\n")
+    if variant in ("wait_64ns", "wait_poll"):
+        return header.replace(original, changed), body
+
+    # The production layouts put TMA barriers at uint64 offsets 1[/2], with
+    # MMA at 2 (Step 4) or 3 (Step 5). Refuse a changed layout/call structure.
+    indices = (1,) if step == 4 else (1, 2)
+    if variant == "mma_wait_64ns":
+        indices = (2,) if step == 4 else (3,)
+    expected = 1 if step == 4 else 2
+    probe_name = "tvm_probe_ptx_mbarrier_wait_64ns"
+    if probe_name in header or probe_name in body:
+        raise ValueError("wait probe is already applied")
+    if body.count(name + "(") != 2 * expected:
+        raise ValueError("unexpected number of TMA/MMA wait calls")
+    calls = [f"{name}((&(((uint64_t*)pool_buf_ptr)[{index}]))" for index in indices]
+    if sum(body.count(call) for call in calls) != expected:
+        raise ValueError("unexpected TMA/MMA barrier offsets")
+    for call in calls:
+        body = body.replace(call, call.replace(name, probe_name))
+    return header + changed.replace(name, probe_name) + "\n", body
 
 
 def variant_source(source, step, variant):
@@ -44,13 +90,8 @@ def variant_source(source, step, variant):
                              "with benchmark.py --steps 4,5 and tests/test_step04.py/test_step05.py")
         body = body.replace(release, "")
         body = alloc.sub(lambda match: match.group() + release, body)
-    elif variant == "wait_64ns":
-        # This is a suspension hint, not a timeout that permits stale operands.
-        # The existing retry-until-complete loop and acquire semantics remain.
-        ticks = "unsigned int ticks = 0x989680;"
-        if header.count(ticks) != 1:
-            raise ValueError("expected exactly one default mbarrier wait helper")
-        header = header.replace(ticks, "unsigned int ticks = 64;")
+    elif variant in WAIT_VARIANTS:
+        header, body = change_wait(header, body, step, variant)
     elif variant == "no_k_unroll":
         name = "k" if step == 4 else "ring"
         loop = re.compile(rf"^( +)(for \(int {name} = 0; {name} < \d+; \+\+{name}\) \{{)$", re.M)
@@ -120,8 +161,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="fresh directory, must not exist")
     parser.add_argument("--steps", type=int, nargs="+", choices=(4, 5), default=[4, 5])
-    parser.add_argument("--size", type=int, choices=(512, 1024, 2048), default=2048)
-    parser.add_argument("--variants", nargs="+", choices=VARIANTS, default=list(VARIANTS))
+    parser.add_argument("--size", type=int, choices=(512, 1024, 2048), default=1024)
+    parser.add_argument("--variants", nargs="+", choices=VARIANTS, default=list(DEFAULT_VARIANTS))
     parser.add_argument("--trials", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--repeat", type=int, default=30)

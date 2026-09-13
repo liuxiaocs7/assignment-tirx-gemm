@@ -7,7 +7,8 @@ import sys
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-from probe_step45 import VARIANTS, main, source_experiment, summarize, trial_order, variant_source
+from probe_step45 import (DEFAULT_VARIANTS, VARIANTS, WAIT_VARIANTS, main, source_experiment,
+                          summarize, trial_order, variant_source)
 
 
 @pytest.fixture(scope="module", params=[4, 5])
@@ -86,6 +87,55 @@ def test_adopted_variant_is_not_silently_benchmarked_as_a_new_change(generated):
     adopted = variant_source(source, step, "early_release")
     with pytest.raises(ValueError, match="early_release is already applied"):
         variant_source(adopted, step, "early_release")
+
+
+@pytest.mark.parametrize("step", [4, 5])
+@pytest.mark.parametrize("variant", WAIT_VARIANTS)
+def test_current_1024_wait_probe_preserves_kernel_protocol(step, variant):
+    tvm = pytest.importorskip("tvm")
+    import gemm_kernels
+
+    target = tvm.target.Target({"kind": "cuda", "arch": "sm_103a"})
+    with target:
+        kernel = getattr(gemm_kernels, f"hgemm_v{step}")(1024, 1024, 1024)
+        executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
+    source = executable.mod.imports[0].inspect_source()
+    modified = variant_source(source, step, variant)
+    marker = 'extern "C" __global__'
+    header, body = modified.split(marker, 1)
+    original_header, original_body = source.split(marker, 1)
+    if variant in ("wait_64ns", "wait_poll"):
+        assert body == original_body  # Every dispatch, phase, fence and CTA sync is unchanged.
+    else:
+        probe_name = "tvm_probe_ptx_mbarrier_wait_64ns"
+        assert body.replace(probe_name, "tvm_builtin_ptx_mbarrier_try_wait") == original_body
+        selected = (1,) if step == 4 else (1, 2)
+        if variant == "mma_wait_64ns":
+            selected = (2,) if step == 4 else (3,)
+        expected = 1 if step == 4 else 2
+        assert body.count(probe_name + "(") == expected
+        for index in selected:
+            assert f"{probe_name}((&(((uint64_t*)pool_buf_ptr)[{index}]))" in body
+        assert header.startswith(original_header)
+    if variant == "wait_poll":
+        restored = header.replace(
+            "mbarrier.test_wait.parity.shared::cta.b64 P1, [%0], %1;",
+            "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1, %2;",
+        ).replace(':: "r"(barrier_addr_int), "r"(phase) : "memory"',
+                  ':: "r"(barrier_addr_int), "r"(phase), "r"(ticks) : "memory"')
+        # Reinsert exactly the one removed hint declaration.
+        anchor = "    unsigned int barrier_addr_int = __cvta_generic_to_shared(barrier);\n"
+        assert restored.count(anchor) == 1
+        restored = restored.replace(anchor, anchor + "    unsigned int ticks = 0x989680;\n")
+        assert restored == original_header
+        assert '"bra.uni                   LAB_WAIT;' in header
+    elif variant == "wait_64ns":
+        assert header.replace("unsigned int ticks = 64;", "unsigned int ticks = 0x989680;") == original_header
+
+
+def test_defaults_target_waits_on_the_current_kernel():
+    assert DEFAULT_VARIANTS == ("baseline", *WAIT_VARIANTS)
+    assert "early_release" not in DEFAULT_VARIANTS
 
 
 @pytest.mark.parametrize("variant", VARIANTS[1:])
