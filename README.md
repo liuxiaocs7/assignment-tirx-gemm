@@ -6,16 +6,15 @@ source generation checks. The latest full B300 suite remains the earlier
 **55 passed / 2 performance failures out of 57 tests**. The subsequent
 `cache_step8_step10.FwqbDd` run at `a7b18d8` confirms all six production Step 8
 tests and all 20 benchmark samples pass; the worst 2048 sample has 3.31% margin.
-Step 10 / 4096 remains unresolved: the latest `step10_depth3.1zWPNg` run at
-`6301533` has all 25 samples above the 0.139100 ms limit. Three stages yield
-only 0.14% paired gain over the balanced-grid control; wider epilogue chunks
-are slower and add a 40-byte stack frame. Neither is adopted.
-Production kernels remain unchanged this round. One new diagnostic variant
-combines both consumers' A loads into one 3-D TMA box, reducing per-stage
-load issues from three to two while preserving transfer bytes and the consumer
-protocol. It includes automatic short-K and rectangular reuse checks before
-timing. All 312 local tool/source-generation checks pass; GPU compilation,
-correctness and performance remain to be measured.
+The latest `step10_fused_a.1VXYz2` probe at `b434e45` passes all five samples
+for cached TMEM plus balanced clusters (0.137918 ms median, 0.57% worst margin).
+The fused A variant is slower in every paired trial and is not adopted.
+Production Step 10 adopts the measured cache/grid combination in `48d743a`; its generated
+4096 kernel matches the winning probe. Identical control cubins also ran faster
+than in prior sessions, so the narrow margin is not yet a stability guarantee.
+Full production GPU validation, including the other three Step 10 grading
+shapes, is pending. All 337 local tool/source-generation checks pass. The probe
+result does not change the latest full-suite count.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 

@@ -1,6 +1,75 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step10_depth3.1zWPNg
+## 最新结果：step10_fused_a.1VXYz2
+
+数据：[summary](results_b300/step10_fused_a.1VXYz2/step10/summary.csv)、
+[samples](results_b300/step10_fused_a.1VXYz2/step10/samples.json)、
+[run.json](results_b300/step10_fused_a.1VXYz2/step10/run.json)。
+运行版本 `b434e45`；B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+七个 Python 源文件指纹与运行提交一致；六个构建（四个计时、两个边界）的 builder、
+变换前/实际编译 CUDA 指纹全部核对通过，NVRTC 参数一致。四个版本均通过初始和逐轮
+数值校验；合并 A 版本的两个矩形边界形状均完成两次不计时验算。
+
+### 达标的是已有的缓存与均衡网格组合
+
+| 版本 | 中位数 ms | 最大值 ms | 达标轮次 | 直接对照 | 同轮加速比 | REG / STACK |
+|---|---:|---:|---:|---|---:|---:|
+| baseline | 0.141246 | 0.142004 | 0/5 | baseline | 1.000× | 168 / 32 |
+| cache_tmem_base | 0.139632 | 0.140222 | 0/5 | baseline | 1.013× | 167 / 0 |
+| cache_balanced_clusters | **0.137918** | **0.138302** | **5/5** | cache_tmem_base | **1.012×** | 167 / 0 |
+| balanced_fused_a | 0.138321 | 0.138784 | 5/5 | cache_balanced_clusters | **0.996×** | 167 / 0 |
+
+门槛为 **0.139100 ms**。均衡网格版最慢样本有 **0.57%** 余量；合并 A 版只有
+**0.23%**。合并 A 的五轮均慢于直接对照，因此不采用。SASS 确认变换实际生效：
+`UTMALDG` 静态位置由 12 减至 8，出现 3D A 加载；两者均无 `LDL`/`STL`，
+`UTCHMMA` 静态位置都是 16。发射数减少并未转化为本次实测收益，停止沿此方向叠加。
+
+三个对照的 cubin 与 `cache_step8_step10.FwqbDd`、`step10_depth3.1zWPNg` 完全相同。
+相比紧邻前轮，本轮 baseline 中位数快 **0.83%**，cache-only 快 **1.08%**，
+cache+balanced 快 **1.65%**。这说明存在跨运行性能变化，不能把这次 PASS 归因于
+新增的合并 A 代码，也不能据五个样本宣称稳定过线。均衡网格相对 cache-only 的收益
+在这三轮各五次配对中均存在，但前两轮仍有超限样本。
+
+### 本轮采用与正式验收
+
+`48d743a` 正式 **Step 10 采用 `cache_balanced_clusters` 的两个改动**：
+
+- 在原 cluster 同步之后缓存一次不可变 TMEM 分配基址，供 MMA 和写回使用。
+- 保持原最大每 cluster tile 数，启动足够覆盖所有 tile 的最小网格；4096 时由
+  74 个 cluster 改为 64 个，每个处理两个 tile。不是按测试大小硬编码分支。
+
+保留四级 K64 流水线、独立 A 加载、EPI_N64 写回和全部同步、数值运算、评分条件。
+4096 生成的 CUDA kernel 与本轮胜出 probe 完全一致；其余评分形状、短 K/矩形复用、
+单 tile 在 SM100a/SM103a 重放胜出 builder。profiling 的网格同步更新，历史 trace
+从已保存的 `builder.json` 读取原网格，避免把此前 74-cluster 数据当成新网格解读。
+probe 默认只测生产 baseline，已采用的缓存和网格变换会拒绝重复应用；依赖旧基线的
+组合也应通过对应历史提交重放。
+
+完整本地工具/源码生成回归 **337 项通过，130.41 s**；新生产文件 SHA256 为
+`2d2a0df6c80ecc809ece3f509d00ea65d6cb3a7af079e4c6fe9b6481143d4ba1`。
+这些检查不替代 GPU 数值与性能验收。
+
+**生产 Step 10 尚需 GPU 正式验收**，包括未在本轮测性能的 1024/2048/8192。
+Step 8 保留前轮已通过的实现；最新全量摘要仍是此前 55/57，本轮 probe 不能替代全量结果。
+同步本轮提交后，在服务器顺序执行：
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_adopt.XXXXXX)
+uv run python -m pytest tests/ -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest_all.log"
+uv run python -u benchmark.py --steps 10 --trials 5 \
+  --csv "$tirx_run/step10.csv" --diagnostics-dir "$tirx_run/compiler_step10" \
+  2>&1 | tee "$tirx_run/benchmark_step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+全量 pytest 验证 57 个 GPU 用例，benchmark 检查 Step 10 四个评分形状各五轮的余量
+并保存正式编译产物。若还有超限，以上两份日志可以区分生产代码是否与胜出版本一致，
+以及是否仍受此前观察到的跨运行变化影响。
+
+## 前轮结果：step10_depth3.1zWPNg
 
 数据：[summary](results_b300/step10_depth3.1zWPNg/step10/summary.csv)、
 [samples](results_b300/step10_depth3.1zWPNg/step10/samples.json)、
@@ -30,7 +99,7 @@
 Step 8 沿用前轮已验证的缓存基址版本：六项 pytest、20 个 benchmark 样本均通过。
 本轮没有新的完整套件结果，最新全量摘要仍为此前 55/57；剩余优化集中在 Step 10 / 4096。
 
-### 下一轮：合并两个 consumer 的 A 加载
+### 已完成实验：合并两个 consumer 的 A 加载
 
 旧角色 trace 的 TMA 区间主要在等待空槽，MMA 也有较长等待；这些重叠区间不能相加，
 不能单凭等待比例确定瓶颈。等待提示、循环展开、三级和宽写回实验均没有补上剩余差距。
@@ -49,7 +118,7 @@ Step 8 沿用前轮已验证的缓存基址版本：六项 pytest、20 个 bench
 - 四级输入流水线、230,400 字节动态 SMEM、128 字节 swizzle、MMA、写回、barrier
   和跨 tile phase 均保持直接对照的协议。
 
-默认四个版本为 `baseline`、`cache_tmem_base`、`cache_balanced_clusters`、
+该轮默认四个版本为 `baseline`、`cache_tmem_base`、`cache_balanced_clusters`、
 `balanced_fused_a`；`vs_control` 指向各自的直接对照，不把缓存或网格的收益归给合并加载。
 工具在计时前自动为新版本验算 `(4096,3072,K)`、K=64/320，每个形状运行两次且重填
 NaN 输出；覆盖单级、跨四级 ring 的五级 K 循环，以及两个 consumer 的矩形 tile 复用。
@@ -58,7 +127,7 @@ NaN 输出；覆盖单级、跨四级 ring 的五级 K 循环，以及两个 con
 本地已在 SM100a/SM103a 检查四个评分形状及两个边界形状的 TMA 维度、字节数、
 两种 rank/consumer 的首尾地址、共享偏移，并比较所有非加载硬件操作的操作数及 phase。
 完整本地工具回归 **312 项通过，137.03 s**。这些是源码生成与工具检查，
-**尚无新版本的 GPU 编译、数值或性能结论**。下一轮只需运行：
+GPU 结果见本文最新记录；以下为该轮已完成的历史命令：
 
 ```bash
 mkdir -p results_b300

@@ -26,52 +26,50 @@
 Step 8 / 2048 和 Step 10 / 4096。此前 `cache_step8_step10.FwqbDd`（`a7b18d8`）
 确认 Step 8 正式 **6 项 pytest 全过、20 个 benchmark 样本全过**，2048 的最慢
 样本仍有 3.31% 余量；其 cubin 与此前成功缓存 probe 相同。无需再调整 Step 8。
-最新 `step10_depth3.1zWPNg`（`6301533`）的 Step 10 共 25 个样本全部超限。
-三级版本中位数 0.140003 ms，仍超 0.139100 ms 门槛；相对均衡网格直接对照仅快约
-0.14%。宽写回更慢且出现 40 字节栈帧，两个版本均不正式采用。
-本轮没有新全量回归，不据分步结果虚报新的全量通过数；剩余优化集中在 Step 10。
+最新 `step10_fused_a.1VXYz2`（`b434e45`）中，Step 10 的缓存加均衡网格版本
+五轮全过，中位数 0.137918 ms，最慢 0.138302 ms，相对门槛余量 0.57%。合并 A
+五轮均慢于该对照，不采用；三个对照与前轮 cubin 相同但整体更快，仍需关注运行波动。
+`48d743a` 正式采用缓存加均衡网格，正在等待生产 GPU 验收；不能据 probe 改写全量通过数。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
-Step 10 / 4096 的 x64 TMEM、L2 分组、cluster 数实验均未解决性能失败。
+Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未提供足够额外收益。
 详见 [最新验证和对照记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **312 项本地通过**；
+（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **337 项本地通过**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：Step 10 合并 A 加载
+### 当前进度：Step 10 正式验收
 
-同步本轮工具提交后，只需测 Step 10 / 4096。生产内核不变，保留已验证的 Step 8。
+同步本轮提交后，运行全量 pytest 与 Step 10 五轮 benchmark。新生产 kernel 使用
+本轮 probe 胜出的缓存基址加均衡网格；不包含合并 A 或三级流水线。
 
 ```bash
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/step10_fused_a.XXXXXX)
-uv run python -u probe_persistent.py --steps 10 --size 4096 \
-  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+tirx_run=$(mktemp -d results_b300/step10_adopt.XXXXXX)
+uv run python -m pytest tests/ -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest_all.log"
+uv run python -u benchmark.py --steps 10 --trials 5 \
+  --csv "$tirx_run/step10.csv" --diagnostics-dir "$tirx_run/compiler_step10" \
+  2>&1 | tee "$tirx_run/benchmark_step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-默认四个版本：`baseline`、`cache_tmem_base`、`cache_balanced_clusters`、
-`balanced_fused_a`。新版本仅在四级均衡网格对照上，把两个 consumer 的 A 加载合为
-一次 3D TMA box；每 CTA 每级从三个加载发射减为两个。A 的 view 复用原存储，
-搬运字节数、230,400 字节动态 SMEM、MMA 与写回协议保持一致。
-`vs_control` 是相对直接前一级的同轮比值，`vs_cache` 和原 baseline 比值也保留。
-PASS/SLOW 仍由原始时间门槛决定。
+pytest 覆盖全部 57 个 GPU 用例，包括 Step 10 的四个评分形状及两个矩形边界。
+benchmark 沿用 10 次 warmup、30 次 repeat、原 CUDA-event 计时和评分门槛，检查
+四个形状各五轮的性能余量，保存正式 kernel 的编译产物。
+目前只是 probe 达标，正式全量通过与稳定余量还需要这些结果确认。
 
-工具先为新版本做 K=64/320 的矩形重用验算，每个形状运行两次，结果保存在
-`verification/` 且不计入性能。之后沿用五轮交错计时及逐轮数值校验，保存
-builder/CUDA diff、编译资源和可用 SASS。新变体仅通过本地源码生成与地址、协议检查，
-GPU 结论仍待回传。详见 [实验依据](B300_VALIDATION.md#下一轮合并两个-consumer-的-a-加载)。
-
-历史变体仍可用 `--variants` 选择；工具自动包含必要对照。已采用的 Step 6/7
-`k_tile_128` 和 Step 8 `tma_wait_64ns`、`cache_tmem_base` 会拒绝重复应用。
-`profile_persistent.py` 继续保留为诊断工具，角色区间不能相加或直接当成设备利用率。
+`probe_persistent.py` 默认只测生产 baseline。已采用的 Step 6/7 K128、Step 8
+等待提示/基址缓存以及 Step 10 基址缓存/均衡网格均拒绝重复应用；依赖旧基线的历史
+组合需在对应历史提交重放。`profile_persistent.py` 已同步新网格；历史 trace 应使用
+其保存的 layout 解读。详见 [最新结果与采用依据](B300_VALIDATION.md#最新结果step10_fused_a1vxyz2)。
 
 ### 已有 B300 + Torch + TVM 0.26 + uv：直接运行
 
