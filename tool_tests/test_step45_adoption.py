@@ -14,7 +14,7 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
 
 
-@pytest.mark.parametrize("step", [4])
+@pytest.mark.parametrize("step", [4, 5])
 def test_production_matches_measured_early_release(step):
     tvm = pytest.importorskip("tvm")
     kernels = importlib.import_module("gemm_kernels")

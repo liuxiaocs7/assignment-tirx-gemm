@@ -503,6 +503,9 @@ def hgemm_v5(M, N, K):
                     T.ptx.mbarrier.init(tma_bar.ptr_to([s]), 1)
                 T.ptx.mbarrier.init(mma_bar.ptr_to([0]), 1)
             T.ptx.tcgen05.alloc(T.address_of(tmem_addr), n_cols=TMEM_COLS, cta_group=1)
+            # Both SMEM stages reuse this allocation. Release the allocation
+            # permit now, and deallocate the accumulator only after writeback.
+            T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
         T.ptx.fence.proxy_async("shared::cta")
         T.ptx.fence.mbarrier_init()
         T.cuda.cta_sync()
@@ -572,7 +575,6 @@ def hgemm_v5(M, N, K):
                 T.ptx.cp_async.bulk.wait_group(0)
         T.cuda.cta_sync()
         if warp_id == 0:
-            T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
             T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=TMEM_COLS, cta_group=1)
 
     return kernel
