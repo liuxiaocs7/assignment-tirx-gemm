@@ -2,19 +2,17 @@
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` are implemented using
 Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
-source generation checks. The latest full B300 suite remains the earlier
-**55 passed / 2 performance failures out of 57 tests**. The subsequent
-`cache_step8_step10.FwqbDd` run at `a7b18d8` confirms all six production Step 8
-tests and all 20 benchmark samples pass; the worst 2048 sample has 3.31% margin.
-The latest `step10_fused_a.1VXYz2` probe at `b434e45` passes all five samples
-for cached TMEM plus balanced clusters (0.137918 ms median, 0.57% worst margin).
-The fused A variant is slower in every paired trial and is not adopted.
-Production Step 10 adopts the measured cache/grid combination in `48d743a`; its generated
-4096 kernel matches the winning probe. Identical control cubins also ran faster
-than in prior sessions, so the narrow margin is not yet a stability guarantee.
-Full production GPU validation, including the other three Step 10 grading
-shapes, is pending. All 337 local tool/source-generation checks pass. The probe
-result does not change the latest full-suite count.
+source generation checks. The latest full B300 run, `step10_adopt.UFT7xo`, is
+**56 passed / 1 performance failure out of 57 tests** (75.28 s). All numerical
+checks and Step 8 pass. Only Step 10 / 4096 fails: 0.139278 ms versus the
+0.139100 ms limit, about 0.13% over. Its separate benchmark passes all 20 samples
+across four shapes, but the worst 4096 sample has just 0.38% margin.
+The production CUDA/cubin matches the earlier winning cache/grid probe exactly.
+The adopted implementation is retained; passing the benchmark does not yet
+resolve the full-suite failure. Two new independent diagnostics test warp-level
+TMEM-release aggregation and paired x32 reads with fewer waits. They preserve
+the production pipeline, numerical tolerances and timing rules. All 352 local
+tool/source-generation checks pass; GPU validation of the new variants is pending.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 

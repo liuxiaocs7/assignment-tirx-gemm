@@ -1,9 +1,9 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
-Steps 8 and 10 now use the measured TMEM base cache; Step 10 also uses the
-balanced cluster grid. The fused A experiment was slower than that control.
-Defaults measure production baselines. Adopted transforms refuse reapplication;
-validate production using benchmark.py and tests/test_step10.py.
+Step 10 production is correct but still marginal at 4096. The default compares
+its measured cache/grid baseline with two independent writeback experiments:
+warp-aggregated TMEM release and paired x32 TMEM reads. Adopted transforms
+refuse reapplication. GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
@@ -33,11 +33,12 @@ STEP_VARIANTS = {
          "pipe_depth_2", "k128_depth_2", "stream_epilogue",
          "cache_tmem_base", "reuse_wait_64ns", "ring_wait_64ns",
          "cache_unroll_ring", "cache_mma_no_unroll", "cache_balanced_clusters",
-         "balanced_depth3", "balanced_depth3_epi128", "balanced_fused_a"),
+         "balanced_depth3", "balanced_depth3_epi128", "balanced_fused_a",
+         "warp_release", "paired_tmem_loads"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline",)}
+                         10: ("baseline", "warp_release", "paired_tmem_loads")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -59,6 +60,8 @@ DEPTH3_VERIFY_SHAPES = ((4096, 3072, 64), (4096, 3072, 192), (4096, 3072, 320))
 VERIFICATION_SHAPES = {
     **{variant: DEPTH3_VERIFY_SHAPES for variant in DEPTH3_VARIANTS},
     "balanced_fused_a": ((4096, 3072, 64), (4096, 3072, 320)),
+    "warp_release": ((4096, 3072, 64), (4096, 3072, 320)),
+    "paired_tmem_loads": ((4096, 3072, 64), (4096, 3072, 320)),
 }
 
 
@@ -145,6 +148,46 @@ def fuse_consumer_a_loads(source):
     return replace_once(source, before, after)
 
 
+def aggregate_tmem_release(source):
+    """One arrival per warp after every lane finishes its TMEM reads."""
+    before = ("                T.ptx.tcgen05.fence.before_thread_sync()\n"
+              "                ld2mma.arrive(wg_id, remote=0)\n")
+    after = ("                T.ptx.tcgen05.fence.before_thread_sync()\n"
+             "                T.cuda.warp_sync()\n"
+             "                if T.filter(lane_id, T.ptx.elect_sync()):\n"
+             "                    ld2mma.arrive(wg_id, remote=0, count=32)\n")
+    # Keep init(128 * CTA_GROUP): 4 warps * 2 CTAs * 32 arrivals per leader.
+    # The full-warp sync orders the other lanes' completed reads before the
+    # elected lane releases TMEM. Each consumer retains its own barrier slot.
+    return replace_once(source, before, after)
+
+
+def pair_tmem_loads(source):
+    """Issue two x32 reads into disjoint registers, then wait and convert."""
+    source = replace_once(source, "            Dreg = T.alloc_local((TMEM_LD_N,), acc_type)\n",
+                          "            Dreg = T.alloc_local((2 * TMEM_LD_N,), acc_type)\n")
+    source = replace_once(source, "            Dreg_wg = Dreg.view(128, TMEM_LD_N,\n"
+                          "                layout=TileLayout(S[(128, TMEM_LD_N) : (1@axis_tid_in_wg, 1)]))\n",
+                          "            Dreg_wg = Dreg.view(128, 2 * TMEM_LD_N,\n"
+                          "                layout=TileLayout(S[(128, 2 * TMEM_LD_N) : (1@axis_tid_in_wg, 1)]))\n")
+    before = '''                for i in T.unroll(MMA_N // TMEM_LD_N):
+                    col = T.meta_var(i * TMEM_LD_N)
+                    Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, wg_id * MMA_N + col:wg_id * MMA_N + col + TMEM_LD_N])
+                    T.ptx.tcgen05.wait.ld()
+                    Tx.cast(Dreg_f16[col:col + TMEM_LD_N], Dreg[:])
+'''
+    after = '''                for i in T.unroll(MMA_N // (2 * TMEM_LD_N)):
+                    col = T.meta_var(i * 2 * TMEM_LD_N)
+                    for part in T.unroll(2):
+                        off = T.meta_var(part * TMEM_LD_N)
+                        Tx.wg.copy_async(Dreg_wg[:, off:off + TMEM_LD_N],
+                            tmem[:, wg_id * MMA_N + col + off:wg_id * MMA_N + col + off + TMEM_LD_N])
+                    T.ptx.tcgen05.wait.ld()
+                    Tx.cast(Dreg_f16[col:col + 2 * TMEM_LD_N], Dreg[:])
+'''
+    return replace_once(source, before, after)
+
+
 def stream_epilogue(source):
     """Retain only EPI_N FP16 values, releasing TMEM after the final chunk."""
     source = replace_once(source, "            Dreg_f16 = T.alloc_local((MMA_N,), d_type)\n",
@@ -208,6 +251,11 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant in ("warp_release", "paired_tmem_loads"):
+        if "mma_tmem_base: T.let" not in source or "TILES_PER_CLUSTER =" not in source:
+            raise ValueError("writeback experiments require the adopted Step 10 cache/grid baseline")
+        transform = aggregate_tmem_release if variant == "warp_release" else pair_tmem_loads
+        return transform(source)
     if variant == "balanced_fused_a":
         source = variant_builder_source(source, step, "cache_balanced_clusters")
         return fuse_consumer_a_loads(source)
@@ -486,7 +534,7 @@ def main(argv=None):
             executables.append(executable)
             outputs.append(output)
 
-    # Ring-depth and TMA-layout experiments need boundary/reuse validation.
+    # Pipeline, TMA-layout and writeback experiments need boundary/reuse validation.
     # Run it before any scored timing with the same numerical tolerances.
     for step, variants in selected.items():
         for variant in variants:

@@ -59,6 +59,6 @@ def test_profiler_grid_matches_adopted_kernel_and_covers_all_tiles(sm_count, sha
 def test_adopted_step10_experiments_require_production_validation(variant, tmp_path):
     pytest.importorskip("tvm")
     from probe_persistent import build_variant, select_variants
-    assert select_variants(10) == ["baseline"]
+    assert variant not in select_variants(10)
     with pytest.raises(ValueError, match="Step 10 has adopted"):
         build_variant(10, (4096,) * 3, variant, tmp_path)

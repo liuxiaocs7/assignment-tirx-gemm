@@ -1,6 +1,79 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step10_fused_a.1VXYz2
+## 最新结果：step10_adopt.UFT7xo
+
+数据：[全量 pytest](results_b300/step10_adopt.UFT7xo/pytest_all.log)、
+[Step 10 benchmark](results_b300/step10_adopt.UFT7xo/step10.csv)、
+[编译记录](results_b300/step10_adopt.UFT7xo/compiler_step10/run.json)。
+benchmark 版本 `70287d4`；B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+四个记录的 Python 源文件指纹与提交一致；生产 `gemm_kernels.py` SHA256 仍为
+`2d2a0df6c80ecc809ece3f509d00ea65d6cb3a7af079e4c6fe9b6481143d4ba1`。
+4096 的 CUDA、cubin、NVRTC 参数与 `step10_fused_a.1VXYz2` 胜出的
+`cache_balanced_clusters` 全部完全一致，确认采用进入了实际编译内核。
+
+### 全量 56/57，剩余性能余量不足
+
+全量 **56 passed / 1 failed，75.28 s**。唯一失败是 Step 10 / 4096 的性能断言：
+**0.139278 ms，门槛 0.139100 ms，超出约 0.178 微秒 / 0.13%**。
+所有用例的数值校验均通过，Step 8 全部通过，Step 10 其余评分形状及矩形 K=64/320
+也通过。此前的 55/57 现在可更新为 56/57，但尚未全过。
+
+独立 benchmark 四个评分形状共 **20 个样本全部达标**：
+
+| 大小 | 中位数 ms | 最大值 ms | 门槛 ms | 最慢样本余量 | REG / STACK |
+|---|---:|---:|---:|---:|---:|
+| 1024 | 0.027510 | 0.027860 | 0.032500 | 14.28% | 168 / 48 |
+| 2048 | 0.043172 | 0.043295 | 0.045500 | 4.85% | 168 / 48 |
+| 4096 | **0.138315** | **0.138570** | **0.139100** | **0.38%** | 167 / 0 |
+| 8192 | 0.869437 | 0.870303 | 0.946400 | 8.04% | 167 / 0 |
+
+benchmark 与 pytest 是不同的计时运行。4096 仅有很小余量，和已有跨运行变化相符；
+不应通过反复重跑挑选 PASS、改变容差或改动计时规则来处理。保留已验证有效的缓存和
+均衡网格，继续检验具体开销，争取足以覆盖波动的收益。
+
+### 下一轮：写回交接与 TMEM 成对读取
+
+已排除或未测到额外收益的方向包括等待提示、循环展开、三级流水线、宽 TMA 写回和
+合并 A。剩下三个可区分的假设按优先级为：
+
+1. 若每 lane 向远端 `ld2mma` 报到限制写回交接，按 warp 聚合应缩短交接；额外
+   warp 同步也可能抵消收益，必须看实测和 SASS。
+2. 若八次串行 TMEM 读/等待造成延迟，两条独立 x32 读取后合并等待应比原版更快；
+   代价是 FP32 暂存 32→64，可能增加寄存器或栈压力。这与之前直接使用 x64 指令不同。
+3. 若主要开销仍在共享写回/TMA store 同步，前两项可能没有收益。暂不改这条路径，
+   保留原重叠机会和明确对照。
+
+默认只测三个独立构建：生产 `baseline`，以及各自仅改变一个因素的两个实验：
+
+- **`warp_release`**：每个 lane 仍完成全部 TMEM 等待和 before-thread-sync fence，
+  然后全 warp 同步，再由 elected lane 执行一次 `ld2mma.arrive(..., count=32)`。
+  每 consumer 的计数仍为 `4 warps × 2 CTAs × 32 = 256`，原 init、consumer 槽位、
+  acquire wait 和 phase 不变。不能仅减少到达线程而省略 warp 同步。
+- **`paired_tmem_loads`**：保留八条 x32 TMEM load，每两条写入不重叠的 FP32 寄存器
+  范围，再执行一次 `wait.ld`，完成后转换对应 64 列。等待由八次变为四次；
+  八条源地址、整行 FP16 暂存、最终 TMEM 释放、TMA 写回与同步保持原协议。
+
+两者均以当前生产 baseline 为直接对照，不互相叠加。四级流水线、230,400 字节动态
+SMEM、网格、TMA 加载、MMA、原容差和 10 warmup / 30 repeat / 五轮 CUDA-event
+计时不变。计时前自动对每个新版本做 `(4096,3072,64)` 和 `(4096,3072,320)` 各两次
+验算，覆盖短 K、不完整 ring 和跨 tile 的两个 consumer 重用；数值失败立即停止。
+
+本地已在 SM100a/SM103a 对四个评分形状及两个矩形形状检查实际生成代码：
+到达指令的 count/remote、warp 同步顺序、源列覆盖、成对寄存器范围、等待/转换顺序，
+并比对未改动的全部 producer 和 TMA 写回路径。完整本地工具/源码生成回归
+**352 项通过，143.52 s**。**新实验尚无 GPU 编译、数值或性能结论**。
+本轮不修改生产内核，下一轮只需运行：
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_writeback.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：step10_fused_a.1VXYz2
 
 数据：[summary](results_b300/step10_fused_a.1VXYz2/step10/summary.csv)、
 [samples](results_b300/step10_fused_a.1VXYz2/step10/samples.json)、
@@ -30,7 +103,7 @@ cache+balanced 快 **1.65%**。这说明存在跨运行性能变化，不能把�
 新增的合并 A 代码，也不能据五个样本宣称稳定过线。均衡网格相对 cache-only 的收益
 在这三轮各五次配对中均存在，但前两轮仍有超限样本。
 
-### 本轮采用与正式验收
+### 已完成采用：正式验收结果见最新记录
 
 `48d743a` 正式 **Step 10 采用 `cache_balanced_clusters` 的两个改动**：
 
@@ -49,9 +122,8 @@ probe 默认只测生产 baseline，已采用的缓存和网格变换会拒绝�
 `2d2a0df6c80ecc809ece3f509d00ea65d6cb3a7af079e4c6fe9b6481143d4ba1`。
 这些检查不替代 GPU 数值与性能验收。
 
-**生产 Step 10 尚需 GPU 正式验收**，包括未在本轮测性能的 1024/2048/8192。
-Step 8 保留前轮已通过的实现；最新全量摘要仍是此前 55/57，本轮 probe 不能替代全量结果。
-同步本轮提交后，在服务器顺序执行：
+该轮先采用生产改动，再进行 GPU 正式验收；结果见本文最新记录。
+当时全量摘要为 55/57，以下为已经执行的历史命令：
 
 ```bash
 mkdir -p results_b300
