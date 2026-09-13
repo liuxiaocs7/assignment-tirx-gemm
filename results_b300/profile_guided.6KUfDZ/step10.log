@@ -1,0 +1,40 @@
+Code: 570b6807b7733fcb12a984cf273a8318b81acb30; gemm_sha256=20b44b79295eb45d13a97c2e0812690f2a5e20b737c76438359bbf3be782cd2c
+GPU: NVIDIA B300 SXM6 AC; SMs: 148; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Independent variants; verify all outputs before interleaved CUDA-event timing.
+Verified step 10 / baseline
+Verified step 10 / cache_tmem_base
+Verified step 10 / reuse_wait_64ns
+Verified step 10 / tma_wait_64ns
+Verified step 10 / ring_wait_64ns
+Trial 1: step 10 / baseline: 0.142305 ms
+Trial 1: step 10 / cache_tmem_base: 0.140942 ms
+Trial 1: step 10 / reuse_wait_64ns: 0.142170 ms
+Trial 1: step 10 / tma_wait_64ns: 0.142190 ms
+Trial 1: step 10 / ring_wait_64ns: 0.142229 ms
+Trial 2: step 10 / baseline: 0.142220 ms
+Trial 2: step 10 / ring_wait_64ns: 0.142217 ms
+Trial 2: step 10 / tma_wait_64ns: 0.141729 ms
+Trial 2: step 10 / reuse_wait_64ns: 0.142023 ms
+Trial 2: step 10 / cache_tmem_base: 0.140577 ms
+Trial 3: step 10 / reuse_wait_64ns: 0.142402 ms
+Trial 3: step 10 / tma_wait_64ns: 0.142100 ms
+Trial 3: step 10 / ring_wait_64ns: 0.142077 ms
+Trial 3: step 10 / baseline: 0.142365 ms
+Trial 3: step 10 / cache_tmem_base: 0.141182 ms
+Trial 4: step 10 / reuse_wait_64ns: 0.142116 ms
+Trial 4: step 10 / cache_tmem_base: 0.140393 ms
+Trial 4: step 10 / baseline: 0.141865 ms
+Trial 4: step 10 / ring_wait_64ns: 0.142509 ms
+Trial 4: step 10 / tma_wait_64ns: 0.142489 ms
+Trial 5: step 10 / ring_wait_64ns: 0.142572 ms
+Trial 5: step 10 / baseline: 0.142481 ms
+Trial 5: step 10 / cache_tmem_base: 0.140656 ms
+Trial 5: step 10 / reuse_wait_64ns: 0.142237 ms
+Trial 5: step 10 / tma_wait_64ns: 0.142086 ms
+step variant         median_ms    min_ms    max_ms paired_speedup limit_ms status
+  10 baseline         0.142305  0.141865  0.142481          1.000 0.139100 SLOW
+  10 cache_tmem_base  0.140656  0.140393  0.141182          1.010 0.139100 SLOW
+  10 reuse_wait_64ns  0.142170  0.142023  0.142402          1.001 0.139100 SLOW
+  10 tma_wait_64ns    0.142100  0.141729  0.142489          1.002 0.139100 SLOW
+  10 ring_wait_64ns   0.142229  0.142077  0.142572          1.000 0.139100 SLOW
+Saved results_b300/profile_guided.6KUfDZ/step10/summary.csv; SLOW is a measured result, not a tool error.

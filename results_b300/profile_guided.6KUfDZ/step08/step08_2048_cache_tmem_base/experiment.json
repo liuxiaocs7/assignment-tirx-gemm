@@ -1,0 +1,10 @@
+{
+  "step": 8,
+  "variant": "cache_tmem_base",
+  "sources": [
+    {
+      "before_sha256": "25e887da8bd3f9a21f5f91d37948814a9eeef17c98d5e3303c880bd38866b3e4",
+      "compiled_sha256": "25e887da8bd3f9a21f5f91d37948814a9eeef17c98d5e3303c880bd38866b3e4"
+    }
+  ]
+}

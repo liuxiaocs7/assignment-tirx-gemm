@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "reuse_wait_64ns",
+  "sources": [
+    {
+      "before_sha256": "5b880f375afd4caf158fba87e71e5d4b622ddb383a33e8680093810c2b86e4a2",
+      "compiled_sha256": "849feda4f8a6784b6e5e10e97e8c2ce118e355b522866ec65d7c42e7869cab36"
+    }
+  ]
+}
