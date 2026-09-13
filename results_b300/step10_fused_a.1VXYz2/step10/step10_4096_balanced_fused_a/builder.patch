@@ -1,0 +1,46 @@
+--- baseline.py
++++ balanced_fused_a.py
+@@ -14,7 +14,10 @@
+     EPI_N = 64
+     TMEM_LD_N = 32  # Eight loads per consumer, with separate FP16 row buffers.
+     WG_NUMBER = 3
+-    CLUSTER_COUNT = min(SM_COUNT // CTA_GROUP, (M // (MMA_M * NUM_CONSUMER)) * (N // MMA_N))
++    TOTAL_TILES = (M // (MMA_M * NUM_CONSUMER)) * (N // MMA_N)
++    MAX_CLUSTERS = SM_COUNT // CTA_GROUP
++    TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS
++    CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER
+     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
+     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
+     D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (NUM_CONSUMER, BLK_M, EPI_N))
+@@ -56,7 +59,8 @@
+         T.ptx.fence.mbarrier_init()
+         T.cuda.cta_sync()
+         T.cuda.cluster_sync()
+-        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=tmem_addr[0],
++        mma_tmem_base: T.let = tmem_addr[0]
++        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=mma_tmem_base,
+             layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
+ 
+         tile_scheduler = ClusterPersistentScheduler2D(
+@@ -76,14 +80,15 @@
+         ld_phase.init(1)
+         wb_phase.init(0)
+ 
++        A_blocks = A.view(M // MMA_M, MMA_M, K)
++
+         @T.inline
+         def tma_load(k_st):
+-            for consumer in T.unroll(NUM_CONSUMER):
+-                m_consumer = T.meta_var(m_st + consumer * MMA_M)
+-                Tx.copy_async(Asmem[tma_phase.stage, consumer, :, :],
+-                              A[m_consumer:m_consumer + BLK_M, k_st:k_st + BLK_K],
+-                              dispatch="tma_auto", cta_group=CTA_GROUP,
+-                              mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
++            Tx.copy_async(Asmem[tma_phase.stage, :, :, :],
++                          A_blocks[tile_scheduler.m_idx * NUM_CONSUMER:tile_scheduler.m_idx * NUM_CONSUMER + NUM_CONSUMER,
++                                   cbx * BLK_M:cbx * BLK_M + BLK_M, k_st:k_st + BLK_K],
++                          dispatch="tma_auto", cta_group=CTA_GROUP,
++                          mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
+             Tx.copy_async(Bsmem[tma_phase.stage, :, :],
+                           B[n_st:n_st + BLK_N, k_st:k_st + BLK_K],
+                           dispatch="tma_auto", cta_group=CTA_GROUP,

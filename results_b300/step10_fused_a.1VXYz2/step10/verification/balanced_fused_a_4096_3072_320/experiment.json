@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "balanced_fused_a",
+  "sources": [
+    {
+      "before_sha256": "bb50daaa5914211a43b18ce5bd3800badada4e435bd5223055ebec09e66b405b",
+      "compiled_sha256": "bb50daaa5914211a43b18ce5bd3800badada4e435bd5223055ebec09e66b405b"
+    }
+  ]
+}
