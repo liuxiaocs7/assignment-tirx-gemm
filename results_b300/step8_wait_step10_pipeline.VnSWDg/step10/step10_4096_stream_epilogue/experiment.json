@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "stream_epilogue",
+  "sources": [
+    {
+      "before_sha256": "221e9055b46786695269cdde9e983e0106b8cd850958ff52658d065fe2c3111e",
+      "compiled_sha256": "221e9055b46786695269cdde9e983e0106b8cd850958ff52658d065fe2c3111e"
+    }
+  ]
+}

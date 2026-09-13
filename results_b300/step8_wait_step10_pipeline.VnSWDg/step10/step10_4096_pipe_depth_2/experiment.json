@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "pipe_depth_2",
+  "sources": [
+    {
+      "before_sha256": "b0b8eac8e958dddeb24dc951482b17f6c1b70f491584c075e9f20f23d9b7660e",
+      "compiled_sha256": "b0b8eac8e958dddeb24dc951482b17f6c1b70f491584c075e9f20f23d9b7660e"
+    }
+  ]
+}

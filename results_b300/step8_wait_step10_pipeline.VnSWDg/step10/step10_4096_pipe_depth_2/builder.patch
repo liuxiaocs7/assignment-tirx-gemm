@@ -1,0 +1,11 @@
+--- baseline.py
++++ pipe_depth_2.py
+@@ -10,7 +10,7 @@
+     NUM_CONSUMER = 2
+     MMA_M, MMA_N = 256, 256
+     K_TILES = K // BLK_K
+-    PIPE_DEPTH = 4
++    PIPE_DEPTH = 2
+     EPI_N = 64
+     TMEM_LD_N = 32  # Eight loads per consumer, with separate FP16 row buffers.
+     WG_NUMBER = 3

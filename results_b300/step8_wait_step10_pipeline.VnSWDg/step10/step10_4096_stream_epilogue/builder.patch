@@ -1,0 +1,38 @@
+--- baseline.py
++++ stream_epilogue.py
+@@ -121,24 +121,25 @@
+         elif wg_id < NUM_CONSUMER:
+             m_out = T.meta_var(m_st + wg_id * MMA_M)
+             Dreg = T.alloc_local((TMEM_LD_N,), acc_type)
+-            Dreg_f16 = T.alloc_local((MMA_N,), d_type)
++            Dreg_f16 = T.alloc_local((EPI_N,), d_type)
+             Dreg_wg = Dreg.view(128, TMEM_LD_N,
+                 layout=TileLayout(S[(128, TMEM_LD_N) : (1@axis_tid_in_wg, 1)]))
+             while tile_scheduler.valid():
+                 mma2ld.wait(wg_id, wb_phase.phase)
+                 wb_phase.advance()
+                 T.ptx.tcgen05.fence.after_thread_sync()
+-                for i in T.unroll(MMA_N // TMEM_LD_N):
+-                    col = T.meta_var(i * TMEM_LD_N)
+-                    Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, wg_id * MMA_N + col:wg_id * MMA_N + col + TMEM_LD_N])
+-                    T.ptx.tcgen05.wait.ld()
+-                    Tx.cast(Dreg_f16[col:col + TMEM_LD_N], Dreg[:])
+-                # All TMEM reads have finished. MMA can overlap the TMA epilogue.
+-                T.ptx.tcgen05.fence.before_thread_sync()
+-                ld2mma.arrive(wg_id, remote=0)
+                 for i in T.unroll(MMA_N // EPI_N):
+                     col = T.meta_var(i * EPI_N)
+-                    Tx.copy(Dsmem[wg_id, warp_id * 32 + lane_id, :], Dreg_f16[col:col + EPI_N])
++                    for j in T.unroll(EPI_N // TMEM_LD_N):
++                        offset = T.meta_var(j * TMEM_LD_N)
++                        Tx.wg.copy_async(Dreg_wg[:, :],
++                            tmem[:, wg_id * MMA_N + col + offset:wg_id * MMA_N + col + offset + TMEM_LD_N])
++                        T.ptx.tcgen05.wait.ld()
++                        Tx.cast(Dreg_f16[offset:offset + TMEM_LD_N], Dreg[:])
++                    if i == MMA_N // EPI_N - 1:
++                        T.ptx.tcgen05.fence.before_thread_sync()
++                        ld2mma.arrive(wg_id, remote=0)
++                    Tx.copy(Dsmem[wg_id, warp_id * 32 + lane_id, :], Dreg_f16[:])
+                     T.ptx.fence.proxy_async("shared::cta")
+                     T.cuda.warpgroup_sync(wg_id + 10)
+                     if warp_id == 0:
