@@ -660,22 +660,18 @@ def hgemm_v6(M, N, K):
                 if T.filter(lane_id, T.ptx.elect_sync()):
                     for s in T.unroll(PRE_NUM):
                         tma_load(s, s * BLK_K)
-                    # Constant stage indices let the compiler keep each phase in a register.
-                    # Retain each stage's phase across tiles, including incomplete rings.
-                    for ring in range((K_TILES + PIPE_DEPTH - 1) // PIPE_DEPTH):
-                        for stage in T.unroll(PIPE_DEPTH):
-                            k = T.meta_var(ring * PIPE_DEPTH + stage)
-                            if k < K_TILES:
-                                T.ptx.mbarrier.try_wait(tma_bar.ptr_to([stage]), phase_tma[stage])
-                                T.ptx.tcgen05.fence.after_thread_sync()
-                                mma(stage, k != 0)
-                                T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
-                                phase_tma[stage] = phase_tma[stage] ^ 1
-                                phase_mma = phase_mma ^ 1
-                                if k + PIPE_DEPTH < K_TILES:
-                                    tma_load(stage, (k + PIPE_DEPTH) * BLK_K)
-                    T.ptx.tcgen05.fence.after_thread_sync()
-                    T.ptx.tcgen05.fence.before_thread_sync()
+                    for k in range(K_TILES):
+                        stage = T.meta_var(k % PIPE_DEPTH)
+                        T.ptx.mbarrier.try_wait(tma_bar.ptr_to([stage]), phase_tma[stage])
+                        T.ptx.tcgen05.fence.after_thread_sync()
+                        mma(stage, k != 0)
+                        T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
+                        T.ptx.tcgen05.fence.after_thread_sync()
+                        T.ptx.tcgen05.fence.before_thread_sync()
+                        phase_tma[stage] = phase_tma[stage] ^ 1
+                        phase_mma = phase_mma ^ 1
+                        if k + PIPE_DEPTH < K_TILES:
+                            tma_load(stage, (k + PIPE_DEPTH) * BLK_K)
 
             # Publish the elected thread's completion to all writeback threads.
             T.cuda.cta_sync()
