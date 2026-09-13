@@ -15,9 +15,9 @@ def test_persistent(size):
     check_timing(kernel, step=6, M=M, N=N, K=K)
 
 
-@pytest.mark.parametrize("K", [64, 192, 320])
+@pytest.mark.parametrize("K", [64, 128, 192, 320, 384])
 def test_persistent_phase_across_tiles(K):
-    """192 output tiles force CTA reuse with odd barrier arrival counts."""
+    """CTA reuse with short/odd phase counts on both the 64- and 128-wide paths."""
     M, N = 1024, 3072
     kernel = hgemm_v6(M, N, K)
     A, B, C = prepare_data(M, N, K)

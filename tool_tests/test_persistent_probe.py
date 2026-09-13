@@ -14,7 +14,7 @@ import pytest
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
-from probe_persistent import STEP_VARIANTS, build_variant, main, variant_builder_source, variant_source
+from probe_persistent import DEFAULT_STEP_VARIANTS, STEP_VARIANTS, build_variant, main, variant_builder_source, variant_source
 from probe_step45 import source_experiment
 
 
@@ -33,6 +33,18 @@ def generate(kernel):
     with target:
         executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
     return executable.mod.imports[0].inspect_source()
+
+
+def install_recorded_builder(step, monkeypatch):
+    """Replay pre-adoption experiments using the exact measured baseline."""
+    import gemm_kernels
+
+    path = (ROOT / "results_b300/persistent_probe.VB42kg/probe" /
+            f"step{step:02}_4096_baseline/builder.py")
+    namespace = dict(vars(gemm_kernels))
+    exec(compile(path.read_text(), str(path), "exec"), namespace)
+    name = f"hgemm_v{step}"
+    monkeypatch.setattr(gemm_kernels, name, namespace[name])
 
 
 @pytest.mark.parametrize("step", STEP_VARIANTS)
@@ -63,10 +75,11 @@ def test_changed_wait_layout_fails_closed(step):
 
 
 @pytest.mark.parametrize("step,variant", [(s, v) for s, vv in STEP_VARIANTS.items() for v in vv])
-def test_experiment_lowers_and_preserves_protocol(step, variant, tmp_path):
+def test_experiment_lowers_and_preserves_protocol(step, variant, tmp_path, monkeypatch):
     pytest.importorskip("tvm")
     import gemm_kernels
 
+    install_recorded_builder(step, monkeypatch)
     original = getattr(gemm_kernels, f"hgemm_v{step}")
     directory = tmp_path / variant
     source = generate(build_variant(step, (4096,) * 3, variant, directory))
@@ -128,10 +141,11 @@ def test_experiment_lowers_and_preserves_protocol(step, variant, tmp_path):
 
 @pytest.mark.parametrize("step", [6, 7])
 @pytest.mark.parametrize("K", [64, 192, 384])
-def test_k_tile_variant_retains_short_and_odd_phase_support(step, K, tmp_path):
+def test_k_tile_variant_retains_short_and_odd_phase_support(step, K, tmp_path, monkeypatch):
     pytest.importorskip("tvm")
     import gemm_kernels
 
+    install_recorded_builder(step, monkeypatch)
     shape = (1024, 3072, K)  # 192 output tiles force persistent CTA reuse.
     actual = generate(build_variant(step, shape, "k_tile_128", tmp_path))
     if K % 128:
@@ -139,6 +153,14 @@ def test_k_tile_variant_retains_short_and_odd_phase_support(step, K, tmp_path):
     else:
         assert "65536);" in body(actual)
         assert "k < 3" in body(actual)
+
+
+@pytest.mark.parametrize("step", [6])
+def test_adopted_k_tile_is_not_applied_again(step, tmp_path):
+    pytest.importorskip("tvm")
+    assert DEFAULT_STEP_VARIANTS[step] == ("baseline",)
+    with pytest.raises(ValueError, match=f"Step {step} has adopted k_tile_128"):
+        build_variant(step, (4096,) * 3, "k_tile_128", tmp_path)
 
 
 @pytest.mark.parametrize("fail", [False, True])

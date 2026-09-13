@@ -1,7 +1,7 @@
 """Independent B300 performance experiments for Steps 6, 7, and 10.
 
-Defaults to 4096: Step 6/7 each compare three changes with production;
-Step 10 compares two changes with production. No production kernel is edited.
+Defaults to 4096: Step 6 measures the adopted K-tile baseline;
+Step 7/10 compare independent changes with production. No kernel is edited.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
 """
@@ -23,6 +23,7 @@ STEP_VARIANTS = {
     7: ("baseline", "k_tile_128", "mma_wait_64ns", "epilogue_128"),
     10: ("baseline", "mma_wait_64ns", "tmem_load_16"),
 }
+DEFAULT_STEP_VARIANTS = {**STEP_VARIANTS, 6: ("baseline",)}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 
 
@@ -33,6 +34,9 @@ def variant_builder_source(source, step, variant):
     if variant in ("baseline", "mma_wait_64ns"):
         return source
     if variant == "k_tile_128":
+        if "BLK_K = 128 if K % 128 == 0 else 64" in source:
+            raise ValueError(f"Step {step} has adopted k_tile_128; validate the production kernel "
+                             f"with benchmark.py --steps {step} and tests/test_step{step:02d}.py")
         return replace_once(source, "BLK_M, BLK_N, BLK_K = 128, 128, 64",
                             "BLK_M, BLK_N, BLK_K = 128, 128, (128 if K % 128 == 0 else 64)")
     if variant == "epilogue_128":
@@ -136,7 +140,7 @@ def main(argv=None):
         parser.error("--output must be a fresh directory")
     selected = {}
     for step in dict.fromkeys(args.steps):
-        variants = list(dict.fromkeys(("baseline", *(args.variants or STEP_VARIANTS[step]))))
+        variants = list(dict.fromkeys(("baseline", *(args.variants or DEFAULT_STEP_VARIANTS[step]))))
         if any(v not in STEP_VARIANTS[step] for v in variants):
             parser.error(f"Step {step} supports: {', '.join(STEP_VARIANTS[step])}")
         selected[step] = variants

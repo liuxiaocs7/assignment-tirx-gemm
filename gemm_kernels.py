@@ -619,7 +619,9 @@ def hgemm_v6(M, N, K):
     b_type = tvm.DataType("float16")
     d_type = tvm.DataType("float16")
     acc_type = tvm.DataType("float32")
-    BLK_M, BLK_N, BLK_K = 128, 128, 64
+    BLK_M, BLK_N = 128, 128
+    # Fewer K-stage synchronizations; keep the 64-wide path for odd multiples.
+    BLK_K = 128 if K % 128 == 0 else 64
     K_TILES = K // BLK_K
     PIPE_DEPTH = 2
     PRE_NUM = min(PIPE_DEPTH, K_TILES)
