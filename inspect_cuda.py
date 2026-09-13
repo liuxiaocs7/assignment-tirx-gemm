@@ -28,6 +28,7 @@ import sys
 
 sys.path.insert(0, ".")
 from gemm_kernels import *
+from utils import blackwell_target
 
 step = int(sys.argv[1]) if len(sys.argv) > 1 else 7
 size = int(sys.argv[2]) if len(sys.argv) > 2 else 1024
@@ -46,7 +47,7 @@ M, N, K = (128, 128, 64) if step == 1 else (128, 128, size) if step == 2 else (s
 print(f"// Compiling hgemm_v{step}(M={M}, N={N}, K={K})...", file=sys.stderr)
 
 kernel = kernels[step](M, N, K)
-target = tvm.target.Target("cuda")
+target = blackwell_target()
 with target:
     mod = tvm.IRModule({"main": kernel})
     lib = tvm.compile(mod, target=target, tir_pipeline="tirx")

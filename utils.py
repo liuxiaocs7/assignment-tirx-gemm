@@ -2,6 +2,14 @@ import torch
 import tvm
 
 
+def blackwell_target():
+    """Select the architecture-specific Tensor Core target for the current GPU."""
+    major, minor = torch.cuda.get_device_capability()
+    if (major, minor) not in {(10, 0), (10, 3)}:
+        raise ValueError("these kernels require SM100/SM103 (B200/B100/B300)")
+    return tvm.target.Target({"kind": "cuda", "arch": f"sm_{major}{minor}a"})
+
+
 def prepare_data(M, N, K, dtype="fp16"):
     """Create random A(M,K), B(N,K), C(M,N) on GPU."""
     torch_dev = torch.device("cuda")
@@ -20,11 +28,11 @@ def prepare_data(M, N, K, dtype="fp16"):
 def compile_and_run(kernel, A, B, C):
     """Compile a TIRX kernel and execute it. Returns the output tensor."""
     C_out = torch.zeros_like(C, device="cuda")
-    target = tvm.target.Target("cuda")
+    target = blackwell_target()
     with target:
         mod = tvm.IRModule({"main": kernel})
         ex = tvm.compile(mod, target=target, tir_pipeline="tirx")
-        ex(A, B, C_out)
+        ex.mod(A, B, C_out)
     return C_out
 
 
@@ -38,19 +46,19 @@ def benchmark(kernel, M, N, K, dtype="fp16", warmup=10, repeat=30):
     """Compile and benchmark a kernel. Returns avg time in ms."""
     A, B, C = prepare_data(M, N, K, dtype)
     C_out = torch.zeros_like(C, device="cuda")
-    target = tvm.target.Target("cuda")
+    target = blackwell_target()
     with target:
         mod = tvm.IRModule({"main": kernel})
         ex = tvm.compile(mod, target=target, tir_pipeline="tirx")
         for _ in range(warmup):
-            ex(A, B, C_out)
+            ex.mod(A, B, C_out)
         torch.cuda.synchronize()
 
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
         for _ in range(repeat):
-            ex(A, B, C_out)
+            ex.mod(A, B, C_out)
         end_event.record()
         torch.cuda.synchronize()
         elapsed = start_event.elapsed_time(end_event) / repeat

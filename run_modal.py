@@ -33,17 +33,14 @@ image = (
         "apt-get update && apt-get install -y --no-install-recommends libx11-6 && rm -rf /var/lib/apt/lists/*",
     )
     .run_commands(
-        "python -m pip install --pre -U -f https://mlc.ai/wheels 'mlc-ai-tirx-cu130==0.0.1b2'",
-    )
-    .run_commands(
         "python -m pip install 'torch==2.9.1+cu130' --index-url https://download.pytorch.org/whl/cu130",
     )
     .pip_install(
+        "apache-tvm==0.26.0",
+        "apache-tvm-ffi==0.1.13.post3",
+        "cuda-bindings",
         "pytest",
         "numpy",
-    )
-    .run_commands(
-        "python -m pip install --force-reinstall 'apache-tvm-ffi==0.1.9'",
     )
     .add_local_dir(".", remote_path="/workspace", ignore=[".git", ".venv", "results", "__pycache__"])
 )

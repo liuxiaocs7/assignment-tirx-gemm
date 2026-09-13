@@ -65,7 +65,8 @@ def main(argv=None):
     import torch
     import tvm
     import gemm_kernels
-    from utils import REFERENCE_TIMES, TIMING_TOLERANCE, prepare_data, time_cuda_call, verify
+    from utils import (REFERENCE_TIMES, TIMING_TOLERANCE, blackwell_target,
+                       prepare_data, time_cuda_call, verify)
 
     if not torch.cuda.is_available():
         parser.error("a CUDA-enabled PyTorch build and a Blackwell GPU are required")
@@ -85,16 +86,16 @@ def main(argv=None):
 
     rows = []
     failed = False
-    target = tvm.target.Target("cuda")
+    target = blackwell_target()
     for step in args.steps:
         for M, N, K in select_shapes(step, args.sizes, REFERENCE_TIMES):
             kernel = getattr(gemm_kernels, f"hgemm_v{step}")(M, N, K)
             A, B, output = prepare_data(M, N, K)
             with target:
                 executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
-                executable(A, B, output)
+                executable.mod(A, B, output)
                 verify(output, A, B)
-                samples = [time_cuda_call(lambda: executable(A, B, output), args.warmup, args.repeat)
+                samples = [time_cuda_call(lambda: executable.mod(A, B, output), args.warmup, args.repeat)
                            for _ in range(args.trials)]
             # Time cuBLAS with preallocated output on the same data and stream.
             reference = torch.empty_like(output)

@@ -4,7 +4,7 @@
 
 `gemm_kernels.py` 已实现 Step 1–10，每个 Step 独立提交。实现参考
 [Modern GPU Programming for MLSys](https://mlc.ai/modern-gpu-programming-for-mlsys/)
-的 GEMM 基础、异步优化和高级优化章节，并适配本作业使用的旧版 TIRX API。
+的 GEMM 基础、异步优化和高级优化章节，当前使用 **Apache TVM 0.26.0 API**。
 参考教程的本地版本为 `61415b0`。
 
 | 作业步骤 | 实现 | 与教程的对应关系 |
@@ -20,13 +20,40 @@
 | 9 | 双 CTA 协作，cluster 输出 256×256 | 教程 Step 8 |
 | 10 | 两个 MMA consumer 共享 B，cluster 输出 512×256 | 教程 Step 9 |
 
-当前只完成本机静态检查及不依赖 GPU 的工具测试；**未实测 GPU 编译、数值正确性或性能**。
+本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
+覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线。
+**尚未在 NVIDIA GPU 上实测 NVRTC/PTX 编译、数值正确性或性能**。
 以下命令是上机验收流程，不能把文档中的参考值视为本实现的实测成绩。
 
-不依赖 GPU 的性能 CLI 测试可单独运行：`python -m pytest tool_tests/ -q`（18 个用例）。
+不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
+（18 个 CLI 用例 + 32 个构建和源码生成用例；没有 TVM 时后者跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
+
+### 已有 B300 + Torch + TVM 0.26 + uv：直接运行
+
+先把此次修复同步到服务器（见下一节），在仓库根目录运行。若 Slurm 已分配 GPU，保留它设置的
+`CUDA_VISIBLE_DEVICES`；无需重装你现有的 Torch、TVM 或 FFI。
+
+```bash
+mkdir -p results
+set -o pipefail
+
+# 先确认运行的是新代码和正确的 Python 环境
+uv run python -c "import sys, tvm, gemm_kernels; print(sys.executable); print(tvm.__version__); print(gemm_kernels.__file__)"
+
+# 快速获得所有 step 的 37 组正确性检查、性能、cuBLAS 对照和 CSV
+uv run python -u benchmark.py --steps all --trials 1 --csv results/all_steps.csv 2>&1 | tee results/benchmark.log
+
+# 完整验收：49 个 GPU 用例，包含 12 个额外边界用例
+uv run python -m pytest tests/ -v -s --tb=short 2>&1 | tee results/pytest.log
+```
+
+`--trials 1` 保留默认的 10 次预热和 30 次计时。首次执行包含 JIT 编译等待，报告的耗时不含编译。
+两条 GPU 命令按顺序执行，避免同时抢占 GPU；如果 benchmark 出现数值错误或 CUDA 异常，
+先定位该错误。有 `SLOW` 时 benchmark 会继续收集其他形状，并返回退出码 1。
+pytest 不加 `-x`，可汇总所有性能失败；发生 CUDA 异常后应结束进程并单步重试。
 
 ## 2. 把本地提交带到服务器
 
@@ -48,11 +75,12 @@ git log -10 --format='%h %an <%ae> %s'
 
 ## 3. 硬件和环境准备
 
-建议使用 **Linux x86_64 + NVIDIA B200（SM100）+ CUDA Toolkit 13.0**。
+使用 **Linux x86_64 + NVIDIA B200（SM100）/ B300（SM103）+ CUDA 13.x**。
 CUDA 13.0 通常需要 **580 系列或更新的 NVIDIA 驱动**；如果平台提供经过配置的
 CUDA compatibility 环境，以平台说明为准。Toolkit 中需要 `nvcc` / `ptxas`。
 B100 也属于 SM100，但本仓库性能门槛取自 B200，不能保证 B100 达到同样分数。
-B300（SM103）也已放行测试入口，会使用实际 SM 数；尚未在 B300 上验证编译与运行，性能门槛仍使用 B200 参考值。
+B300（SM103）的测试入口使用实际 SM 数和 `sm_103a` 编译目标；B200 使用 `sm_100a`。
+性能门槛仍使用 B200 参考值，B300 和新版 TVM 的实际性能需要上机测量。
 A100、H100、RTX 4090/5090 和 Mac GPU 不适用这些 SM100 内核。
 
 ```bash
@@ -62,39 +90,33 @@ command -v ptxas
 python3 --version
 ```
 
-使用 Python 3.10–3.12，推荐 3.12，在项目根目录安装：
+现有环境已满足依赖时，跳过安装。新环境推荐 Python 3.12：
 
 ```bash
-python3.12 -m venv .venv
+uv venv --python 3.12 .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install --pre -U -f https://mlc.ai/wheels "mlc-ai-tirx-cu130==0.0.1b2"
-python -m pip install "torch==2.9.1+cu130" --index-url https://download.pytorch.org/whl/cu130
-python -m pip install pytest numpy
-python -m pip install --force-reinstall "apache-tvm-ffi==0.1.9"
-python -m pip check
+uv pip install "torch==2.9.1+cu130" --index-url https://download.pytorch.org/whl/cu130
+uv pip install "apache-tvm==0.26.0" "apache-tvm-ffi==0.1.13.post3" cuda-bindings pytest numpy
+uv pip check
 ```
 
-如果 `mlc.ai/wheels` 无法访问，固定版本 wheel 的同源 GitHub Release 地址是：
+上面的 Torch 固定版本用于可复现的新环境；已有可用的 CUDA 版 Torch（包括 2.14）无需降级。
+当前代码不再支持作业最初的 `mlc-ai-tirx-cu130==0.0.1b2`，不要将两种 TVM 包混装。
+原来的 `No module named 'tvm.tirx.op_schedule'` 是旧源码与 TVM 0.26 的 API 不匹配，
+已通过迁移全部内核修复；只替换 import 路径不足以解决。
 
-```bash
-python -m pip install "https://github.com/mlc-ai/package/releases/download/v0.9.dev0/mlc_ai_tirx_cu130-0.0.1b2-py3-none-manylinux_2_28_x86_64.whl"
-# 然后继续安装上面的 PyTorch / pytest / numpy，并最后固定 apache-tvm-ffi。
-```
-
-不要在同一个环境里安装教程最新版的 `apache-tvm==0.26.0`：它与作业的
-`Tx.kernel()`、`Tx.PoolAllocator()`、`tvm.tirx.pipeline` 等 API 不兼容。
+TVM 0.26 默认使用 NVRTC 延迟编译 CUDA。若平台只有完整 Toolkit、NVRTC 加载失败，
+可以设置 `export TVM_CUDA_COMPILE_MODE=nvcc` 后重试，并确保 `nvcc --version` 为 CUDA 13.x。
 
 显式选择空闲 GPU，再检查依赖：
 
 ```bash
-export CUDA_VISIBLE_DEVICES=0
+# 仅在未由 Slurm 分配 GPU 时按需设置：export CUDA_VISIBLE_DEVICES=0
 python - <<'PY'
 import torch
 import tvm
-from tvm.script import tirx as Tx
-from tvm.tirx.pipeline import PipelineState
-from tvm.tirx.op_schedule.cuda.common import tma_shared_layout
+import gemm_kernels
+from utils import blackwell_target
 
 assert torch.cuda.is_available()
 assert torch.cuda.get_device_capability(0) in {(10, 0), (10, 3)}
@@ -102,6 +124,7 @@ device = torch.cuda.get_device_properties(0)
 print('TVM:', tvm.__version__)
 print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda)
 print('GPU:', device.name, 'SM count:', device.multi_processor_count)
+print('Target:', blackwell_target())
 print('TIRX imports OK')
 PY
 ```
@@ -213,7 +236,7 @@ Step 10 的 B200 参考门槛如下，仅用于比较：
 mkdir -p results
 git rev-parse HEAD > results/commit.txt
 nvidia-smi > results/gpu.txt
-python -m pip freeze > results/packages.txt
+uv pip freeze > results/packages.txt
 ```
 
 ## 6. 编译、死锁与数值错误排查
@@ -251,7 +274,7 @@ sanitizer 会扰动耗时，即使无内存/同步报告，也可能触发 pytes
 
 优先排查：
 
-- ImportError：确认使用 `0.0.1b2` 和 `apache-tvm-ffi==0.1.9`，没有混装新版 TVM。
+- ImportError：确认同步了新源码、`tvm.__version__ == '0.26.0'`，没有混装旧版 `mlc-ai-tirx-cu130`。
 - 编译失败：保留完整堆栈、失败 step/shape、`pip freeze`、`nvcc --version`。
 - 小尺寸通过、大尺寸卡住：检查跨 tile phase、TMA/MMA 迭代次数、consumer barrier 槽位。
 - 部分行错误：检查 TMEM fence、warpgroup 的 128 线程参与、TMA store 完成等待；Step 10 的两个写回组分别使用 barrier 10 和 11。
@@ -270,7 +293,8 @@ modal run run_modal.py
 modal run run_modal.py --inspect 10 --size 4096 > results/step10_modal.cu
 ```
 
-Modal runner 已固定 CUDA 13.0、TIRX `0.0.1b2`、PyTorch `2.9.1+cu130` 和 FFI `0.1.9`。
+Modal runner 已固定 CUDA 13.0、TVM `0.26.0`、PyTorch `2.9.1+cu130` 和 FFI `0.1.13.post3`。
+本次未运行 Modal 云端验证。
 它运行 pytest 并输出每个评分用例的耗时与 TFLOP/s；CSV 性能脚本按上面的服务器方式运行。
 
 ## 8. 作业打包
