@@ -69,8 +69,8 @@ def main(argv=None):
 
     if not torch.cuda.is_available():
         parser.error("a CUDA-enabled PyTorch build and a Blackwell GPU are required")
-    if torch.cuda.get_device_capability() != (10, 0):
-        parser.error("these kernels target SM100 (B200/B100)")
+    if torch.cuda.get_device_capability() not in {(10, 0), (10, 3)}:
+        parser.error("these kernels require SM100/SM103 (B200/B100/B300)")
     device = torch.cuda.get_device_properties(0)
     # Match persistent CTA count to the actual device (148 on B200).
     gemm_kernels.SM_COUNT = device.multi_processor_count

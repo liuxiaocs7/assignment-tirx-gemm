@@ -25,8 +25,8 @@ def configure_blackwell():
     import torch
     import gemm_kernels
 
-    if not torch.cuda.is_available() or torch.cuda.get_device_capability() != (10, 0):
-        raise pytest.UsageError("GPU tests require SM100 (B200/B100) and CUDA-enabled PyTorch")
+    if not torch.cuda.is_available() or torch.cuda.get_device_capability() not in {(10, 0), (10, 3)}:
+        raise pytest.UsageError("GPU tests require SM100/SM103 (B200/B100/B300) and CUDA-enabled PyTorch")
     gemm_kernels.SM_COUNT = torch.cuda.get_device_properties(0).multi_processor_count
 
 

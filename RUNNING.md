@@ -52,6 +52,7 @@ git log -10 --format='%h %an <%ae> %s'
 CUDA 13.0 通常需要 **580 系列或更新的 NVIDIA 驱动**；如果平台提供经过配置的
 CUDA compatibility 环境，以平台说明为准。Toolkit 中需要 `nvcc` / `ptxas`。
 B100 也属于 SM100，但本仓库性能门槛取自 B200，不能保证 B100 达到同样分数。
+B300（SM103）也已放行测试入口，会使用实际 SM 数；尚未在 B300 上验证编译与运行，性能门槛仍使用 B200 参考值。
 A100、H100、RTX 4090/5090 和 Mac GPU 不适用这些 SM100 内核。
 
 ```bash
@@ -96,7 +97,7 @@ from tvm.tirx.pipeline import PipelineState
 from tvm.tirx.op_schedule.cuda.common import tma_shared_layout
 
 assert torch.cuda.is_available()
-assert torch.cuda.get_device_capability(0) == (10, 0)
+assert torch.cuda.get_device_capability(0) in {(10, 0), (10, 3)}
 device = torch.cuda.get_device_properties(0)
 print('TVM:', tvm.__version__)
 print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda)
