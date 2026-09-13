@@ -1,6 +1,100 @@
 # B300 验证记录与性能诊断
 
-## 最新实测：dfc9065
+## 最新诊断：b300_diag.RA0gpm
+
+完整数据：[benchmark.log](results_b300/b300_diag.RA0gpm/benchmark.log)、
+[focus.csv](results_b300/b300_diag.RA0gpm/focus.csv)、
+[run.json](results_b300/b300_diag.RA0gpm/compiler/run.json)。
+
+该轮运行 `a8eabc6`，工作区干净。内核 SHA256 为
+`ddada98d73674172edc97f14fd596eeab7181242b0b8885802174570f2d2f7b8`，
+与前轮 `b300_diag.xP7WOw` 一致；两份共有的 13 个 cubin 也逐字节相同。
+因此这是同版内核的重复测量，**尚未包含 `eebcd07` / `2afab29` 的 TMEM 分配调整**。
+
+24 组数值检查通过，性能 **12 PASS / 12 SLOW**。这不是完整 49 项 pytest 验收。
+Step 8 四组全过；Step 10 的 8192 达到 1259.36 TFLOP/s，为同轮 cuBLAS 吞吐的 97.60%。
+
+| Step | 未达标尺寸：相对允许耗时超标 |
+|---|---|
+| 4 | 1024：2.58%；2048：13.31% |
+| 5 | 1024：4.92%；2048：5.50%；4096：2.66% |
+| 6 | 2048：4.04%；4096：2.67%；8192：0.62% |
+| 7 | 2048：12.16%；4096：4.77%；8192：3.13% |
+| 8 | 无 |
+| 10 | 4096：1.80% |
+
+12 个慢项每轮都慢，三轮间最大/最小耗时差均小于 1%。Step 4 / 2048 为 0.55%，
+Step 7 / 2048 为 0.76%，显著低于它们 12–13% 的性能缺口。
+Step 6 / 2048 稳定在 0.047338 ms，确认此前 0.0616 ms 回退已恢复。
+
+### 编译资源证据
+
+24 份 CUDA 源码、cubin、NVRTC 日志及参数均齐全，编译器是 NVRTC 13.0、目标 `sm_103a`。
+参数包含 `--ptxas-options=-v`，但这版 NVRTC 日志没有寄存器/spill 统计，仅有 CUDA 头文件弃用、
+生成代码未使用变量/函数的警告。这些警告本身不是性能瓶颈的证据。
+此前文档将日志描述为一定包含 ptxas 资源统计不准确，已修正。
+
+从 cubin 的 ELF `.nv.info` 元数据提取结果如下；逐形状数据见
+[cubin_metadata.csv](results_b300/b300_diag.RA0gpm/cubin_metadata.csv)。
+提取字段为 `EIATTR_REGCOUNT`（0x2f04）、`EIATTR_FRAME_SIZE`（0x1104）和
+`EIATTR_MIN_STACK_SIZE`（0x1204），按符号表映射到 `kernel_kernel`。
+
+| Step / 尺寸 | 每线程寄存器数 | 栈帧字节数 |
+|---|---|---|
+| 4、5 全部 | 164 | 0 |
+| 6 / 1024 | 164 | 0 |
+| 6 / 2048、4096、8192 | 150 | 0 |
+| 7 / 1024 | 106 | 0 |
+| 7 / 2048、4096、8192 | 128 | 8 |
+| 8 全部 | 106 | 0 |
+| 10 / 1024、2048 | 168 | 96 |
+| 10 / 4096、8192 | 168 | 32 |
+
+Step 7、10 存在非零栈帧，值得继续检查 local memory 访问和寄存器分配。
+**栈帧大小不等于动态 spill 流量，不能单凭它认定瓶颈**。还需 SASS 或 profiler 区分编译器溢出、
+局部数组和其他栈用途。后续诊断在 `cuobjdump` 可用时自动从实际二进制生成 `module_01.resources.txt`。
+
+### 本轮候选及最小复测
+
+Step 4、5 为空间网格，每 CTA 只使用 128 列累加器，却分配了整块 512 列 TMEM。
+PTX 规定 `tcgen05.alloc` 在资源不足时阻塞；超额分配限制同一 SM 上其他 CTA 的并行执行。
+`eebcd07`（Step 4）和 `2afab29`（Step 5）分别将分配、逻辑视图和释放改为 128 列，
+保持各 step 的流水线深度、MMA、写回及同步顺序。
+生成 kernel 主体对比确认仅 alloc/dealloc 两个参数不同；源码生成验证通过，性能收益待实测。
+Step 6–10 继续保留当前版本，等待进一步运行时证据。
+
+同步包含以上两个提交的代码后，仅复测 8 组评分形状与 Step 5 的 3 个边界用例：
+
+```bash
+cd ~/assignment-tirx-gemm
+mkdir -p results
+set -o pipefail
+tirx_run=$(mktemp -d results/tmem128.XXXXXX)
+git log -5 --oneline
+uv run python -m pytest tests/test_step04.py tests/test_step05.py -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest.log"
+uv run python -u benchmark.py --steps 4,5 --trials 3 \
+  --csv "$tirx_run/focus.csv" --diagnostics-dir "$tirx_run/compiler" \
+  2>&1 | tee "$tirx_run/benchmark.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+已有 Step 7、10 二进制无需重新运行 benchmark，即可在 CUDA Toolkit 机器上导出资源与 SASS：
+
+```bash
+tirx_previous=results/b300_diag.RA0gpm/compiler
+cuobjdump --dump-resource-usage "$tirx_previous/step07_2048_2048_2048/module_01.cubin"
+cuobjdump --dump-sass "$tirx_previous/step07_2048_2048_2048/module_01.cubin" \
+  > "$tirx_previous/step07_2048_2048_2048/module_01.sass.txt"
+cuobjdump --dump-resource-usage "$tirx_previous/step10_4096_4096_4096/module_01.cubin"
+cuobjdump --dump-sass "$tirx_previous/step10_4096_4096_4096/module_01.cubin" \
+  > "$tirx_previous/step10_4096_4096_4096/module_01.sass.txt"
+```
+
+如果工具不在 PATH，可使用 `/usr/local/cuda/bin/cuobjdump`。仓库中保存的路径前缀是
+`results_b300/`，服务器原始结果路径前缀是 `results/`，按实际目录调整。
+
+## 完整 pytest 实测：dfc9065
 
 以下来自用户回传日志 `pytest3_1.log`，不是本机 GPU 测量。
 用户确认服务器提交为 `dfc9065d02614bfde96d47742b7d57466db7fa7c`。
@@ -60,7 +154,7 @@ Step 6 的回退让 2048 耗时减少 **22.7%**，回到原始基线范围。这
 | 9 | `ccd7b6d` | 每 CTA 的 TMEM load/wait 从 32 次降至 8 次；限制空闲 cluster。最新全过。 |
 | 10 | `7f4ea10` | 每个 consumer 的 TMEM load/wait 从 32 次降至 8 次；限制空闲 cluster。4096 仍慢约 2%。 |
 
-## 下一轮：同时拿到耗时与实际编译日志
+## 通用流程：同时拿到耗时与实际编译产物
 
 同步工具提交 `f543ce9`（或其后续版本）即可，不需要重装依赖。一次仅运行一个 GPU benchmark，保留 Slurm
 设置的 `CUDA_VISIBLE_DEVICES`。下一轮重点是区分编译资源问题与流水线等待，继续修改内核前先取得证据。
@@ -90,19 +184,20 @@ printf '结果目录：%s\n' "$tirx_run"
 - `module_01.cu`：交给 TVM 原编译回调的 CUDA 源码。
 - `module_01.cubin`：默认 NVRTC 编译实际返回的二进制；NVCC 模式为 `.fatbin`。
 - `nvrtc_01.options.json`：传入 NVRTC 的实际参数。
-- `nvrtc_01.log`：包括成功编译时的 ptxas 资源日志，可查看寄存器数量、stack frame、spill load/store。
+- `nvrtc_01.log`：NVRTC 编译日志；部分版本仅返回前端警告，不保证有 ptxas 资源统计。
+- `module_01.resources.txt`：`cuobjdump` 从实际二进制读取的资源用量；工具缺失/失败时写明原因。
 - `nvrtc_version.json`：NVRTC 编译器版本；它不必等于 PyTorch 显示的 CUDA 版本。
 - `capture.json`：编译回调次数。若 `modules` 为 0，则本轮未捕获编译，不能判断无溢出。
 
 TVM 0.26 原本不打印成功的 NVRTC 编译日志。采集钩子只在编译和第一次调用期间启用，
 复用原编译回调与全部参数，在正确性验证、预热、计时前恢复。它不会换编译器或改变寄存器预算。
-工具在本机通过调用透明性、异常恢复、源码指纹和全部 TIR/CUDA 源码构建检查（共 60 项），
+工具覆盖调用透明性、异常恢复、源码指纹、资源导出和 TIR/CUDA 源码构建检查（共 63 项），
 本机无 NVIDIA GPU，实际 NVRTC/运行采集仍需服务器验证。
 
 先回传 `benchmark.log` 与这些资源日志即可：
 
 ```bash
-rg -n 'registers|spill|stack frame|smem|warning' "$tirx_run/compiler" -g '*.log'
+grep -RniE --include='*.resources.txt' 'REG:|STACK:|LOCAL:|SHARED:|unavailable' "$tirx_run/compiler"
 ```
 
 若没有 `rg`，可直接读取单个文件，例如：
