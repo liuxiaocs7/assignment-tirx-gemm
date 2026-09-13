@@ -1,9 +1,8 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
-Step 8 now uses the measured TMEM base cache; validate it with pytest/benchmark.
-Step 10 keeps production and cache-only controls, then changes ring addressing,
-MMA compiler unrolling, or cluster count on top of the cache. Old experiments
-remain opt-in. Each variant is built separately, without profiling.
+Step 8 passed its focused production tests. Step 10 now tests the tradeoff
+between three input stages and wider epilogue chunks against the measured
+cache-plus-balanced-grid control. Old experiments remain opt-in.
 No production kernel is edited by this tool.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
@@ -32,12 +31,13 @@ STEP_VARIANTS = {
          "specialize_mma", "specialize_writeback", "unroll_ring",
          "pipe_depth_2", "k128_depth_2", "stream_epilogue",
          "cache_tmem_base", "reuse_wait_64ns", "ring_wait_64ns",
-         "cache_unroll_ring", "cache_mma_no_unroll", "cache_balanced_clusters"),
+         "cache_unroll_ring", "cache_mma_no_unroll", "cache_balanced_clusters",
+         "balanced_depth3", "balanced_depth3_epi128"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "cache_tmem_base", "cache_unroll_ring",
-                              "cache_mma_no_unroll", "cache_balanced_clusters")}
+                         10: ("baseline", "cache_tmem_base", "cache_balanced_clusters",
+                              "balanced_depth3", "balanced_depth3_epi128")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -45,6 +45,30 @@ CACHE_EXPERIMENTS = {
     "cache_mma_no_unroll": None,  # CUDA-only pragma; the builder is cache-only.
     "cache_balanced_clusters": "balanced_clusters",
 }
+
+# Every new comparison names its direct control; selecting a leaf includes
+# the whole chain so changing depth and epilogue width remains separable.
+EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
+                       "balanced_depth3": "cache_balanced_clusters",
+                       "balanced_depth3_epi128": "balanced_depth3"}
+DEPTH3_VARIANTS = ("balanced_depth3", "balanced_depth3_epi128")
+# K=1/3/5 stages covers shorter-than-ring, odd complete ring, and partial
+# ring; 96 cluster tiles force reuse of both consumers on the balanced grid.
+DEPTH3_VERIFY_SHAPES = ((4096, 3072, 64), (4096, 3072, 192), (4096, 3072, 320))
+
+
+def select_variants(step, requested=None):
+    selected = ["baseline"]
+    def add(variant):
+        if variant not in STEP_VARIANTS[step]:
+            raise ValueError(f"Step {step} does not support {variant}")
+        if variant in EXPERIMENT_CONTROLS:
+            add(EXPERIMENT_CONTROLS[variant])
+        if variant not in selected:
+            selected.append(variant)
+    for variant in requested or DEFAULT_STEP_VARIANTS[step]:
+        add(variant)
+    return selected
 
 
 def unroll_pipeline_ring(source):
@@ -156,6 +180,12 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant in DEPTH3_VARIANTS:
+        source = variant_builder_source(source, step, "cache_balanced_clusters")
+        source = replace_once(source, "    PIPE_DEPTH = 4\n", "    PIPE_DEPTH = 3\n")
+        if variant == "balanced_depth3_epi128":
+            source = replace_once(source, "    EPI_N = 64\n", "    EPI_N = 128\n")
+        return source
     if variant in CACHE_EXPERIMENTS:
         cached = variant_builder_source(source, step, "cache_tmem_base")
         extra = CACHE_EXPERIMENTS[variant]
@@ -322,6 +352,7 @@ def summarize_with_cache_control(cases, reference_times, tolerance):
     rows = summarize(cases, reference_times, tolerance)
     controls = {(c["step"], c["size"]): c["samples_ms"] for c in cases
                 if c["variant"] == "cache_tmem_base"}
+    by_variant = {(c["step"], c["size"], c["variant"]): c["samples_ms"] for c in cases}
     for case, row in zip(cases, rows):
         control = controls.get((case["step"], case["size"]))
         if control is not None:
@@ -331,6 +362,13 @@ def summarize_with_cache_control(cases, reference_times, tolerance):
                 base / sample for base, sample in zip(control, case["samples_ms"]))
         else:
             row["paired_cache_speedup"] = None
+        control_name = EXPERIMENT_CONTROLS.get(case["variant"], "baseline")
+        direct = by_variant.get((case["step"], case["size"], control_name))
+        if direct is None or len(direct) != len(case["samples_ms"]):
+            raise ValueError(f"missing or incomplete comparison control: {control_name}")
+        row["comparison_control"] = control_name
+        row["paired_control_speedup"] = statistics.median(
+            base / sample for base, sample in zip(direct, case["samples_ms"]))
     return rows
 
 
@@ -352,12 +390,10 @@ def main(argv=None):
         parser.error("--output must be a fresh directory")
     selected = {}
     for step in dict.fromkeys(args.steps):
-        variants = list(dict.fromkeys(("baseline", *(args.variants or DEFAULT_STEP_VARIANTS[step]))))
-        if any(v in CACHE_EXPERIMENTS for v in variants) and "cache_tmem_base" not in variants:
-            variants.insert(1, "cache_tmem_base")
-        if any(v not in STEP_VARIANTS[step] for v in variants):
-            parser.error(f"Step {step} supports: {', '.join(STEP_VARIANTS[step])}")
-        selected[step] = variants
+        try:
+            selected[step] = select_variants(step, args.variants)
+        except ValueError as error:
+            parser.error(str(error))
 
     import torch
     import tvm
@@ -381,14 +417,16 @@ def main(argv=None):
                     probe_step45_sha256=hashlib.sha256(Path(__file__).with_name("probe_step45.py").read_bytes()).hexdigest(),
                     profile_persistent_sha256=hashlib.sha256(Path(__file__).with_name("profile_persistent.py").read_bytes()).hexdigest(),
                     steps=list(selected), size=args.size, variants=selected,
-                    comparison_controls={str(step): {v: "cache_tmem_base" for v in variants
-                                                    if v in CACHE_EXPERIMENTS}
+                    verification_shapes={v: DEPTH3_VERIFY_SHAPES for variants in selected.values()
+                                         for v in variants if v in DEPTH3_VARIANTS},
+                    comparison_controls={str(step): {v: EXPERIMENT_CONTROLS[v] for v in variants
+                                                    if v in EXPERIMENT_CONTROLS}
                                          for step, variants in selected.items()},
                     trials=args.trials, warmup=args.warmup, repeat=args.repeat, seed=args.seed)
     write_json(args.output / "run.json", metadata)
     print(f"Code: {metadata['git_revision']}; gemm_sha256={metadata['gemm_kernels_sha256']}", flush=True)
     print(f"GPU: {device.name}; SMs: {device.multi_processor_count}; {target}", flush=True)
-    print("Separate builds; cache_* combinations use cache_tmem_base as control. "
+    print("Separate builds; each experiment records its direct comparison control. "
           "Verify all outputs before interleaved CUDA-event timing.", flush=True)
     A, B, _ = prepare_data(args.size, args.size, args.size)
     cases, executables, outputs = [], [], []
@@ -414,6 +452,33 @@ def main(argv=None):
             executables.append(executable)
             outputs.append(output)
 
+    # Three-stage rings advance across persistent tiles at different offsets
+    # than production. Verify these boundary shapes before any scored timing.
+    for step, variants in selected.items():
+        for variant in variants:
+            if variant not in DEPTH3_VARIANTS:
+                continue
+            for shape in DEPTH3_VERIFY_SHAPES:
+                directory = args.output / "verification" / f"{variant}_{'_'.join(map(str, shape))}"
+                kernel = build_variant(step, shape, variant, directory)
+                va, vb, _ = prepare_data(*shape)
+                output = torch.full((shape[0], shape[1]), float("nan"), dtype=va.dtype, device=va.device)
+                with target:
+                    with capture_compilation(directory), source_experiment(
+                        step, variant, directory, transform=variant_source
+                    ) as calls:
+                        executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
+                        executable.mod(va, vb, output)
+                    if len(calls) != 1:
+                        raise RuntimeError(f"{directory}: expected one CUDA compilation, got {len(calls)}")
+                    verify(output, va, vb)
+                    output.fill_(float("nan"))
+                    executable.mod(va, vb, output)
+                    verify(output, va, vb)
+                write_json(directory / "verification.json", dict(step=step, variant=variant,
+                           shape=shape, launches=2, verified=True, timed=False))
+                print(f"Verified boundary Step {step} / {variant} / {shape} twice (untimed)", flush=True)
+
     orders = []
     for trial in range(args.trials):
         order = trial_order(len(cases), trial)
@@ -432,13 +497,14 @@ def main(argv=None):
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    print("step variant         median_ms    min_ms    max_ms paired_speedup vs_cache limit_ms status")
+    print("step variant         median_ms    min_ms    max_ms paired_speedup vs_cache control                   vs_control limit_ms status")
     for row in rows:
         cache_ratio = row["paired_cache_speedup"]
         cache_text = "n/a" if cache_ratio is None else f"{cache_ratio:.3f}"
         print(f"{row['step']:>4} {row['variant']:<15} {row['median_ms']:9.6f} "
               f"{row['min_ms']:9.6f} {row['max_ms']:9.6f} {row['paired_speedup']:14.3f} "
-              f"{cache_text:>8} {row['limit_ms']:8.6f} {row['status']}")
+              f"{cache_text:>8} {row['comparison_control']:<25} {row['paired_control_speedup']:10.3f} "
+              f"{row['limit_ms']:8.6f} {row['status']}")
     print(f"Saved {args.output / 'summary.csv'}; SLOW is a measured result, not a tool error.")
     return 0
 

@@ -1,6 +1,98 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：profile_guided.6KUfDZ 与全量回归
+## 最新结果：cache_step8_step10.FwqbDd
+
+数据：[Step 8 pytest](results_b300/cache_step8_step10.FwqbDd/pytest_step08.log)、
+[Step 8 benchmark](results_b300/cache_step8_step10.FwqbDd/step08.csv)、
+[Step 10 summary](results_b300/cache_step8_step10.FwqbDd/step10/summary.csv)、
+[Step 10 samples](results_b300/cache_step8_step10.FwqbDd/step10/samples.json)。
+运行版本 `a7b18d8`；B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+benchmark 记录的四个、probe 记录的七个 Python 文件指纹与提交一致，五个 probe
+版本的 builder、变换前/实际编译 CUDA 指纹全部核对通过；每组编译参数一致。
+所有 probe 通过初始和逐轮数值校验。
+
+### Step 8 正式验证通过
+
+六项 pytest 全过（12.42 s），包括 K=64、320 的矩形不完整 ring 用例。
+四个评分形状各五轮 benchmark，**20 个样本全部达标**：
+
+| 大小 | 中位数 ms | 最大值 ms | 门槛 ms | 最慢样本余量 |
+|---|---:|---:|---:|---:|
+| 1024 | 0.012410 | 0.012585 | 0.018200 | 30.85% |
+| 2048 | 0.028816 | 0.028910 | 0.029900 | **3.31%** |
+| 4096 | 0.164668 | 0.164718 | 0.171600 | 4.01% |
+| 8192 | 1.384891 | 1.385043 | 1.441700 | 3.93% |
+
+2048 正式内核的 cubin 与 `profile_guided.6KUfDZ` 成功缓存 probe 完全相同，
+确认改动进入实际运行内核。Step 8 在本轮覆盖的全部用例中通过，可继续保留。
+本轮没有新的全量测试；最新完整摘要仍为此前的 55/57，不能直接改写成 56/57。
+按已有分步结果，剩余优化集中在 Step 10 / 4096。
+
+### Step 10 均衡网格有收益，仍未稳定达标
+
+| 版本 | 中位数 ms | 最大值 ms | 相对 baseline | 相对 cache-only | 达标轮次 | REG / STACK |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline | 0.142347 | 0.143387 | 1.000× | 0.990× | 0/5 | 168 / 32 |
+| cache_tmem_base | 0.140948 | 0.141383 | 1.010× | 1.000× | 0/5 | 167 / 0 |
+| cache_unroll_ring | 0.141274 | 0.141568 | 1.008× | 0.998× | 0/5 | 168 / 8 |
+| cache_mma_no_unroll | 0.140930 | 0.141770 | 1.011× | 0.999× | 0/5 | 167 / 0 |
+| cache_balanced_clusters | **0.139947** | **0.140229** | **1.017×** | **1.006×** | **1/5** | 167 / 0 |
+
+比值均为同轮配对比值的中位数。均衡网格五轮都比 cache-only 快，说明这个组合有
+重复收益；但中位数仍超 0.139100 ms 门槛 **0.61%**，最慢一轮超 0.81%。
+不能挑最快的 0.137492 ms 样本宣称已解决，也不将该组合直接加入正式 Step 10。
+
+实际 SASS 给出两个排除结果：
+
+- `cache_mma_no_unroll` 的静态 `UTCHMMA` 位置从 16 减到 4、`R2UR` 从 103 减到
+  45，机器码确实改变；但只有 2/5 轮快于 cache-only，未测到增益。静态指令计数不等于
+  动态执行工作量，MMA 总工作量保持一致。
+- `cache_unroll_ring` 被编译器继续展开成 256 个静态 `UTCHMMA` 位置，SASS 地址范围
+  约为 cache-only 的 3.3 倍，出现 8 字节栈帧和 `LDL`/`STL`；五轮均比 cache-only 慢。
+  因而停止沿这两个循环展开版本继续叠加。
+
+### 下一轮：三级流水线与写回宽度的取舍
+
+目前只差不到 1 微秒，但旧阶段记录显示写回自身仍占角色区间约 8–9%，存在具体
+可测的尾部开销。它不证明写回是整个 kernel 的唯一瓶颈。原 Step 10 四级输入流水线
+加 64 列写回占 230,400 字节动态 SMEM；直接扩大到 128 列需要 263,168 字节，
+不能作为可运行的独立对照。因此用以下分层对照区分容量与写回收益：
+
+1. **`balanced_depth3`**：在已测 `cache_balanced_clusters` 上仅把输入流水线 4→3，
+   保持 K64 与 EPI_N64。动态 SMEM 降为 **181,248 字节**。预测：若三层仍足以维持
+   stage 周转，延迟损失应较小；若隐藏 TMA 延迟依赖第四层，则会明显变慢。
+2. **`balanced_depth3_epi128`**：在上一个版本上仅把写回宽度 64→128，动态 SMEM
+   为 **214,016 字节**。预测：若每块两次 warpgroup 同步与 TMA 提交/等待造成尾部
+   开销，每个 consumer 的四次写回降为两次后，应快于三级 EPI_N64，并争取越过原门槛。
+   保留整行 FP16 暂存，八次 TMEM 读取全部结束后仍先通知 MMA，可保持原重叠机会。
+
+默认五个版本依次为 `baseline`、`cache_tmem_base`、`cache_balanced_clusters`、
+`balanced_depth3`、`balanced_depth3_epi128`。显式选择末级版本也会自动带上各级对照。
+`comparison_control` / `vs_control` 记录直接对照及同轮比值，避免把前一级的收益
+归给后一级；原 baseline、cache-only 比值和原始 PASS/SLOW 规则仍保留。
+
+K4096 共有 64 个 stage，不能整除三层 ring，阶段与 phase 必须跨输出 tile 持续推进。
+工具在计时前自动为两个新版本各验算 `(4096,3072,K)`，K=64/192/320，分别覆盖
+比 ring 短、一个完整奇数 ring、不完整 ring；每个形状运行两次且重新填 NaN 输出。
+矩形共有 96 个 cluster 输出 tile，在均衡的 48-cluster 网格中每个 cluster 复用两次。
+这些检查不计时，结果保存于 `verification/`；编译或数值失败会停止运行。
+
+生产 `gemm_kernels.py`、原评分、容差、10 次 warmup / 30 次 repeat / 五轮交错
+CUDA-event 计时均不改变。新版本已通过本地 SM100a/SM103a 源码生成和协议检查，
+**尚无 GPU 数值或性能结论**；下一轮只需运行 Step 10：
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_depth3.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+本地完整回归：**299 项工具/源码生成检查通过，118.86 s**；不替代 GPU 验证。
+
+## 前轮结果：profile_guided.6KUfDZ 与全量回归
 
 用户最新粘贴的全量结果仍是 **55 passed / 2 failed，74.41 s**，均为性能断言：
 Step 8 / 2048 为 572.34 TFLOP/s（约 0.030017 ms，超门槛 0.39%），
@@ -48,7 +140,7 @@ Step 10 生产内核尚未修改。缓存版本的 SASS 在 MMA 主循环内消�
 循环内仍有描述符准备和 `R2UR`。这些是下一轮可改变的具体代码路径，尚不能证明
 它们占据了剩余的全部耗时。
 
-### 下一轮：Step 8 正式验证与 Step 10 缓存对照
+### 已完成实验：Step 8 正式验证与 Step 10 缓存对照
 
 Step 10 默认五个独立构建：原版 `baseline`、已测 `cache_tmem_base`，及以下三个
 分别在缓存基础上只增加一个因素的版本。三者不互相叠加。
@@ -74,7 +166,7 @@ CUDA-event 计时保持不变；编译输入、diff、资源和可用的 SASS �
 缓存组合的操作数、phase 与短 K 路径、MMA pragma 重放和配对汇总。本机没有 NVIDIA GPU，
 这些检查不替代 GPU 数值和性能验证。详见 [RUNNING.md](RUNNING.md)。
 
-同步本轮两个提交后运行：
+以下为已完成的历史命令，无需重复：
 
 ```bash
 mkdir -p results_b300

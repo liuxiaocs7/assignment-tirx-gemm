@@ -22,14 +22,13 @@
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
 覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线。
-最新用户回传的完整套件摘要为 **55 passed / 2 failed，共 57 项**，失败均为性能断言：
-Step 8 / 2048、Step 10 / 4096。Step 1–7、9 全部通过，Step 10 的其他用例通过。
-最新全量摘要耗时 74.41 s，Step 8 / 2048 约超门槛 0.39%，Step 10 / 4096 约超 3.20%。
-`profile_guided.6KUfDZ`（`570b680`）中，缓存 TMEM 基址的 Step 8 / 2048 五轮全部
-达标，中位数 0.028849 ms，最慢样本余量约 1.50%；Step 10 / 4096 同类缓存五轮
-都比原版快，但中位数 0.140656 ms 仍超过 0.139100 ms 门槛。等待变体收益很小。
-`dba5316` 仅上传日志，未采用缓存；本轮 `3bb51c9` 才将缓存加入 Step 8 正式内核，
-需要验证其余形状。Step 10 仍保留正式代码，继续做缓存基础上的单因素实验。
+最新完整套件摘要仍为此前 **55 passed / 2 failed，共 57 项**，当时失败为
+Step 8 / 2048 和 Step 10 / 4096。本轮 `cache_step8_step10.FwqbDd`（`a7b18d8`）
+确认 Step 8 正式 **6 项 pytest 全过、20 个 benchmark 样本全过**，2048 的最慢
+样本仍有 3.31% 余量；其 cubin 与此前成功缓存 probe 相同。无需再调整 Step 8。
+Step 10 的 `cache_balanced_clusters` 五轮都快于 cache-only，但仅一轮达标，
+中位数 0.139947 ms，仍超 0.139100 ms 门槛 0.61%。循环展开两项实验没有额外收益。
+本轮没有新全量回归，不据分步结果虚报新的全量通过数；剩余优化集中在 Step 10。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
@@ -37,44 +36,41 @@ Step 10 / 4096 的 x64 TMEM、L2 分组、cluster 数实验均未解决性能失
 详见 [最新验证和对照记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **288 项本地通过**；
+（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **299 项本地通过**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：Step 8 正式验证与 Step 10 缓存对照
+### 当前进度：Step 10 三级流水线与写回宽度
 
-同步本轮两个提交后，运行 Step 8 的六项 pytest 和四个评分形状 benchmark，
-再测 Step 10 / 4096 的五个无插桩版本。全量回归留待两个 step 都有充分实测余量之后。
+同步本轮工具提交后，只需测 Step 10 / 4096。生产内核不变，保留已验证的 Step 8。
 
 ```bash
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/cache_step8_step10.XXXXXX)
-uv run python -m pytest tests/test_step08.py -vs --tb=short \
-  2>&1 | tee "$tirx_run/pytest_step08.log"
-uv run python -u benchmark.py --steps 8 --trials 5 \
-  --csv "$tirx_run/step08.csv" --diagnostics-dir "$tirx_run/compiler_step08" \
-  2>&1 | tee "$tirx_run/benchmark_step08.log"
+tirx_run=$(mktemp -d results_b300/step10_depth3.XXXXXX)
 uv run python -u probe_persistent.py --steps 10 --size 4096 \
   --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-Step 10 默认 `baseline`、`cache_tmem_base`、`cache_unroll_ring`、
-`cache_mma_no_unroll`、`cache_balanced_clusters`。后三个分别在缓存基础上检验
-固定 stage 地址、禁止 MMA K 循环自动展开、均衡 cluster 数，三者不互相叠加。
-`vs_cache` 列报告与同轮缓存版的加速比；PASS/SLOW 仍按原评分门槛。
-五轮交错计时前后验算，保存 builder/CUDA diff、编译资源和可用的 SASS。
-这些新组合只有本地源码生成和协议检查结果，尚无 GPU 性能结论。
-实验依据与预测见 [最新验证记录](B300_VALIDATION.md#下一轮step-8-正式验证与-step-10-缓存对照)。
+默认五个版本：`baseline`、`cache_tmem_base`、`cache_balanced_clusters`、
+`balanced_depth3`、`balanced_depth3_epi128`。先单独测输入流水线 4→3，再在三级上
+测写回块 64→128；SMEM 分别为 181,248 / 214,016 字节，均低于现有 230,400 字节。
+宽写回保留原 TMEM 释放点，将每个 consumer 四次 TMA 写回降为两次。
+`vs_control` 是相对直接前一级的同轮比值，`vs_cache` 和原 baseline 比值也保留。
+PASS/SLOW 仍由原始时间门槛决定。
 
-`profile_persistent.py` 保留为诊断工具，各角色区间不能相加，也不能据等待占比直接
-推断显存或 Tensor Core 利用率。历史变体仍可通过 `--variants` 选择；已采用的
-Step 6/7 `k_tile_128` 和 Step 8 `tma_wait_64ns`、`cache_tmem_base` 会拒绝重复应用。
-Step 8 默认 probe 仅测 baseline，生产验证优先使用上面的 pytest / benchmark。
+工具会先自动为两个新版本各做 K=64/192/320 的矩形重用验算，每个形状运行两次；
+保存在 `verification/`，不计入性能。之后沿用五轮交错计时及逐轮数值校验，保存
+builder/CUDA diff、编译资源和可用 SASS。新变体仅通过本地源码生成与协议检查，
+GPU 结论仍待回传。详见 [实验依据](B300_VALIDATION.md#下一轮三级流水线与写回宽度的取舍)。
+
+历史变体仍可用 `--variants` 选择；工具自动包含必要对照。已采用的 Step 6/7
+`k_tile_128` 和 Step 8 `tma_wait_64ns`、`cache_tmem_base` 会拒绝重复应用。
+`profile_persistent.py` 继续保留为诊断工具，角色区间不能相加或直接当成设备利用率。
 
 ### 已有 B300 + Torch + TVM 0.26 + uv：直接运行
 

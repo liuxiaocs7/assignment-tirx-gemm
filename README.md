@@ -2,18 +2,17 @@
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` are implemented using
 Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
-source generation checks. The latest user-reported full B300 suite has
-**55 passed / 2 performance failures out of 57 tests**: Step 8 at 2048 and
-Step 10 at 4096 (74.41 s). Steps 1–7 and 9 pass in full.
-The `profile_guided.6KUfDZ` run at `570b680` validates the immutable TMEM base
-cache: Step 8 / 2048 passes all five samples at a 0.028849 ms median; Step 10 /
-4096 improves to 0.140656 ms but still misses its 0.139100 ms limit.
-Step 8 now adopts that exact cache in `3bb51c9`; all production GPU shapes
-still need validation. Step 10 remains unchanged, with new cache-based
-experiments for ring addressing, MMA loop unrolling, and cluster count.
-The tool retains both production and cache-only controls and reports paired
-speedups against each. All 288 local tool/source-generation checks pass;
-these checks do not establish GPU correctness or performance.
+source generation checks. The latest full B300 suite remains the earlier
+**55 passed / 2 performance failures out of 57 tests**. The subsequent
+`cache_step8_step10.FwqbDd` run at `a7b18d8` confirms all six production Step 8
+tests and all 20 benchmark samples pass; the worst 2048 sample has 3.31% margin.
+Step 10 / 4096 remains unresolved: cache plus balanced clusters improves every
+paired trial against cache-only, but its 0.139947 ms median still exceeds the
+0.139100 ms limit. Neither loop-unrolling experiment adds a measured gain.
+Production kernels remain unchanged this round. New diagnostic controls test
+three input stages, then wider epilogue chunks, with automatic short/partial
+ring correctness checks before timing. All 299 local tool/source-generation
+checks pass; GPU correctness and performance for these new variants are pending.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 
