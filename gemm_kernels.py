@@ -336,16 +336,17 @@ def hgemm_v3(M, N, K):
 # ======================================================================
 
 def hgemm_v4(M, N, K):
+    if min(M, N, K) <= 0 or M % 128 or N % 128 or K % 64:
+        raise ValueError("Step 4 requires positive M,N divisible by 128 and K divisible by 64")
     a_type = tvm.DataType("float16")
     b_type = tvm.DataType("float16")
     d_type = tvm.DataType("float16")
     acc_type = tvm.DataType("float32")
-
     BLK_M, BLK_N, BLK_K = 128, 128, 64
     K_TILES = K // BLK_K
-
     A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
     B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
+    D_layout = tma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_N))
 
     @Tx.prim_func(tirx=True)
     def kernel(
@@ -359,7 +360,6 @@ def hgemm_v4(M, N, K):
             wg_id = Tx.warpgroup_id([1], parent="cta")
             warp_id = Tx.warp_id([4], parent="warpgroup")
             lane_id = Tx.thread_id([32], parent="warp")
-
             pool = Tx.PoolAllocator()
             tmem_addr = pool.alloc((1,), "uint32")
             tma_bar = pool.alloc((1,), "uint64", align=8)
@@ -367,44 +367,74 @@ def hgemm_v4(M, N, K):
             pool.move_base_to(1024)
             Asmem = pool.alloc((BLK_M, BLK_K), a_type, layout=A_layout)
             Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout)
+            Dsmem = pool.alloc((BLK_M, BLK_N), d_type, layout=D_layout)
             pool.commit()
 
             if warp_id == 0:
                 if lane_id == 0:
-                    Tx.ptx.mbarrier.init(mma_bar.ptr_to([0]), 1)
                     Tx.ptx.mbarrier.init(tma_bar.ptr_to([0]), 1)
+                    Tx.ptx.mbarrier.init(mma_bar.ptr_to([0]), 1)
                 Tx.ptx.tcgen05.alloc(Tx.address_of(tmem_addr), n_cols=512, cta_group=1)
-
             Tx.ptx.fence.proxy_async("shared::cta")
             Tx.ptx.fence.mbarrier_init()
             Tx.cuda.cta_sync()
-
-            tmem = Tx.decl_buffer((128, 512), "float32", scope="tmem", allocated_addr=0,
-                                  layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
-
+            tmem = Tx.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=0,
+                layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
             m_st = Tx.meta_var(bx * BLK_M)
             n_st = Tx.meta_var(by * BLK_N)
-
             phase_tma: Tx.int32
             phase_mma: Tx.int32
             phase_tma = 0
             phase_mma = 0
 
-            # TODO: Define @Tx.inline tma_load(k_st) that uses:
-            #   Tx.copy_async(Asmem, A[...], dispatch="tma", cta_group=1, mbar=...)
-            #   Tx.ptx.mbarrier.arrive.expect_tx(tma_bar, byte_count)
+            @Tx.inline
+            def tma_load(k_st):
+                Tx.copy_async(Asmem[:, :], A[m_st:m_st + BLK_M, k_st:k_st + BLK_K],
+                              dispatch="tma", cta_group=1, mbar=tma_bar.ptr_to([0]))
+                Tx.copy_async(Bsmem[:, :], B[n_st:n_st + BLK_N, k_st:k_st + BLK_K],
+                              dispatch="tma", cta_group=1, mbar=tma_bar.ptr_to([0]))
+                Tx.ptx.mbarrier.arrive.expect_tx(tma_bar.ptr_to([0]),
+                    (BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
 
-            # TODO: Define @Tx.inline mma(accum) that:
-            #   1. Waits on tma_bar (data ready)
-            #   2. Issues gemm_async + commit
-            #   3. Waits on mma_bar (MMA done)
+            @Tx.inline
+            def mma(accum):
+                Tx.gemm_async(tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],
+                              accum=accum, dispatch="tcgen05", cta_group=1)
+                Tx.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
 
-            # TODO: Main loop (elected thread of warp 0):
-            #   for k in range(K_TILES): tma_load(k*BLK_K); mma(k != 0)
+            # One elected thread dispatches both async engines and tracks their phases.
+            if warp_id == 0:
+                with Tx.thread(parent="warp")[Tx.ptx.elect_sync()]:
+                    for k in range(K_TILES):
+                        tma_load(k * BLK_K)
+                        Tx.ptx.mbarrier.try_wait(tma_bar.ptr_to([0]), phase_tma)
+                        Tx.ptx.tcgen05.fence.after_thread_sync()
+                        mma(k != 0)
+                        Tx.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
+                        phase_tma = phase_tma ^ 1
+                        phase_mma = phase_mma ^ 1
 
-            # TODO: Writeback TMEM → RF → SMEM → TMA store → GMEM
-            # You will need a Dsmem buffer with tma_shared_layout for TMA store.
-
+            # Publish the elected thread's completion to all writeback threads.
+            Tx.cuda.cta_sync()
+            Tx.ptx.tcgen05.fence.after_thread_sync()
+            Dreg = Tx.alloc_local((BLK_N,), acc_type)
+            Dreg_f16 = Tx.alloc_local((BLK_N,), d_type)
+            Dreg_wg = Dreg.view(128, BLK_N,
+                layout=TileLayout(S[(128, BLK_N) : (1@axis_tid_in_wg, 1)]))
+            with Tx.warpgroup():
+                Tx.copy(Dreg_wg[:, :], tmem[:, :BLK_N])
+            with Tx.thread():
+                Tx.cast(Dreg_f16[:], Dreg[:])
+                Tx.copy(Dsmem[warp_id * 32 + lane_id, :], Dreg_f16[:])
+            Tx.ptx.fence.proxy_async("shared::cta")
+            Tx.cuda.cta_sync()
+            if warp_id == 0:
+                with Tx.thread(parent="warp")[Tx.ptx.elect_sync()]:
+                    Tx.copy_async(D[m_st:m_st + BLK_M, n_st:n_st + BLK_N],
+                                  Dsmem[:, :], dispatch="tma")
+                    Tx.ptx.cp_async.bulk.commit_group()
+                    Tx.ptx.cp_async.bulk.wait_group(0)
+            Tx.cuda.cta_sync()
             if warp_id == 0:
                 Tx.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
                 Tx.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=512, cta_group=1)
