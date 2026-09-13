@@ -1,5 +1,10 @@
 # Assignment: Blackwell GEMM Kernel Optimization
 
+**Implementation status:** `hgemm_v1` through `hgemm_v10` are implemented using
+the assignment's pinned TIRX API. See [RUNNING.md](RUNNING.md) for the Chinese
+installation, correctness, performance, and debugging guide. GPU compilation,
+correctness, and timing still need to be verified on your Blackwell machine.
+
 In this assignment, you will progressively build a high-performance FP16 GEMM kernel for NVIDIA Blackwell (SM100) GPUs using TVM/TIRX. Starting from a minimal single-tile kernel, you will incrementally add optimizations — K-loop accumulation, spatial tiling, TMA async loads, software pipelining, persistent kernels, warp specialization, deeper pipelines, multi-CTA clusters, and multi-consumer parallelism — until you arrive at a fully optimized kernel that matches the structure of production-grade implementations.
 
 **Prerequisites**: Familiarity with CUDA programming concepts (threads, warps, shared memory, synchronization).
@@ -182,7 +187,7 @@ modal run run_modal.py --step 1,3,5
 #### Prerequisites
 
 - **OS**: Linux (Ubuntu 20.04+ recommended)
-- **GPU**: NVIDIA Blackwell (B200 / B100) with driver >= 570
+- **GPU**: NVIDIA Blackwell (B200 / B100), with a driver compatible with CUDA 13.0
 - **Python**: >= 3.10 with `pip`
 
 #### Install
@@ -191,6 +196,7 @@ modal run run_modal.py --step 1,3,5
 python -m pip install --pre -U -f https://mlc.ai/wheels "mlc-ai-tirx-cu130==0.0.1b2"
 pip install torch==2.9.1+cu130 --index-url https://download.pytorch.org/whl/cu130
 pip install pytest numpy
+python -m pip install --force-reinstall "apache-tvm-ffi==0.1.9"
 ```
 
 #### Verify Installation
@@ -219,8 +225,10 @@ If tests fail intermittently, check `nvidia-smi` — another process may be usin
 ## File Structure
 
 ```
-gemm_kernels.py          # Skeleton — your implementation goes here
+gemm_kernels.py          # Implemented steps 1-10
 utils.py                 # Helpers: prepare_data, compile_and_run, verify, benchmark
+benchmark.py             # Verify, time, compare with cuBLAS, and export CSV
+RUNNING.md               # Detailed server setup and validation instructions
 run_modal.py             # Run tests on cloud B200 via Modal
 inspect_cuda.py          # View generated CUDA/PTX code for any step
 tests/
@@ -234,7 +242,7 @@ tests/
 
 ## How to Work
 
-1. Open `gemm_kernels.py` and implement the `TODO` sections for each step.
+1. Read the implementation of each step in `gemm_kernels.py` alongside its description below.
 2. Run the corresponding test to verify correctness:
    - **Via Modal (cloud B200):**
      ```bash
@@ -1049,14 +1057,14 @@ TFLOPS = 2 * M * N * K / (time_in_seconds) / 1e12
 
 The factor of 2 accounts for the multiply and add in each fused multiply-add (FMA) operation.
 
-Use the `benchmark` function in `utils.py` to measure your kernel's performance:
+Use the `benchmark_flops` function in `utils.py` to measure your kernel's performance:
 
 ```python
-from utils import benchmark
+from utils import benchmark_flops
 from gemm_kernels import hgemm_v10
 
 kernel = hgemm_v10(4096, 4096, 4096)
-ms, tflops = benchmark(kernel, 4096, 4096, 4096)
+ms, tflops = benchmark_flops(kernel, 4096, 4096, 4096)
 print(f"{ms:.3f} ms, {tflops:.1f} TFLOPS")
 ```
 

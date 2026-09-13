@@ -36,14 +36,16 @@ image = (
         "python -m pip install --pre -U -f https://mlc.ai/wheels 'mlc-ai-tirx-cu130==0.0.1b2'",
     )
     .run_commands(
-        "python -m pip install --force-reinstall 'apache-tvm-ffi==0.1.9'",
+        "python -m pip install 'torch==2.9.1+cu130' --index-url https://download.pytorch.org/whl/cu130",
     )
     .pip_install(
-        "torch",
         "pytest",
         "numpy",
     )
-    .add_local_dir(".", remote_path="/workspace", ignore=[".git"])
+    .run_commands(
+        "python -m pip install --force-reinstall 'apache-tvm-ffi==0.1.9'",
+    )
+    .add_local_dir(".", remote_path="/workspace", ignore=[".git", ".venv", "results", "__pycache__"])
 )
 
 

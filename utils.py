@@ -57,6 +57,23 @@ def benchmark(kernel, M, N, K, dtype="fp16", warmup=10, repeat=30):
     return elapsed
 
 
+def time_cuda_call(call, warmup=10, repeat=30):
+    """Time repeated launches on the current CUDA stream, excluding compilation."""
+    if warmup < 0 or repeat < 1:
+        raise ValueError("warmup must be nonnegative and repeat must be positive")
+    for _ in range(warmup):
+        call()
+    torch.cuda.synchronize()
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+    start_event.record()
+    for _ in range(repeat):
+        call()
+    end_event.record()
+    torch.cuda.synchronize()
+    return start_event.elapsed_time(end_event) / repeat
+
+
 def _compute_tflops(M, N, K, time_ms):
     """Compute TFLOP/S from dimensions and time in ms."""
     flops = 2 * M * N * K
@@ -67,7 +84,7 @@ def benchmark_flops(kernel, M, N, K, dtype="fp16", warmup=10, repeat=30):
     """Benchmark a kernel and report FLOP/S."""
     avg_ms = benchmark(kernel, M, N, K, dtype, warmup, repeat)
     tflops = _compute_tflops(M, N, K, avg_ms)
-    print(f"M={M}, N={N}, K={K}: {tflops:.2f} TFLOP/S")
+    print(f"M={M}, N={N}, K={K}: {avg_ms:.6f} ms, {tflops:.2f} TFLOP/S")
     return avg_ms, tflops
 
 

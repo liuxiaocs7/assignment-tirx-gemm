@@ -8,7 +8,8 @@ Usage:
 
 Arguments:
     step    Kernel version (1-10)
-    size    Matrix dimension M=N=K (default: 1024)
+    size    Matrix dimension M=N=K for steps 3-10 (default: 1024).
+            Step 1 always uses 128x128x64; step 2 uses M=N=128, K=size.
 
 Examples:
     python inspect_cuda.py 7           # v7, 1024x1024
@@ -41,9 +42,10 @@ if step not in kernels:
     print(f"Error: step must be 1-10, got {step}")
     sys.exit(1)
 
-print(f"// Compiling hgemm_v{step}(M={size}, N={size}, K={size})...", file=sys.stderr)
+M, N, K = (128, 128, 64) if step == 1 else (128, 128, size) if step == 2 else (size, size, size)
+print(f"// Compiling hgemm_v{step}(M={M}, N={N}, K={K})...", file=sys.stderr)
 
-kernel = kernels[step](size, size, size)
+kernel = kernels[step](M, N, K)
 target = tvm.target.Target("cuda")
 with target:
     mod = tvm.IRModule({"main": kernel})
