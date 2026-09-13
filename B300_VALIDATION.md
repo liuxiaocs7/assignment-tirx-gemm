@@ -1,6 +1,118 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step810_probe.Wl6HTg
+## 最新结果：step8_wait_step10_pipeline.VnSWDg
+
+数据：[Step 8 pytest](results_b300/step8_wait_step10_pipeline.VnSWDg/pytest_step08.log)、
+[Step 8 benchmark](results_b300/step8_wait_step10_pipeline.VnSWDg/step08.csv)、
+[Step 10 summary](results_b300/step8_wait_step10_pipeline.VnSWDg/step10/summary.csv)、
+[Step 10 samples](results_b300/step8_wait_step10_pipeline.VnSWDg/step10/samples.json)。
+运行版本 `59464cf`；B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+benchmark 的四个、probe 的六个 Python 文件指纹均与运行提交一致；五个 probe
+版本的 builder/CUDA 指纹与实际文件一致，编译选项相同。内核 SHA256 为
+`20b44b79295eb45d13a97c2e0812690f2a5e20b737c76438359bbf3be782cd2c`。
+
+### Step 8 正式用例通过，但性能余量仍不足
+
+正式 Step 8 **6 项 pytest 全过**，包含 K64 / K320 的不完整流水线用例。
+独立 benchmark 的 2048 仍有三轮超时：
+
+| 方阵尺寸 | 中位数 ms | 最慢 ms | 门槛 ms | 达标样本 |
+|---|---:|---:|---:|---:|
+| 1024 | 0.012432 | 0.012669 | 0.018200 | 5/5 |
+| 2048 | 0.029904 | 0.030345 | 0.029900 | **2/5** |
+| 4096 | 0.171245 | 0.171543 | 0.171600 | 5/5 |
+| 8192 | 1.427212 | 1.427942 | 1.441700 | 5/5 |
+
+2048 的五轮原始耗时依次为 0.029904、0.03034453、0.03005440、0.02944747、
+0.02917973 ms。中位数只超出门槛约 4 ns，但最慢样本超出约 1.49%；
+4096 最慢样本的余量也仅约 0.033%。不能据单次 pytest 通过认定性能已稳定。
+
+本轮正式 2048 的 [cubin](results_b300/step8_wait_step10_pipeline.VnSWDg/compiler_step08/step08_2048_2048_2048/module_01.cubin)
+与前轮成功的 [tma_wait_64ns cubin](results_b300/step810_probe.Wl6HTg/step08/step08_2048_tma_wait_64ns/module_01.cubin)
+**逐字节一致**，SHA256 均为
+`af1e41be2bba58b520a79840fe14624a4b787d224c9109069ef199f0ca46c998`。
+生成 CUDA 主体和等待 helper 也一致（规范化 helper 名称后）。采用改动时没有丢失
+已测量的机器码；同一内核跨轮次仍有波动，具体环境原因尚无证据。
+
+### Step 10 流水线及写回实验全部未达标
+
+| Step 10 / 4096 | 中位数 ms | 最快 ms | 最慢 ms | 配对加速比 | REG / STACK |
+|---|---:|---:|---:|---:|---:|
+| baseline | 0.142486 | 0.140492 | 0.143290 | 1.000× | 168 / 32 |
+| unroll_ring | 0.141756 | 0.141548 | 0.142789 | 1.005× | 168 / 24 |
+| pipe_depth_2 | 0.173078 | 0.172806 | 0.173213 | 0.823× | 168 / 24 |
+| k128_depth_2 | 0.142629 | 0.142249 | 0.143230 | 1.000× | 168 / 24 |
+| stream_epilogue | 0.143861 | 0.141907 | 0.144143 | 0.989× | 77 / 0 |
+
+五个版本的 **25 个样本全部超过 0.139100 ms**，初始及逐轮数值验证通过。
+展开流水线仅约 0.5% 收益；两级 K64 明显回退，扩大 K 到 128 只恢复至 baseline
+附近。分块写回将寄存器从 168 降到 77、栈帧降到 0，却仍变慢，不能把寄存器数或
+栈帧当作已定位的主要瓶颈。这里的 REG / STACK 来自实际 cubin 资源报告，
+不等于动态 spill 流量。没有采用这些 Step 10 变体。
+
+本轮没有新的完整套件结果；最近一次全量仍是 **55/57 通过**，发生在 Step 8
+采用等待改动之前。本轮独立结果不能组合成一次新的全量通过数。
+
+### 下一轮：按角色测量等待与执行区间
+
+当前改动只增加 [profile_persistent.py](profile_persistent.py) 和诊断说明，生产内核、
+评分门槛、数值容差、原 CUDA-event 计时方法均未修改。已完成的性能变体保留为
+`probe_persistent.py --variants ...` 显式选项，默认只测正式 baseline。
+
+优先区分以下预测；等待占比只能缩小范围，仍需后续无插桩实验验证：
+
+1. **数据供应限制**：MMA 的 `tma2mma` 等待应占显著时间，而 TMA 等待可复用
+   stage 的占比相对较低。
+2. **MMA / stage 复用限制**：TMA 的 `mma2tma` 等待应占显著时间；对比两个
+   consumer 的 MMA 数据等待和发射区间，检查是否有不平衡。
+3. **写回交接限制**：后续输出 tile 的 MMA `ld2mma` 等待应显著，或写回的
+   TMEM 读取、转换和 epilogue 区间较长。
+
+工具默认依次采集 Step 8 / 2048 和 Step 10 / 4096。每个形状编译原始 baseline，
+以及分别只对 TMA、MMA、写回插桩的三个副本；计时前及每轮后验算。
+五轮交错计时、每轮预热 10 次、计时 30 次。原始 baseline 报告达标样本数，
+插桩副本只报告与同轮 baseline 的耗时比，不给 PASS/SLOW。
+
+| 角色 | wait | work | handoff / epilogue |
+|---|---|---|---|
+| TMA | 等待 `mma2tma`，SMEM stage 可复用 | 发射 TMA、登记事务字节、推进 phase | 无 |
+| MMA | 等待 `tma2mma`，输入数据就绪 | fence、MMA 发射、commit、推进 phase | handoff：等待 `ld2mma`，TMEM 可复用 |
+| 写回 | 等待 `mma2ld`，MMA 完成 | TMEM 读取、转换、fence、释放 accumulator | epilogue：写 SMEM、TMA store 及同步 |
+
+记录按 CTA、consumer、输出 tile 序号分开，初次与复用 tile 分开汇总。
+`trace.csv` 和每轮 JSON 保留原始 `%globaltimer` / `%clock64`、SM ID 和 tile 坐标；
+`stages.csv` 给出区间中位数/最大值和按区间总时长加权的占比。
+每轮 buffer 重置，**trace 对应最后一次计时 launch**；CUDA event 则统计 30 次
+launch 的平均耗时，二者不可直接相等。缺失、非法槽位或不完整 tile 覆盖会报错停止。
+
+插桩在原 elected lane 或写回 warp 0 / lane 0 读取计时器，每个输出 tile 结束时
+才写入全局记录。额外指令和寄存器、写回 leader 的分支都会扰动调度，应先看插桩/
+baseline 比值和实际编译资源。各角色在不同副本中测量、且执行本来存在重叠，
+**不能把各角色耗时相加，也不能跨副本对齐时间线**。TMA/MMA 的 work 是指令发射
+区间，不是异步引擎完成工作的时长；角色区间不包含初始分配、tile 调度间隙、
+末尾全局记录写入和最终 cluster 清理。cycles/ns 仅为观察值，不能替代 GPU 时钟遥测。
+
+编译回调在计时前移除，保留实际 CUDA、编译选项、cubin/fatbin、资源报告和
+SASS（若可用 `cuobjdump`）；另保存每轮前后 `nvidia-smi` 时钟、功耗、温度快照。
+快照只帮助比较轮次，不能单凭它确定运行中瞬时降频。工具不设置 GPU 时钟。
+
+**258 项本地工具及源码生成检查通过**，其中新增 30 项覆盖插桩保留原硬件操作和地址、
+两个 consumer 的独立记录、跨 tile 覆盖、异常 trace 拒绝与重复 helper 定义防护。
+本机没有 NVIDIA GPU；新工具的 NVRTC 编译、数值和实际扰动仍待 B300 验证。
+
+同步提交后运行一次：
+
+```bash
+cd ~/assignment-tirx-gemm
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/stage_profile.XXXXXX)
+uv run python -u profile_persistent.py --output "$tirx_run/profile" \
+  2>&1 | tee "$tirx_run/profile.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：step810_probe.Wl6HTg
 
 数据：[Step 8 summary](results_b300/step810_probe.Wl6HTg/step08/summary.csv)、
 [Step 8 samples](results_b300/step810_probe.Wl6HTg/step08/samples.json)、
@@ -27,7 +139,7 @@ epilogue_128 各两次超时。TMA 等待变体五轮都达标，最慢一轮仍
 parity 和 retry；其余三个等待点及四级流水线保留。64 ns 为挂起提示，必须等到 barrier
 完成才能执行 MMA。先以实测 CUDA 建立失败对照，再采用改动；正式 2048 的 CUDA 主体和
 等待 helper 与实测版本一致（只规范化 helper 名称），其余评分尺寸及短 K / 矩形路径
-也只改变这一等待点。原有六个 Step 8 GPU 用例仍需在新正式版本上验收。
+也只改变这一等待点。六个正式用例已由后续 VnSWDg 验收，性能余量仍不足，见本文开头。
 
 ### Step 10 三个变体仍不足以解决性能失败
 
@@ -43,9 +155,9 @@ parity 和 retry；其余三个等待点及四级流水线保留。64 ns 为挂�
 写回特化为 REG:168 / STACK:24，数据等待变体为 REG:168 / STACK:32。
 这三项均不进入生产 Step 10；最新完整套件状态仍为 **55/57 通过**。
 
-### 下一轮：Step 8 正式验收与 Step 10 流水线对照
+### 当时的 Step 8 验收与 Step 10 流水线对照（现已完成）
 
-优先检验三个方向。Step 10 默认五个版本，包含 baseline 和四项变体：
+当时检验三个方向，Step 10 默认五个版本，包含 baseline 和四项变体：
 
 1. **K-stage 交接频率**：`pipe_depth_2` 仅把 K64 的四级流水线改为两级，作为控制组；
    `k128_depth_2` 在同样两级下扩大 K 到 128，K 不整除 128 时仍用 64。若交接限制性能，
@@ -60,12 +172,11 @@ parity 和 retry；其余三个等待点及四级流水线保留。64 ns 为挂�
    最后一次 TMEM 读取完成后才释放 accumulator。它以推迟下一 tile 的 MMA 为代价
    减少寄存器活跃量；若该代价更大，测量会变慢。它与其他变体不叠加。
 
-**228 项本地工具及源码生成检查通过**，覆盖实测源码重放、两级流水线的完整事务字节、
+当时 **228 项本地工具及源码生成检查通过**，覆盖实测源码重放、两级流水线的完整事务字节、
 两 consumer 的 barrier 计数、展开后的 phase 传递和分块写回的释放顺序。
-新 Step 10 变体仍待 B300 上的 NVRTC 编译、
-数值和性能验证；本机没有 NVIDIA GPU。
+这些 Step 10 变体已由 VnSWDg 完成 B300 编译、数值和性能验证，全部未达标。
 
-同步提交后顺序运行：
+以下为 `59464cf` 的历史命令，无需重复：
 
 ```bash
 cd ~/assignment-tirx-gemm

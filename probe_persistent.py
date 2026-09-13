@@ -1,8 +1,9 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
-Defaults to Step 10 at 4096: compare stage addressing, K-stage granularity,
-and streamed writeback. The two-stage K64 control isolates the wider K tile.
-Steps 6/7 have passed validation; Step 8 has adopted its measured TMA wait.
+Defaults to production baseline only. Completed Step 10 stage/K-tile/writeback
+experiments did not meet the limit; use profile_persistent.py for stage timing.
+Steps 6/7 passed validation; Step 8 still has marginal performance after its
+measured TMA wait adoption. Old experiments remain available with --variants.
 No production kernel is edited by this tool.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
@@ -31,8 +32,7 @@ STEP_VARIANTS = {
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "unroll_ring", "pipe_depth_2",
-                              "k128_depth_2", "stream_epilogue")}
+                         10: ("baseline",)}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 
 

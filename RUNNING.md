@@ -24,10 +24,11 @@
 覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线。
 最新用户回传的完整套件摘要为 **55 passed / 2 failed，共 57 项**，失败均为性能断言：
 Step 8 / 2048、Step 10 / 4096。Step 1–7、9 全部通过，Step 10 的其他用例通过。
-最新 `step810_probe.Wl6HTg`（`adf93eb`）中，Step 8 的 `tma_wait_64ns` 五轮全部达标，
-最慢 0.029321 ms，距 0.029900 ms 门槛约有 1.94% 余量；baseline 和 epilogue_128
-则各有两轮超时。Step 8 已采用实测等待实现，其余评分尺寸与边界用例待正式 GPU 验收。
-Step 10 的数据等待、MMA 特化和写回特化都未达标，生产 Step 10 尚未改动。
+最新 `step8_wait_step10_pipeline.VnSWDg`（`59464cf`）中，Step 8 正式 **6 项 pytest 全过**；
+但 2048 的 benchmark 五轮只有两轮达标，中位数 0.029904 ms，门槛 0.029900 ms。
+4096 五轮全过，最慢样本余量仅约 0.033%。正式 2048 与前轮成功等待变体的 cubin
+完全相同，确认改动已采用，但性能还不稳定。Step 10 的流水线和分块写回实验共
+25 个样本全部超时，未采用。最新全量摘要在 Step 8 改动之前，不能据独立结果更新通过数。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
@@ -35,41 +36,41 @@ Step 10 / 4096 的 x64 TMEM、L2 分组、cluster 数实验均未解决性能失
 详见 [最新验证和对照记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（覆盖构建、实测 CUDA 重放、fallback、实验隔离与编译回调，共 **228 项本地通过**；
+（覆盖构建、实测 CUDA 重放、fallback、实验隔离、编译回调与角色插桩，共 **258 项本地通过**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：Step 8 正式验收，Step 10 流水线对照
+### 当前进度：测量 Step 8、10 各角色的等待时间
 
-将新提交同步到服务器后，先验收 Step 8 的六个 GPU 用例及四个评分尺寸各五轮 benchmark；
-再在 Step 10 / 4096 对比 baseline、展开流水线环、两级 K64 控制组、两级 K128 和分块写回，
-共五个版本，五轮交错计时、计时前后验算。本轮无需再跑 Step 6、7 或全量套件。
+将新提交同步到服务器后，运行下面一个工具，依次测量 Step 8 / 2048、Step 10 / 4096。
+每个形状包含正式 baseline 和分别对 TMA、MMA、写回插桩的三个副本；五轮交错计时，
+计时前后验算。阶段数据用于区分数据供应、MMA/stage 复用和写回交接瓶颈。
 
 ```bash
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/step8_wait_step10_pipeline.XXXXXX)
-git log -3 --oneline
-
-uv run python -m pytest tests/test_step08.py -vs --tb=short \
-  2>&1 | tee "$tirx_run/pytest_step08.log"
-
-uv run python -u benchmark.py --steps 8 --trials 5 \
-  --csv "$tirx_run/step08.csv" --diagnostics-dir "$tirx_run/compiler_step08" \
-  2>&1 | tee "$tirx_run/benchmark_step08.log"
-
-uv run python -u probe_persistent.py --steps 10 --size 4096 \
-  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/probe_step10.log"
+tirx_run=$(mktemp -d results_b300/stage_profile.XXXXXX)
+uv run python -u profile_persistent.py --output "$tirx_run/profile" \
+  2>&1 | tee "$tirx_run/profile.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-`summary.csv` 汇总耗时、门槛、与同轮 baseline 的加速比；目录内保留逐轮结果、
-builder diff、CUDA、编译选项和 cubin 资源报告。`SLOW` 会继续收集并返回 0；
-数值错误或编译失败会停止并返回非零。Step 6、7 的 `k_tile_128` 和 Step 8 的 `tma_wait_64ns`
-已采用，会拒绝重复应用。变体说明见 [B300_VALIDATION.md](B300_VALIDATION.md#下一轮step-8-正式验收与-step-10-流水线对照)。
+`trace.csv` 保存各 CTA、consumer、输出 tile 的原始时间戳；`stages.csv` 汇总等待、
+发射/读取、交接及 epilogue 区间。trace 来自每轮**最后一次计时 launch**，CUDA event
+则是 30 次 launch 的平均。工具保留 baseline 比值、builder diff、CUDA、实际二进制、
+编译资源、可用的 SASS，以及每轮前后的 GPU 时钟/功耗快照。
+
+插桩会改变指令、寄存器和调度；各角色在独立副本中测量，不能叠加其耗时或对齐其时间线。
+TMA/MMA 的 work 是发射区间，不是异步引擎完成时长；初始分配、tile 调度间隙和末尾清理
+不在角色区间内。插桩副本不参与性能评分，只有 baseline 报告达标样本数；采集成功返回 0，
+数值、编译或 trace 校验失败返回非零。本地已验证源码生成，NVRTC 与 GPU 执行待回传。
+完整解释见 [阶段诊断说明](B300_VALIDATION.md#下一轮按角色测量等待与执行区间)。
+
+`probe_persistent.py` 默认只测 baseline，已完成的变体通过 `--variants` 显式选择。
+已采用的 Step 6/7 `k_tile_128` 和 Step 8 `tma_wait_64ns` 会拒绝重复应用。
 
 ### 已有 B300 + Torch + TVM 0.26 + uv：直接运行
 
