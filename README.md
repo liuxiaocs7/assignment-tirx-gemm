@@ -5,9 +5,10 @@ Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
 source generation checks. User-reported B300 results at `dfc9065` pass all 49 numerical
 checks, with **36 tests passing and 13 performance assertions failing**. The Step 6
 rollback recovered the 2048-size regression; further performance work remains.
-The latest Step 4/5 TMEM retest passes numerical checks but still fails five
-performance assertions; reducing allocation alone did not fix the main slow cases.
-`probe_step45.py` isolates three further hypotheses at size 2048 before kernel changes.
+The latest B300 probe shows that releasing the TMEM allocation permit immediately
+after allocation speeds up Step 4/5 at size 2048 by 1.776× / 1.352× versus their
+baselines, passing the timing limits in all five trials. Both changes are now in
+the production kernels; other sizes and short-K cases still need GPU revalidation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 
@@ -717,7 +718,7 @@ Use `from tvm.script import tirx as T` and `from tvm.script.tirx import tile as 
 | `buf.ptr_to([idx])` | Get pointer to the idx-th element (used for mbarrier access) |
 | `mma_shared_layout(dtype, SwizzleMode, shape)` | Create TMA-compatible swizzled layout for SMEM buffers |
 | `T.ptx.tcgen05.alloc(addr, n_cols, cta_group)` | Allocate TMEM |
-| `T.ptx.tcgen05.relinquish_alloc_permit(cta_group)` | Release TMEM allocation permit (call before dealloc) |
+| `T.ptx.tcgen05.relinquish_alloc_permit(cta_group)` | Give up further allocations after the final alloc; existing TMEM remains live until dealloc |
 | `T.ptx.tcgen05.dealloc(addr, n_cols, cta_group)` | Deallocate TMEM |
 
 ### Data Movement

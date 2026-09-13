@@ -26,13 +26,16 @@
 其中 **36 个用例整体通过、13 个仅性能断言失败**。Step 6 / 2048 回退后恢复到 0.047595 ms，
 但仍需继续优化性能。详见 [B300_VALIDATION.md](B300_VALIDATION.md)。
 `RA0gpm` 诊断测量同版内核的 24 组形状，12 PASS / 12 SLOW。
-最新 `tmem128.OZkJOD` 已验证 Step 4、5 的 128 列 TMEM 分配，数值全部通过，
+此前 `tmem128.OZkJOD` 验证 Step 4、5 的 128 列 TMEM 分配，数值全部通过，
 但 pytest 仍为 6 passed / 5 failed，主要性能项没有改善。
-下一轮只需运行 [Step 4/5 最小对照](B300_VALIDATION.md#一次完成最小对照)，
-用 `probe_step45.py` 在两个 2048 慢项上区分分配许可、barrier 等待和循环展开的影响。
+最新 `step45_probe.PS9CFi` 的独立对照显示，alloc 后提前 relinquish 使 Step 4、5 / 2048
+分别加速 1.776×、1.352×，五轮全部达标。`142c601` / `43124ff` 已将其落到正式内核。
+下一轮运行 [Step 4/5 正式实现与复测](B300_VALIDATION.md#正式实现与复测)，
+覆盖其他评分尺寸及短/奇数 K；无需重跑原 probe，尚不能认定全部 49 项达标。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（18 个 CLI 用例、36 个构建和源码生成用例、9 个诊断工具用例、15 个对照实验工具用例；
+（18 个 CLI 用例、36 个构建和源码生成用例、9 个诊断工具用例、17 个对照实验工具用例、
+2 个实测 CUDA 主体对照用例，共 82 项；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、

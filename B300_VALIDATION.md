@@ -1,6 +1,85 @@
 # B300 验证记录与性能诊断
 
-## 最新诊断：tmem128.OZkJOD
+## 最新诊断：step45_probe.PS9CFi
+
+数据：[probe.log](results_b300/step45_probe.PS9CFi/probe.log)、
+[summary.csv](results_b300/step45_probe.PS9CFi/probe/summary.csv)、
+[samples.json](results_b300/step45_probe.PS9CFi/probe/samples.json)、
+[run.json](results_b300/step45_probe.PS9CFi/probe/run.json)。
+
+**提前释放 TMEM 分配许可的独立对照显著提速，Step 4、5 的 2048 形状五轮全部达标。**
+运行版本为 `683da59`，B300 / NVRTC 13.0 / TVM 0.26.0 / `sm_103a`。
+内核、benchmark、诊断工具及 probe 的源码指纹都与该版本一致。8 个编译版本均先通过数值验证，
+再完成 5 轮交错计时，每轮预热 10 次、计时 30 次，复用输出后再次验证。
+
+| Step / 2048 | baseline ms | early_release ms | 配对加速比 | 允许 ms | 五轮结果 |
+|---|---|---|---|---|---|
+| 4 | 0.076641 | 0.043150 | 1.776× | 0.067600 | 全部 PASS |
+| 5 | 0.045228 | 0.033455 | 1.352× | 0.042900 | 全部 PASS |
+
+按耗时中位数计算，Step 4 减少 43.7%，Step 5 减少 26.0%。最慢一轮分别为
+0.043157 / 0.033551 ms，仍比允许耗时低 36.2% / 21.8%；不是临界 PASS。
+吞吐分别为 398.14 / 513.52 TFLOP/s。这里的加速比相对同轮 baseline，**不是 cuBLAS 对比**。
+
+### 证据与结论
+
+捕获的 `source_01.patch` 确认 early_release 只移动一次 `relinquish_alloc_permit`：
+从 kernel 末尾移到唯一一次 `alloc` 之后，执行者仍为整个 warp 0，TMEM 的 `dealloc`
+仍位于写回完成之后。两者含义不同：放弃后续分配权利不释放当前累加器。
+编译参数相同，baseline 与 early_release 的资源报告均为
+`REG:164 STACK:0 SHARED:1024 LOCAL:0`。
+
+这验证了 **分配许可的释放时机是这两个慢项的重要性能因素**。提前释放允许其他 CTA
+申请剩余 TMEM，与该收益一致；本轮没有 profiler，尚未直接测量 CTA 并发数或分配等待周期。
+前一轮只把列数从 512 减至 128 而不改变释放时机，耗时几乎不变。
+
+另两个独立实验没有解决慢项：
+
+| 变体 | Step 4 ms / 配对加速比 | Step 5 ms / 配对加速比 | 决策 |
+|---|---|---|---|
+| 等待提示改为 64 ns | 0.071823 / 1.067× | 0.043155 / 1.048× | 均 SLOW，暂不采用 |
+| 禁止外层 K/ring 展开 | 0.086410 / 0.886× | 0.047627 / 0.950× | 均变慢，不采用 |
+
+禁止展开后 Step 4 的寄存器数从 164 降到 159，但性能变差，进一步说明不能仅按静态资源
+大小判断优化效果。本轮没有测量组合变体，不能把各项收益相加。
+
+### 正式实现与复测
+
+- `142c601`：Step 4 在 alloc 后立即 relinquish。
+- `43124ff`：Step 5 在 alloc 后立即 relinquish，双缓冲预取和 phase 逻辑保持原样。
+
+两个提交均在 `gemm_kernels.py` 中直接实现，无需 probe 编译补丁。
+新增的实测源码对照在修改前失败、修改后通过：2048 形状生成的 CUDA kernel 主体
+与回传的 early_release 源码逐字一致。全部 **82 项本地工具及源码生成检查通过**，
+包括 SM100/SM103 lowering、边界形状构建和编译回调恢复。
+本机没有 NVIDIA GPU，正式版本在其他评分尺寸和短 K 上仍需上机验证。
+
+同步以上提交后，直接跑正式内核的 11 项测试及 8 组评分形状：
+
+```bash
+cd ~/assignment-tirx-gemm
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/early_release.XXXXXX)
+git log -4 --oneline
+
+uv run python -m pytest tests/test_step04.py tests/test_step05.py -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest.log"
+
+uv run python -u benchmark.py --steps 4,5 --trials 5 \
+  --csv "$tirx_run/focus.csv" --diagnostics-dir "$tirx_run/compiler" \
+  2>&1 | tee "$tirx_run/benchmark.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+回传整个新目录。pytest 包含 Step 5 的 K=64、192、320，benchmark 覆盖 Step 4 的
+256–2048 及 Step 5 的 512–4096。这里只宣称 2048 对照已达标，不能据此宣布全仓库 49 项通过。
+Step 6–10 本轮未改动，后续仍需解决已记录的性能失败。
+
+**不再重跑原 probe**：正式内核已包含 early_release。工具会拒绝把相同变换重复应用，
+避免把相同代码误当作一次新的对照。原实验如需复现，应使用 `683da59` 的完整版本。
+
+## 前轮诊断：tmem128.OZkJOD
 
 数据：[pytest.log](results_b300/tmem128.OZkJOD/pytest.log)、
 [focus.csv](results_b300/tmem128.OZkJOD/focus.csv)、
@@ -34,7 +113,7 @@
 另传入动态共享内存 **66,560 字节（Step 4，65 KiB）** 和
 **99,328 字节（Step 5，97 KiB）**。这些数值不是实测 occupancy，不能由它们断言实际并发 CTA 数。
 
-按以下顺序做独立对照，每次只改变一个变量：
+当时按以下顺序安排独立对照，每次只改变一个变量；结果见本文开头：
 
 1. **TMEM 分配许可的持有时间**：当前直到退出前才 relinquish。如果它让其他 CTA 在分配时等待，
    把 relinquish 移到唯一一次 alloc 后应降低多 CTA 形状的耗时。保留原来的 dealloc 位置。
@@ -47,14 +126,14 @@
    如果 CUDA 编译器展开导致指令开销或取指压力，收紧代码应改善耗时。
    Step 5 两个 stage 的显式展开不变；单凭 cubin 大小不能确认指令缓存瓶颈。
 
-### 一次完成最小对照
+### 已完成的最小对照（683da59）
 
 新增 [probe_step45.py](probe_step45.py) 自动测试当前版及以上三个独立变体，默认只测两个
 稳定慢项 Step 4 / 2048 与 Step 5 / 2048。它在编译回调中修改生成的 CUDA，
 **不会修改 `gemm_kernels.py`、编译器选项、计时函数、数值容限或评分标准**。
 匹配不到预期代码结构时直接报错，不会静默测试无效变体。
 
-同步脚本提交后，在已分配 B300 的服务器上执行：
+以下为 `683da59` 上已执行的历史命令；新版本请用上面的正式内核复测命令：
 
 ```bash
 cd ~/assignment-tirx-gemm
@@ -71,13 +150,12 @@ printf '结果目录：%s\n' "$tirx_run"
 中位数，大于 1 表示更快。`summary.csv` 保留原性能门槛；诊断脚本成功完成返回 0，
 即使某个版本仍为 SLOW。数值错误、编译错误或 CUDA 异常会终止。
 
-回传整个新目录，重点文件为 `probe.log`、`probe/summary.csv`、`probe/samples.json`。
+结果目录的重点文件为 `probe.log`、`probe/summary.csv`、`probe/samples.json`。
 各版本目录包含 CUDA、cubin、NVRTC 日志、资源报告及 `source_01.patch`，可核实确切改动。
 所有编译完成后才开始计时，编译钩子在计时前恢复。只验证该形状不能代替最终 49 项验收。
 
-本地已检查实际 TVM 生成代码的变换、编译回调恢复和统计逻辑；本机没有 NVIDIA GPU，
-**三个变体均尚无 B300 编译/正确性/性能实测结果**。有稳定收益后再将相应改动按 step
-提交到正式内核，并补齐评分形状、短 K 与奇数 K tile 验证。
+当时本地仅检查了实际 TVM 生成代码的变换、编译回调恢复和统计逻辑。
+现已收到 `step45_probe.PS9CFi` 的 B300 结果并采用 early_release，详见本文开头。
 
 ## 前轮诊断：b300_diag.RA0gpm
 
