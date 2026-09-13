@@ -1,7 +1,8 @@
 """Independent B300 performance experiments for Steps 6, 7, and 10.
 
-Defaults to 4096: Steps 6/7 measure the adopted K-tile baseline;
-Step 10 compares independent changes with production. No kernel is edited.
+Defaults to Step 10 at 4096: compare wider TMEM loads, L2 grouping, and a
+balanced cluster grid with production. Steps 6/7 have adopted k_tile_128;
+use their production tests for validation. No production kernel is edited.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
 """
@@ -21,9 +22,11 @@ from probe_step45 import replace_once, source_experiment, summarize, trial_order
 STEP_VARIANTS = {
     6: ("baseline", "k_tile_128", "mma_wait_64ns", "final_fence"),
     7: ("baseline", "k_tile_128", "mma_wait_64ns", "epilogue_128"),
-    10: ("baseline", "mma_wait_64ns", "tmem_load_16"),
+    10: ("baseline", "mma_wait_64ns", "tmem_load_16", "tmem_load_64",
+         "l2_group_4", "balanced_clusters"),
 }
-DEFAULT_STEP_VARIANTS = {**STEP_VARIANTS, 6: ("baseline",), 7: ("baseline",)}
+DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
+                         10: ("baseline", "tmem_load_64", "l2_group_4", "balanced_clusters")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 
 
@@ -43,6 +46,21 @@ def variant_builder_source(source, step, variant):
         return replace_once(source, "    EPI_N = 64\n", "    EPI_N = 128\n")
     if variant == "tmem_load_16":
         return replace_once(source, "    TMEM_LD_N = 32", "    TMEM_LD_N = 16")
+    if variant == "tmem_load_64":
+        return replace_once(source, "    TMEM_LD_N = 32", "    TMEM_LD_N = 64")
+    if variant == "l2_group_4":
+        return replace_once(source, "l2_group_size=8, num_clusters=CLUSTER_COUNT",
+                            "l2_group_size=4, num_clusters=CLUSTER_COUNT")
+    if variant == "balanced_clusters":
+        # Keep the original maximum number of tiles per cluster while using
+        # the smallest grid that can cover them. At 4096: 128 tiles / 64
+        # clusters = two each, versus 54 clusters with two and 20 with one.
+        before = "    CLUSTER_COUNT = min(SM_COUNT // CTA_GROUP, (M // (MMA_M * NUM_CONSUMER)) * (N // MMA_N))"
+        after = ("    TOTAL_TILES = (M // (MMA_M * NUM_CONSUMER)) * (N // MMA_N)\n"
+                 "    MAX_CLUSTERS = SM_COUNT // CTA_GROUP\n"
+                 "    TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS\n"
+                 "    CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER")
+        return replace_once(source, before, after)
     # Step 6's elected thread uses one MMA pipeline; the writeback handoff is
     # after the K loop. Keep per-tile completion and TMA acquire fences, moving
     # only this after/before pair to the handoff (as in measured Steps 4/5).
@@ -125,7 +143,7 @@ def variant_source(source, step, variant):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="fresh directory, must not exist")
-    parser.add_argument("--steps", type=int, nargs="+", choices=STEP_VARIANTS, default=list(STEP_VARIANTS))
+    parser.add_argument("--steps", type=int, nargs="+", choices=STEP_VARIANTS, default=[10])
     parser.add_argument("--size", type=int, choices=(1024, 2048, 4096, 8192), default=4096)
     parser.add_argument("--variants", nargs="+", choices=VARIANTS,
                         help="optional subset, must apply to every selected step; baseline always included")

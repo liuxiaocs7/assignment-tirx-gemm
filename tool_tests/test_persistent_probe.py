@@ -17,9 +17,18 @@ sys.path.insert(0, str(ROOT))
 from probe_persistent import DEFAULT_STEP_VARIANTS, STEP_VARIANTS, build_variant, main, variant_builder_source, variant_source
 from probe_step45 import source_experiment
 
+RECORDED_PROBE = ROOT / "results_b300/persistent_probe.VB42kg/probe"
+RECORDED_VARIANTS = json.loads((RECORDED_PROBE / "run.json").read_text())["variants"]
 
 def body(source):
     return source.split('extern "C" __global__', 1)[1]
+
+
+def canonicalize_codegen_locals(code):
+    """Ignore CSE/cast-loop numbering, retaining variable identity and expressions."""
+    names = {}
+    return re.sub(r"\b(cse_v|f_)\d+\b", lambda m: names.setdefault(
+        m[0], f"{m[1]}{len(names)}"), code)
 
 
 def recorded_source(step, size=4096):
@@ -39,8 +48,7 @@ def install_recorded_builder(step, monkeypatch):
     """Replay pre-adoption experiments using the exact measured baseline."""
     import gemm_kernels
 
-    path = (ROOT / "results_b300/persistent_probe.VB42kg/probe" /
-            f"step{step:02}_4096_baseline/builder.py")
+    path = RECORDED_PROBE / f"step{step:02}_4096_baseline/builder.py"
     namespace = dict(vars(gemm_kernels))
     exec(compile(path.read_text(), str(path), "exec"), namespace)
     name = f"hgemm_v{step}"
@@ -74,7 +82,7 @@ def test_changed_wait_layout_fails_closed(step):
         variant_source(source, step, "mma_wait_64ns")
 
 
-@pytest.mark.parametrize("step,variant", [(s, v) for s, vv in STEP_VARIANTS.items() for v in vv])
+@pytest.mark.parametrize("step,variant", [(int(s), v) for s, vv in RECORDED_VARIANTS.items() for v in vv])
 def test_experiment_lowers_and_preserves_protocol(step, variant, tmp_path, monkeypatch):
     pytest.importorskip("tvm")
     import gemm_kernels
@@ -132,11 +140,7 @@ def test_experiment_lowers_and_preserves_protocol(step, variant, tmp_path, monke
         marker = "    alignas(64) float Dreg_ptr["
         # More epilogue loads renumber TVM's CSE temporaries, including ones
         # in the producer. Preserve distinct identifiers and all expressions.
-        def canonicalize_cse(code):
-            names = {}
-            return re.sub(r"\bcse_v\d+\b", lambda m: names.setdefault(
-                m[0], f"cse_v{len(names)}"), code)
-        assert canonicalize_cse(actual.split(marker)[0]) == canonicalize_cse(baseline.split(marker)[0])
+        assert canonicalize_codegen_locals(actual.split(marker)[0]) == canonicalize_codegen_locals(baseline.split(marker)[0])
 
 
 @pytest.mark.parametrize("step", [6, 7])
@@ -161,6 +165,53 @@ def test_adopted_k_tile_is_not_applied_again(step, tmp_path):
     assert DEFAULT_STEP_VARIANTS[step] == ("baseline",)
     with pytest.raises(ValueError, match=f"Step {step} has adopted k_tile_128"):
         build_variant(step, (4096,) * 3, "k_tile_128", tmp_path)
+
+
+@pytest.mark.parametrize("variant", ["tmem_load_64", "l2_group_4", "balanced_clusters"])
+def test_step10_new_experiments_preserve_data_and_barrier_protocol(variant, tmp_path):
+    pytest.importorskip("tvm")
+    import gemm_kernels
+
+    baseline = body(recorded_source(10))
+    kernel = build_variant(10, (4096,) * 3, variant, tmp_path)
+    actual = body(generate(kernel))
+    if variant == "tmem_load_64":
+        assert "float Dreg_ptr[64]" in actual and "half Dreg_f16_ptr[256]" in actual
+        assert actual.count("tvm_builtin_ptx_tcgen05_wait_ld();") == 4
+        assert actual.count("tvm_builtin_ptx_tcgen05_ld_32x32b_x64(") == 4
+        marker = "    alignas(64) float Dreg_ptr["
+        assert canonicalize_codegen_locals(actual.split(marker)[0]) == canonicalize_codegen_locals(baseline.split(marker)[0])
+        after_reads = "tvm_builtin_ptx_tcgen05_fence_before_thread_sync();"
+        assert canonicalize_codegen_locals(actual.split(after_reads)[1]) == canonicalize_codegen_locals(baseline.split(after_reads)[1])
+    elif variant == "balanced_clusters":
+        # All three roles advance by the same stride; no data/barrier change.
+        old, new = "_ptr_2[0] = (_ptr_2[0] + 74);", "_ptr_2[0] = (_ptr_2[0] + 64);"
+        assert actual.count(new) == baseline.count(old) == 3
+        assert actual.replace(new, old) == baseline
+    else:
+        # Tile coordinates change, but every async operation and fence remains.
+        calls = lambda s: [line.strip() for line in s.splitlines()
+                           if re.match(r"\s*(tvm_builtin_|ptx_)\w+\(", line)]
+        assert calls(actual) == calls(baseline)
+        assert "(group_id_1 * 4) + (within_group_1 & 3)" in actual
+        assert "(group_id_1 * 8) + (within_group_1 & 7)" in baseline
+    assert getattr(gemm_kernels, "hgemm_v10").__module__ == "gemm_kernels"
+
+
+@pytest.mark.parametrize("M,N,clusters", [(1024, 1024, 8), (2048, 2048, 32),
+                                         (4096, 4096, 64), (8192, 8192, 74),
+                                         (4096, 3072, 48)])
+def test_balanced_grid_launch_matches_persistent_stride(M, N, clusters, tmp_path, monkeypatch):
+    pytest.importorskip("tvm")
+    import gemm_kernels
+
+    monkeypatch.setattr(gemm_kernels, "SM_COUNT", 148)
+    kernel = build_variant(10, (M, N, 320), "balanced_clusters", tmp_path)
+    # A two-CTA launch per cluster and identical TMA/MMA/writeback strides
+    # must cover all tiles, including a rectangular grid and partial K ring.
+    assert f"T.cta_id([{clusters * 2}])" in kernel.script()
+    source = body(generate(kernel))
+    assert source.count(f"_ptr_2[0] = (_ptr_2[0] + {clusters});") == 3
 
 
 @pytest.mark.parametrize("fail", [False, True])

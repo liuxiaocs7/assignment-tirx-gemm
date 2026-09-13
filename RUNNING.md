@@ -22,45 +22,56 @@
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
 覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线。
-最新回传的 `step4_k128.6GZwy2`（`c6435e4`）完整套件为 **46 passed / 7 failed**，
+最近一次完整套件 `step4_k128.6GZwy2`（`c6435e4`）为 **46 passed / 7 failed**，
 53 个用例的数值检查全部通过。Step 1–5、8、9 全部通过；剩余项是
 Step 6、7 各自的 2048 / 4096 / 8192，以及 Step 10 / 4096，均为性能断言。
-详见 [最新实测和剩余差距](B300_VALIDATION.md#最新结果step4_k1286gzwy2)。
+详见 [完整套件记录](B300_VALIDATION.md#前轮完整套件step4_k1286gzwy2)。
 
 Step 4 的 K tile 128 与 64 fallback 已通过正式 8 项验收，四个评分尺寸各五轮 benchmark
 也全部达标。Step 5 的局部 64 ns MMA 等待已通过正式 7 项验收；此前
 `mma64_step4.dh9ZC8` 中四个评分尺寸各五轮 benchmark 全过。
-当前完整套件有 53 个 GPU 用例，仍有上述 7 项待优化。
+最新 `persistent_probe.VB42kg` 在 4096 找到 Step 6、7 的 K tile 128 收益：
+中位数分别为 0.249217 / 0.219035 ms，配对加速 1.268× / 1.413×，五轮全部达标。
+`fb7e38b` / `eeb0ae0` 已采用，保留 K%128≠0 的 64 宽度路径与各自两级流水线。
+Step 10 的两个变体无收益，4096 仍未达标。当前增加四个宽 K 边界用例，共 **57 个 GPU 用例**；
+新正式内核还需其他评分尺寸和边界用例验收，详见 [最新实验记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（原有 113 项检查，加上 40 项常驻内核实验的源码生成、实测 CUDA 重放与编译回调检查，
-共 **153 项本地通过**；
+（覆盖构建、实测 CUDA 重放、fallback、实验隔离与编译回调，共 **181 项本地通过**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前剩余性能项：先跑一次独立对照
+### 当前进度：验收 Step 6、7，继续诊断 Step 10
 
-将新提交同步到服务器后，先运行下面一条 GPU 命令。默认在三步都失败的 4096 尺寸编译
-11 个版本，按原方法交错计时 5 轮；所有版本在首次计时前和每轮计时后验算。
-新脚本不修改正式内核，变体的加速效果仍待 GPU 实测。
+将新提交同步到服务器后，按顺序执行。前两条验收 Step 6、7（共 16 个 GPU 用例，
+以及 8 个评分形状各五轮 benchmark）；第三条只在 Step 10 / 4096 对比四个版本。
+各变体在首次计时前和每轮计时后验算。Step 10 新变体的加速效果仍待 GPU 实测。
 
 ```bash
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/persistent_probe.XXXXXX)
-git log -2 --oneline
-uv run python -u probe_persistent.py --output "$tirx_run/probe" \
+tirx_run=$(mktemp -d results_b300/k128_step67.XXXXXX)
+git log -3 --oneline
+
+uv run python -m pytest tests/test_step06.py tests/test_step07.py -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest_step67.log"
+
+uv run python -u benchmark.py --steps 6,7 --trials 5 \
+  --csv "$tirx_run/step67.csv" --diagnostics-dir "$tirx_run/compiler_step67" \
+  2>&1 | tee "$tirx_run/benchmark_step67.log"
+
+uv run python -u probe_persistent.py --steps 10 --size 4096 --output "$tirx_run/probe" \
   2>&1 | tee "$tirx_run/probe.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
 `summary.csv` 汇总耗时、门槛、与同轮 baseline 的加速比；目录内保留逐轮结果、
 builder diff、CUDA、编译选项和 cubin 资源报告。`SLOW` 会继续收集并返回 0；
-数值错误或编译失败会停止并返回非零。下一轮根据对照结果选择改动，再验收全部尺寸。
-变体说明及可选参数见 [B300_VALIDATION.md](B300_VALIDATION.md#下一轮独立对照step-6710)。
+数值错误或编译失败会停止并返回非零。Step 6、7 已采用的 `k_tile_128` 实验现在会拒绝重复应用。
+变体说明及可选参数见 [B300_VALIDATION.md](B300_VALIDATION.md#下一轮step-67-验收与-step-10-对照)。
 
 ### 已有 B300 + Torch + TVM 0.26 + uv：直接运行
 
@@ -77,7 +88,7 @@ uv run python -c "import sys, tvm, gemm_kernels; print(sys.executable); print(tv
 # 快速获得所有 step 的 37 组正确性检查、性能、cuBLAS 对照和 CSV
 uv run python -u benchmark.py --steps all --trials 1 --csv results/all_steps.csv 2>&1 | tee results/benchmark.log
 
-# 完整验收：53 个 GPU 用例，包含 16 个额外边界用例
+# 完整验收：57 个 GPU 用例，包含 20 个额外边界用例
 uv run python -m pytest tests/ -v -s --tb=short 2>&1 | tee results/pytest.log
 ```
 
@@ -193,13 +204,13 @@ SH
 python -m pytest tests/ -xvs
 ```
 
-当前共有 **53 个 GPU 用例**。其中原有 37 个用例依次执行：
+当前共有 **57 个 GPU 用例**。其中原有 37 个用例依次执行：
 
 1. 编译并运行 TIRX 内核。
 2. 与 `torch.matmul(A, B.T)` 比较，要求 `rtol=1e-3, atol=1e-2`。
 3. 预热 10 次，CUDA event 测量 30 次，要求平均耗时不超过参考值的 `1.30` 倍。
 
-其余 16 个新增边界用例只检查正确性，没有任意新增性能门槛。
+其余 20 个新增边界用例只检查正确性，没有任意新增性能门槛。
 默认随机种子是 0；通过后可换种子检查稳定性：
 
 ```bash
