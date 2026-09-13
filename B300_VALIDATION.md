@@ -1,6 +1,85 @@
 # B300 验证记录与性能诊断
 
-## 最新诊断：b300_diag.RA0gpm
+## 最新诊断：tmem128.OZkJOD
+
+数据：[pytest.log](results_b300/tmem128.OZkJOD/pytest.log)、
+[focus.csv](results_b300/tmem128.OZkJOD/focus.csv)、
+[run.json](results_b300/tmem128.OZkJOD/compiler/run.json)。
+
+**128 列 TMEM 分配已生效，但没有解决 Step 4、5 的主要性能失败。**
+运行提交为 `e7d40d6`，包含 `eebcd07` / `2afab29`；虽记录 `dirty=True`，
+四个 Python 文件的 SHA256 均与本地对应版本一致。内核 SHA256 为
+`3fd407fc54aa98b6c1c2b9f38893fde231324e5ecb12b65a01f4266f62c12194`。
+捕获的 CUDA 主体确认 alloc/dealloc 参数都是 128，不能把这轮结果归因于未同步代码。
+
+11 项 pytest 中 **6 passed / 5 failed**，失败均来自性能断言；数值检查全部通过，
+包括 Step 5 的 K=64、192、320。独立 benchmark 的 8 组为 4 PASS / 4 SLOW：
+
+| Step / 方阵尺寸 | 调整前 RA0gpm ms | 调整后 ms | 允许 ms | 说明 |
+|---|---|---|---|---|
+| 4 / 1024 | 0.022671 | 0.022695 | 0.022100 | SLOW，超标 2.69% |
+| 4 / 2048 | 0.076598 | 0.076465 | 0.067600 | SLOW，超标 13.11% |
+| 5 / 1024 | 0.016368 | 0.015593 | 0.015600 | 临界 PASS；pytest 为 0.016660，仍失败 |
+| 5 / 2048 | 0.045258 | 0.045344 | 0.042900 | SLOW，超标 5.70% |
+| 5 / 4096 | 0.363007 | 0.362154 | 0.353600 | SLOW，超标 2.42% |
+
+除 Step 5 / 1024 外，上述主要慢项前后变化只有约 0.2%。Step 5 / 1024 三轮为
+0.015593、0.016407、0.015429 ms，最大/最小相差 6.34%，不能认定为稳定提速。
+
+### 已排除与仍需验证的方向
+
+八份实际 cubin 的 `cuobjdump` 结果均为 `REG:164 STACK:0 SHARED:1024 LOCAL:0`。
+没有栈帧或 local memory 的证据，不应继续把 Step 4、5 归因为寄存器 spill。
+`SHARED:1024` 只表示静态共享内存。相同源码经 TVM 0.26 lowering 后，host launch
+另传入动态共享内存 **66,560 字节（Step 4，65 KiB）** 和
+**99,328 字节（Step 5，97 KiB）**。这些数值不是实测 occupancy，不能由它们断言实际并发 CTA 数。
+
+按以下顺序做独立对照，每次只改变一个变量：
+
+1. **TMEM 分配许可的持有时间**：当前直到退出前才 relinquish。如果它让其他 CTA 在分配时等待，
+   把 relinquish 移到唯一一次 alloc 后应降低多 CTA 形状的耗时。保留原来的 dealloc 位置。
+   [CUDA 13.0 PTX 规范](https://docs.nvidia.com/cuda/archive/13.0.0/parallel-thread-execution/index.html#tcgen05-instructions-tcgen05-alloc-dealloc-relinquish-alloc-permit)
+   要求 relinquish 后不得再次 alloc；本例满足。但规范本身不能证明此处存在跨 CTA 阻塞。
+2. **barrier 等待方式**：TVM 默认 `try_wait` 使用 10,000,000 ns 的 suspension hint。
+   若唤醒/调度成本影响短循环，把 hint 改为 64 ns 应改善耗时。它不是固定睡眠时间，
+   也不是跳过等待的超时；实验仍循环到 barrier 完成为止，保留原有 acquire 语义。
+3. **K 循环自动展开**：给 Step 4 的 `k`、Step 5 的外层 `ring` 加 `#pragma unroll 1`。
+   如果 CUDA 编译器展开导致指令开销或取指压力，收紧代码应改善耗时。
+   Step 5 两个 stage 的显式展开不变；单凭 cubin 大小不能确认指令缓存瓶颈。
+
+### 一次完成最小对照
+
+新增 [probe_step45.py](probe_step45.py) 自动测试当前版及以上三个独立变体，默认只测两个
+稳定慢项 Step 4 / 2048 与 Step 5 / 2048。它在编译回调中修改生成的 CUDA，
+**不会修改 `gemm_kernels.py`、编译器选项、计时函数、数值容限或评分标准**。
+匹配不到预期代码结构时直接报错，不会静默测试无效变体。
+
+同步脚本提交后，在已分配 B300 的服务器上执行：
+
+```bash
+cd ~/assignment-tirx-gemm
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step45_probe.XXXXXX)
+uv run python -u probe_step45.py --output "$tirx_run/probe" \
+  2>&1 | tee "$tirx_run/probe.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+默认 8 次编译，每个版本先验证数值，再按变化顺序交错进行 5 轮计时，每轮仍预热 10 次、
+计时 30 次。每轮复用输出后再次验证。`paired_speedup` 为各轮相对同轮 baseline 加速比的
+中位数，大于 1 表示更快。`summary.csv` 保留原性能门槛；诊断脚本成功完成返回 0，
+即使某个版本仍为 SLOW。数值错误、编译错误或 CUDA 异常会终止。
+
+回传整个新目录，重点文件为 `probe.log`、`probe/summary.csv`、`probe/samples.json`。
+各版本目录包含 CUDA、cubin、NVRTC 日志、资源报告及 `source_01.patch`，可核实确切改动。
+所有编译完成后才开始计时，编译钩子在计时前恢复。只验证该形状不能代替最终 49 项验收。
+
+本地已检查实际 TVM 生成代码的变换、编译回调恢复和统计逻辑；本机没有 NVIDIA GPU，
+**三个变体均尚无 B300 编译/正确性/性能实测结果**。有稳定收益后再将相应改动按 step
+提交到正式内核，并补齐评分形状、短 K 与奇数 K tile 验证。
+
+## 前轮诊断：b300_diag.RA0gpm
 
 完整数据：[benchmark.log](results_b300/b300_diag.RA0gpm/benchmark.log)、
 [focus.csv](results_b300/b300_diag.RA0gpm/focus.csv)、
@@ -54,16 +133,17 @@ Step 7、10 存在非零栈帧，值得继续检查 local memory 访问和寄存
 **栈帧大小不等于动态 spill 流量，不能单凭它认定瓶颈**。还需 SASS 或 profiler 区分编译器溢出、
 局部数组和其他栈用途。后续诊断在 `cuobjdump` 可用时自动从实际二进制生成 `module_01.resources.txt`。
 
-### 本轮候选及最小复测
+### 当时的候选：128 列 TMEM
 
 Step 4、5 为空间网格，每 CTA 只使用 128 列累加器，却分配了整块 512 列 TMEM。
 PTX 规定 `tcgen05.alloc` 在资源不足时阻塞；超额分配限制同一 SM 上其他 CTA 的并行执行。
 `eebcd07`（Step 4）和 `2afab29`（Step 5）分别将分配、逻辑视图和释放改为 128 列，
 保持各 step 的流水线深度、MMA、写回及同步顺序。
-生成 kernel 主体对比确认仅 alloc/dealloc 两个参数不同；源码生成验证通过，性能收益待实测。
+生成 kernel 主体对比确认仅 alloc/dealloc 两个参数不同；最新 `tmem128.OZkJOD` 已完成复测，
+数值通过但主要耗时未改善，详见本文开头。
 Step 6–10 继续保留当前版本，等待进一步运行时证据。
 
-同步包含以上两个提交的代码后，仅复测 8 组评分形状与 Step 5 的 3 个边界用例：
+以下是该轮已执行的命令记录，无需再次重复这一轮：
 
 ```bash
 cd ~/assignment-tirx-gemm

@@ -5,7 +5,9 @@ Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
 source generation checks. User-reported B300 results at `dfc9065` pass all 49 numerical
 checks, with **36 tests passing and 13 performance assertions failing**. The Step 6
 rollback recovered the 2048-size regression; further performance work remains.
-Current Step 4/5 TMEM allocation changes require GPU revalidation.
+The latest Step 4/5 TMEM retest passes numerical checks but still fails five
+performance assertions; reducing allocation alone did not fix the main slow cases.
+`probe_step45.py` isolates three further hypotheses at size 2048 before kernel changes.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 
