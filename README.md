@@ -9,13 +9,13 @@ checks and Step 8 pass. Only Step 10 / 4096 fails: 0.139278 ms versus the
 across four shapes, but the worst 4096 sample has just 0.38% margin.
 The production CUDA/cubin matches the earlier winning cache/grid probe exactly.
 The adopted implementation is retained; passing the benchmark does not yet
-resolve the full-suite failure. The latest `step10_writeback.2bP3jK` probe has
-only four of five samples within the limit for each version. Warp-level release
-and paired TMEM loads yield only 0.054% and 0.175% paired gains and are not adopted.
-The next diagnostic compares double-buffered TMA writeback with an explicit
-three-stage input-pipeline control, preserving numerical tolerances and timing
-rules. All 369 local tool/source-generation checks pass; GPU validation of this
-experiment is pending.
+resolve the full-suite failure. In `step10_epilogue.Y2EFaW`, double-buffered
+writeback is slower than its three-stage control in all five trials and adds a
+32-byte stack frame; it is not adopted. The depth-only control passes this run
+but yields just 0.069% paired gain, and its identical cubin failed earlier runs.
+The next diagnostics independently test role-specific register budgets and
+B-first TMA requests against production. All 393 local tool/source-generation
+checks pass; GPU validation remains pending.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 

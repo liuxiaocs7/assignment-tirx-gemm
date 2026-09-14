@@ -127,7 +127,7 @@ def test_epilogue_transform_refuses_reapplication_or_old_baseline(variant, tmp_p
 
 def test_epilogue_selection_includes_depth_control_and_scores_against_it():
     variants = ['baseline', 'epilogue_depth3', 'epilogue_double_buffer']
-    assert select_variants(10) == select_variants(10, ['epilogue_double_buffer']) == variants
+    assert select_variants(10, ['epilogue_double_buffer']) == variants
     cases = [dict(step=10, size=4096, variant=v, samples_ms=s) for v, s in
              zip(variants, [[10, 20, 40], [8, 10, 20], [4, 5, 10]])]
     rows = summarize_with_cache_control(cases, {(10, 4096, 4096, 4096): 1}, 1.3)

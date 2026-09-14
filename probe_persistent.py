@@ -1,8 +1,8 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
 Step 10 production is correct but still marginal at 4096. The default compares
-the production baseline, a three-stage input-pipeline control, and double-
-buffered TMA writeback on that control. Adopted transforms refuse reapplication.
+the production baseline with independent register-budget and B-first TMA
+experiments. Adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
 All variants must verify before interleaved timing with the original CUDA-event
@@ -10,6 +10,7 @@ timer. SLOW is a measured result; numerical or compilation errors stop the run.
 """
 
 import argparse
+from contextlib import contextmanager
 import csv
 import difflib
 import hashlib
@@ -34,11 +35,12 @@ STEP_VARIANTS = {
          "cache_tmem_base", "reuse_wait_64ns", "ring_wait_64ns",
          "cache_unroll_ring", "cache_mma_no_unroll", "cache_balanced_clusters",
          "balanced_depth3", "balanced_depth3_epi128", "balanced_fused_a",
-         "warp_release", "paired_tmem_loads", "epilogue_depth3", "epilogue_double_buffer"),
+         "warp_release", "paired_tmem_loads", "epilogue_depth3", "epilogue_double_buffer",
+         "role_registers", "tma_b_first"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "epilogue_depth3", "epilogue_double_buffer")}
+                         10: ("baseline", "role_registers", "tma_b_first")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -65,6 +67,8 @@ VERIFICATION_SHAPES = {
     "paired_tmem_loads": ((4096, 3072, 64), (4096, 3072, 320)),
     "epilogue_depth3": DEPTH3_VERIFY_SHAPES,
     "epilogue_double_buffer": DEPTH3_VERIFY_SHAPES,
+    "role_registers": ((4096, 3072, 64), (4096, 3072, 320)),
+    "tma_b_first": ((4096, 3072, 64), (4096, 3072, 320)),
 }
 
 
@@ -223,6 +227,78 @@ def double_buffer_epilogue(source):
     return replace_once(source, before, after)
 
 
+def repartition_role_registers(source):
+    """Trade unused producer registers for more writeback scheduling room."""
+    if "T.ptx.setmaxnreg(" in source:
+        raise ValueError("register budgets are already applied")
+    # All 128 threads in a WG participate, before election or role divergence.
+    # WG2 can yield while the other WGs wait; no CTA barrier may precede it.
+    # 128 * (64 + 208 + 208) = 61,440 registers across the three WGs.
+    marker = "        pool.commit()\n"
+    return replace_once(source, marker, marker + '''
+        if wg_id == 2:
+            T.ptx.setmaxnreg(False, 64)
+        else:
+            T.ptx.setmaxnreg(True, 208)
+''')
+
+
+def load_shared_b_first(source):
+    """Reorder independent TMA requests; keep the same byte-count barrier."""
+    start = "        def tma_load(k_st):\n"
+    end = "\n        if wg_id == 2:\n"
+    if source.count(start) != 1 or source.count(end) != 1:
+        raise ValueError("expected one TMA loader and role boundary")
+    prefix, rest = source.split(start)
+    block, suffix = rest.split(end)
+    split = "            Tx.copy_async(Bsmem[tma_phase.stage, :, :],\n"
+    if block.count(split) != 1 or not block.startswith("            for consumer in T.unroll(NUM_CONSUMER):\n"):
+        raise ValueError("expected A-first TMA loader")
+    a_loads, b_tail = block.split(split)
+    b_load = split + b_tail
+    if b_load.count("Tx.copy_async(") != 1 or a_loads.count("Tx.copy_async(") != 1:
+        raise ValueError("unexpected TMA operand requests")
+    return prefix + start + b_load + a_loads + end + suffix
+
+
+@contextmanager
+def check_role_register_budget(variant, directory):
+    """Reject an insufficient initial register pool before the first launch."""
+    if variant != "role_registers":
+        yield
+        return
+    import tvm_ffi
+
+    name = "tvm_callback_cuda_compile"
+    original = tvm_ffi.get_global_func(name)
+
+    def compile_cuda(code):
+        binary = original(code)  # Outer capture writes this cubin's resources.
+        report = directory / "module_01.resources.txt"
+        text = report.read_text() if report.exists() else ""
+        matches = re.findall(r"\bREG:(\d+)\b", text)
+        if len(matches) != 1:
+            raise RuntimeError("role_registers needs cuobjdump resource usage before launch")
+        initial = int(matches[0])
+        # The three 128-thread WGs request 64/208/208 registers. Inc may
+        # block until WG2 releases, but cannot succeed if the CTA pool is too
+        # small. Also enforce the PTX inc/dec direction preconditions.
+        required = 128 * (64 + 208 + 208)
+        valid = 64 <= initial <= 208 and initial * 384 >= required
+        write_json(directory / "register_budget.json", dict(
+            initial_registers=initial, threads=384, requested_registers=required,
+            budgets=[208, 208, 64], valid=valid))
+        if not valid:
+            raise RuntimeError(f"role_registers initial REG:{initial} cannot support 64/208/208; not launched")
+        return binary
+
+    tvm_ffi.register_global_func(name, compile_cuda, override=True)
+    try:
+        yield
+    finally:
+        tvm_ffi.register_global_func(name, original, override=True)
+
+
 def stream_epilogue(source):
     """Retain only EPI_N FP16 values, releasing TMEM after the final chunk."""
     source = replace_once(source, "            Dreg_f16 = T.alloc_local((MMA_N,), d_type)\n",
@@ -286,6 +362,11 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant in ("role_registers", "tma_b_first"):
+        if "mma_tmem_base: T.let" not in source or "TILES_PER_CLUSTER =" not in source:
+            raise ValueError("role experiments require the adopted Step 10 cache/grid baseline")
+        transform = repartition_role_registers if variant == "role_registers" else load_shared_b_first
+        return transform(source)
     if variant in ("epilogue_depth3", "epilogue_double_buffer"):
         if "mma_tmem_base: T.let" not in source or "TILES_PER_CLUSTER =" not in source:
             raise ValueError("epilogue experiments require the adopted Step 10 cache/grid baseline")
@@ -558,7 +639,7 @@ def main(argv=None):
             kernel = build_variant(step, (args.size,) * 3, variant, directory)
             output = torch.full((args.size, args.size), float("nan"), dtype=A.dtype, device=A.device)
             with target:
-                with capture_compilation(directory), source_experiment(
+                with capture_compilation(directory), check_role_register_budget(variant, directory), source_experiment(
                     step, variant, directory, transform=variant_source
                 ) as calls:
                     executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
@@ -586,7 +667,7 @@ def main(argv=None):
                 va, vb, _ = prepare_data(*shape)
                 output = torch.full((shape[0], shape[1]), float("nan"), dtype=va.dtype, device=va.device)
                 with target:
-                    with capture_compilation(directory), source_experiment(
+                    with capture_compilation(directory), check_role_register_budget(variant, directory), source_experiment(
                         step, variant, directory, transform=variant_source
                     ) as calls:
                         executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")

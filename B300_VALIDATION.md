@@ -1,6 +1,78 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step10_writeback.2bP3jK
+## 最新结果：step10_epilogue.Y2EFaW
+
+数据：[summary](results_b300/step10_epilogue.Y2EFaW/step10/summary.csv)、
+[samples](results_b300/step10_epilogue.Y2EFaW/step10/samples.json)、
+[run.json](results_b300/step10_epilogue.Y2EFaW/step10/run.json)。
+版本 `a6e820d`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+七个源码指纹、九份 builder/编译 CUDA 指纹及六份边界验算记录核对通过。
+所有版本通过数值校验，两个实验的矩形 K=64/192/320 均完成两次不计时验算。
+
+### 双缓冲增加了栈开销，未带来性能收益
+
+| 版本 | 中位数 ms | 最大值 ms | 达标轮次 | 直接对照 | 同轮加速比 | REG / STACK |
+|---|---:|---:|---:|---|---:|---:|
+| baseline | 0.138462 | 0.139356 | 3/5 | baseline | 1.000000× | 167 / 0 |
+| epilogue_depth3 | 0.138224 | 0.138671 | 5/5 | baseline | 1.000694× | 167 / 0 |
+| epilogue_double_buffer | 0.139356 | 0.140256 | 2/5 | epilogue_depth3 | 0.991879× | 168 / 32 |
+
+双缓冲五轮都慢于直接对照，同轮耗时增加的中位数约 **0.82%**，不采用。
+SASS 的 `DEPBAR.LE` 静态位置由 6 减至 5，但新增 **8 处 STL / 8 处 LDL** 和
+**32 字节栈帧**。三个版本都有八处 `LDTM.x32`、四处 `UTMASTG.2D` 和 16 处
+`UTCHMMA.2CTA`。减少等待的同时增加了寄存器压力；这些结果说明本次双缓冲实现
+没有净收益，不能据此断定所有写回重叠方案都无效。
+
+三级对照本轮虽然 5/5 达标，最慢样本余量 **0.31%**，但只在三轮快于 baseline，
+同轮加速中位数仅 **0.069%**。它的 CUDA、cubin 和 NVRTC 参数与此前
+`step10_depth3.1zWPNg` 的 `balanced_depth3` 完全一致，后者五轮均超限。
+baseline 的编译产物也与正式采用时相同。因此不以本轮 PASS 宣称三级输入解决了
+稳定性问题。生产继续保持四级输入、单写回缓冲区；最新全量仍为 **56/57**。
+
+### 下一轮：角色寄存器预算与 TMA 发射顺序
+
+三个可区分的假设按优先级为：
+
+1. 若统一寄存器分配限制写回指令调度，TMA/MMA warpgroup 释放多余配额、两个
+   写回 warpgroup 获得更多配额后，耗时应下降；若 64 个寄存器不足以容纳 producer，
+   可能出现新的 spill，需检查实际 cubin 和计时。
+2. 若两个 consumer 共享的 B 请求完成较晚，改为先发 B 再发 A0/A1 应缩短同一
+   full barrier 的就绪延迟。请求数、字节数和 barrier 不变，没有收益即停止该方向。
+3. 若以上微调仍无明显收益，输入/MMA tile 的形状或供给粒度更可能限制吞吐；下一步
+   再测 tile 结构变化，本轮不将它与前两项叠加。
+
+默认比较 `baseline`、`role_registers`、`tma_b_first`，两项实验均直接对照正式 baseline：
+
+- `role_registers`：在角色分歧、线程选举和初始化同步之前，整个 WG2 执行
+  `setmaxnreg.dec 64`，WG0/WG1 各执行 `setmaxnreg.inc 208`。请求总量为
+  `128 × (64 + 208 + 208) = 61,440`；该预算不代表改变 occupancy。
+  两个 inc 可以等到 WG2 释放配额；释放路径前无 CTA barrier，避免相互等待。
+  编译回调在首次启动前读取实际 cubin 的 REG，要求初始配额满足 PTX 方向限制及
+  CTA 总量（当前预算要求 160–208）；不能读取或不满足则停止，并保存判断记录。
+- `tma_b_first`：每级从 A0/A1/B 改为 B/A0/A1；TMA 地址、字节数、expect_tx 的位置、
+  MMA、写回、所有 phase 与同步均保持不变。
+
+寄存器语义依据 [NVIDIA PTX setmaxnreg](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#miscellaneous-instructions-setmaxnreg)：
+配额池属于 CTA，inc 可能阻塞，同一 warpgroup 的所有 warp 必须执行同一指令。
+本实验使用 TVM 0.26 的 intrinsic；不改变全局编译选项。SASS 和资源报告用于确认
+提示实际生效及是否引入 spill，源码生成不能替代该验证。
+
+两个实验保留四级 K64 流水线、230,400 字节动态 SMEM、缓存基址和均衡网格；
+计时前对矩形 K=64/320 各两次验算，再用原 10 warmup / 30 repeat / 五轮交错计时。
+完整本地工具/源码生成回归 **393 项通过，181.16 s**，新增检查覆盖两个架构、四个评分
+尺寸、矩形边界、单 tile，以及寄存器配额不足/资源报告缺失时拦截和恢复编译回调。
+**尚无新实验的 GPU 数值或性能结果，生产内核不变。**
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_roles.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：step10_writeback.2bP3jK
 
 数据：[summary](results_b300/step10_writeback.2bP3jK/step10/summary.csv)、
 [samples](results_b300/step10_writeback.2bP3jK/step10/samples.json)、
@@ -28,7 +100,7 @@ SASS 确认聚合到达变成带 count 的 `SYNCS.ARRIVE.TRANS64.RED.ART0`；成
 16 处 `UTCHMMA.2CTA`，没有 `LDL`/`STL`。这次结果不支持栈溢出解释，也表明这两处
 调整尚不足以解决剩余失败。
 
-### 下一轮：双缓冲 TMA 写回
+### 已完成实验：双缓冲 TMA 写回
 
 按当前证据保留三个可区分的假设：
 
@@ -59,7 +131,7 @@ producer 协议、FP16 转换、输出坐标和原性能门槛保持不变。
 本地新增 17 项检查已通过，包括两个架构、四个评分尺寸、矩形 K=64/192/320，
 并从实际 CUDA 检查缓冲区覆盖、固定发射线程、最迟完成条件下的复用和最终排空顺序。
 完整本地工具/源码生成回归 **369 项通过，158.24 s**。
-**双缓冲尚无 GPU 编译、数值或性能结果，生产内核不变。**
+随后 GPU 结果见本文最新记录；双缓冲未采用，生产内核不变。
 工具在计时前对三级对照和双缓冲各做三种矩形形状、每种两次验算；之后五轮交错计时。
 
 ```bash
