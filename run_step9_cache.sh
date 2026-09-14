@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Compare one isolated Step 9 cache change against the accepted production kernel.
+# Historical comparison: replay at 3a9d486, before Step 9 cache adoption.
+# Current production validation: bash run_step9_validate.sh.
 set -uo pipefail
 
 tirx_sizes=(1024 2048 4096 8192)

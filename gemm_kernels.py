@@ -1144,7 +1144,11 @@ def hgemm_v9(M, N, K):
         T.ptx.fence.mbarrier_init()
         T.cuda.cta_sync()
         T.cuda.cluster_sync()
-        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=tmem_addr[0],
+        # The allocation is immutable after publication. Reuse its base so
+        # MMA memory clobbers do not force a shared-memory load each stage.
+        # B300 AB/BA rechecks: about 1.2% at 4096 and 2.0% at 8192.
+        mma_tmem_base: T.let = tmem_addr[0]
+        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=mma_tmem_base,
             layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
 
         tile_scheduler = ClusterPersistentScheduler2D(

@@ -17,16 +17,18 @@
 | 6 | 常驻 CTA、L2 友好调度、跨 tile 保留 phase | 教程 Step 6 |
 | 7 | TMA / MMA / 写回分工 | 教程 Step 7 |
 | 8 | K64 四级流水线、分块写回、等待提示与 TMEM 基址缓存 | 教程在后续 cluster 中使用四级流水线 |
-| 9 | 双 CTA 协作，cluster 输出 256×256 | 教程 Step 8 |
+| 9 | 双 CTA 协作，cluster 输出 256×256，缓存 TMEM 基址 | 教程 Step 8 |
 | 10 | 两个 MMA consumer 共享 B，按输出量选择 512×128/256 及 TMEM 单/双缓冲 | 教程 Step 9 |
 
-**当前正式版本在本次 B300 分配下验收通过。** 最终结果
+**已验收基线保留；新增 Step 9 基址缓存已移植，采用后回归待执行。** 历史结果
 [step10_final.vM3h3I](results_b300/step10_final.vM3h3I/) 在 `6e5f5f4`、Slurm
 job 27503 / step 0 执行：全量 pytest **57 passed，76.59 s**；正式 Step 10
 四个尺寸全部 PASS，原始计时样本 **28/28 达标**，两个退出码均为 0。
 4096 最慢为 **0.094208 ms**，相对 0.139100 ms 门槛有 **32.27%** 余量。
 
-正式内核仍为 `d283549` 采用的配置，四尺寸 CUDA/cubin 与首次验收逐字节一致。
+Step 10 保持 `d283549` 采用的配置，其已记录四尺寸 CUDA/cubin 与首次验收一致。
+本次仅改变 Step 9：AB/BA 复核在 4096/8192 均 7/7 更快，约 1.25%/2.00%；
+已移植同一缓存改动，下一步按下文运行一次全量 pytest 与正式 Step 9 benchmark。
 历史 `ea69b2c` 五轮全步骤 benchmark 中 4096 的两次 SLOW 仍保留；本次验收
 限定于记录的 GPU 与运行条件。共享 A 五级在前次 201 轮诊断中有约 0.44%
 直接配对信号，但旧测量顺序存在位置偏置，尚未确认归因或采用。
@@ -40,17 +42,19 @@ job 27503 / step 0 执行：全量 pytest **57 passed，76.59 s**；正式 Step 
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
 （覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调、角色插桩及硬件采集入口，
-review 报告在 `c788f3a` 完整运行 **636 passed**；本轮覆盖 **311 个不同用例**：
+review 报告在 `c788f3a` 完整运行 **636 passed**；`3a9d486` 覆盖 **311 个不同用例**：
 相关回归 230 passed，候选生成检查 79 passed，随后扩充 CLI 检查并重跑
-21 passed（其中 19 项与前述重叠）。未重跑完整工具集。
+21 passed（其中 19 项与前述重叠）。本次 Step 9 移植相关回归为
+**170 passed，81.86 s**，含四尺寸/六边界的已测 CUDA 与 TMA 描述符重放。
+未重跑完整工具集。
 依赖 TVM 的用例在没有 TVM 时跳过，跳过不能作为源码生成通过）。
 
 主文件保持自包含。原作业提交说明只收 `gemm_kernels.py`，但当前实现使用
 TVM 0.26，不能据此推断兼容旧 `mlc-ai-tirx-cu130==0.0.1b2` grader；若要
 提交原课程平台，需先核对实际 grader 依赖与调用接口。新增测试覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个评分用例不变。
-review 后新增五个 Step 10 分支边界用例，当前全量为 62 项，其中新增五项
-尚待 B300 验证。可单独运行：
+review 后新增五个 Step 10 分支边界用例，用户已回传 B300 **5 passed，10.22 s**。
+当前全量为 62 项；历史 57 项验收与新增五项通过是分开的运行。以下命令仅供重放：
 
 ```bash
 uv run python -m pytest tests/test_step10.py -k dispatch_boundaries -vs --tb=short
@@ -60,9 +64,10 @@ uv run python -m pytest tests/test_step10.py -k dispatch_boundaries -vs --tb=sho
 
 历史验收内核提交为 `d2835492913d94532bcd160ea79891a8f0e9d836`，SHA256 为
 `5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c`。
-review 后仅增加/更正内核注释，当前 SHA256 为
+review 后仅增加/更正内核注释，`3a9d486` 的 SHA256 为
 `1a06fa5715eda5567a5635eb285480ef8c0f2dc67e85da65cf38e6fc57052f85`，
-Python AST 不变，生成代码通过现有已测版本重放检查。
+该次 Python AST 不变。当前 Step 9 缓存移植后的 SHA256 为
+`727a44403b6c1ea0a0499c8212e5796d0fa2b31944929e9ecd50d60be4b961f2`。
 以下是最新正式 Step 10 benchmark 汇总，四个尺寸均为 7/7 样本达标。
 首次验收与中间超线结果保留在 [验证历史](B300_VALIDATION.md) 中：
 
@@ -77,7 +82,8 @@ Python AST 不变，生成代码通过现有已测版本重放检查。
 数时才启用双槽；其余用宽 N。接口对齐要求、两 consumer 结构、四级 K64、计时器
 和原评分门槛均不变。该规则的性能证据覆盖以上四方阵，不能外推任意矩形和 K。
 
-下面命令用于未来内核改动后验收或独立复现；当前正式验收已完成，无需重复。
+下面命令用于 Step 10 改动后验收或独立复现；本次 Step 9 移植请使用
+`bash run_step9_validate.sh`，无需同时重复此处的 Step 10 多轮流程。
 保证 Slurm 分配的剩余时间覆盖编译、benchmark 和全量测试（已展示的每轮
 全量约 76 s），各 GPU 任务顺序执行。每次命令记录源码指纹、作业 ID、日志及退出码；
 `pipefail` 防止 `tee` 掩盖测试失败。保留所有轮次，包括失败结果。
@@ -131,39 +137,31 @@ probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder�
 
 ### 可选优化：Step 9 缓存 TMEM 基址
 
-当前正式验收已通过。可选独立候选
-`cluster_cache_tmem_base`：在初始化的 CTA/cluster 同步之后读取一次 TMEM
-基址，用于后续 MMA 和读回，保留 Step 9 的四级输入、单 consumer、网格与
-同步协议。首轮 [step9_cache.1WDeei](results_b300/step9_cache.1WDeei/) 已完成
-四尺寸和边界验证，56/56 计时样本达标。4096/8192 配对加速约
-1.0146×/1.0201×，但旧顺序七轮都先测 baseline，暂不采用。
+**缓存已移植到正式 Step 9，采用后的全量回归尚未执行。**
+在初始化的 CTA/cluster 同步之后读取一次 TMEM 基址，后续 MMA 和读回复用；
+四级输入、单 consumer、网格与同步协议不变。
 
-同步修复后的代码，在 B300 仓库目录仅复核这两个尺寸：
+首轮 [step9_cache.1WDeei](results_b300/step9_cache.1WDeei/) 四尺寸和边界验证
+通过。后续 `3a9d486` 的 AB/BA 终端结果为 4096 **1.012452×**、8192
+**1.019953×**，两尺寸均 7/7 更快，且分别按 AB/BA 分组仍有收益。
+两个新结果目录 `step9_cache.EWrE9G` / `step9_cache.BBJEQB` 尚未同步到本地，
+这里使用终端数据，尚未核对其完整精度 CSV、GPU UUID 与 cubin。
+
+同步采用代码后，在 B300 仓库目录运行一次：
 
 ```bash
-bash run_step9_cache.sh --size 4096
-bash run_step9_cache.sh --size 8192
+bash run_step9_validate.sh
 ```
 
-不带参数时脚本测试全部四尺寸。每个尺寸包含正式 baseline 与一个缓存
-候选，各测七轮，warmup=10、repeat=30；修复后为 AB/BA 交替，即七轮
-4 次 baseline 先测、3 次候选先测，顺序保存在 `samples.json`。
-自动记录版本、CUDA 设备 UUID、
-前后 GPU 快照、日志及 probe/tee 退出码；结果放在 `results_b300/step9_cache.*`。
-每个尺寸计时前，还校验单 tile、矩形 K64/192/256/320，以及 9×9 cluster
-tile 网格的部分 L2 分组，每组执行两次。已有四尺寸首轮数据，本次先确认
-大尺寸收益是否在两种先后顺序下都出现，再确定候选采用范围。
+脚本运行全量 **62 项 pytest**，再执行正式 Step 9 四尺寸 benchmark，
+各七轮、warmup=10、repeat=30。结果保存在 `results_b300/step9_adopt.*`，
+包括版本、SHA256、GPU UUID、前后快照、两条命令及 tee 的退出码、CSV、
+CUDA/cubin。benchmark 继续用 kernel/cuBLAS 的 AB/BA 顺序并保存配对样本。
+全部通过后记录本次采用验收通过；保留失败或超线结果，不改变原评分门槛。
 
-底层调用是 `probe_persistent.py --steps 9 --variants cluster_cache_tmem_base`。
-baseline 是直接对照，默认不启用候选；工具不修改 `gemm_kernels.py`。SLOW
-保留为有效测量，数值、编译或日志写入错误会停止脚本。重点比较配对耗时、
-全部原始样本和 cubin/SASS 资源；若没有可重复收益或出现其他尺寸退化，就保留
-正式实现。候选采用后再运行全量 pytest 与正式 Step 9 benchmark。
-
-本地 TVM 0.26 检查覆盖 SM100a/SM103a 的十组形状，确认缓存值代回后整个
-CUDA 函数体和 TMA 描述符与 baseline 一致，动态 SMEM 仍为 148480 bytes。
-新增测试 **22 passed**，相关旧实验回归 **102 passed**；脚本通过语法检查和
-八种模拟调用/故障场景。它们没有执行 NVIDIA GPU 数值或性能测量。
+不再对当前 builder 执行 `--variants cluster_cache_tmem_base`，工具会拒绝
+重复采用。若需要重放旧对照，在 `3a9d486` 的独立 checkout 中运行
+`bash run_step9_cache.sh [--size 4096|8192]`，不要混用新旧 baseline。
 
 ### 共享 A 五级采用前验证
 
@@ -587,7 +585,7 @@ python -m pytest tests/ -xvs
 3. 预热 10 次，CUDA event 测量 30 次，要求平均耗时不超过参考值的 `1.30` 倍。
 
 其余 25 个边界用例只检查正确性，没有任意新增性能门槛。
-历史验收覆盖其中 20 项；review 后新增五项尚待 B300 运行。
+历史全量验收覆盖其中 20 项；review 后新增五项已单独在 B300 通过。
 默认随机种子是 0；通过后可换种子检查稳定性：
 
 ```bash

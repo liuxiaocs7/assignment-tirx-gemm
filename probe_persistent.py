@@ -7,8 +7,8 @@ Explicit tmem_input_* / tmem_k128_depth2 probes vary the input ring only for
 the current double-buffered narrow path, retaining single-slot/wide fallbacks.
 Explicit tmem_share_a_depth* probes place the two consumers along N to reuse A,
 then compare five/six input stages on that layout.
-Step 9's cluster_cache_tmem_base snapshots the allocation after cluster sync,
-leaving the single-consumer pipeline, layouts and scheduling unchanged.
+Step 9 has adopted cluster_cache_tmem_base after AB/BA rechecks. Replay that
+comparison at 3a9d486; use benchmark.py --steps 9 for the current production path.
 Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.

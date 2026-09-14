@@ -1,8 +1,9 @@
 # Assignment: Blackwell GEMM Kernel Optimization
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` use Apache TVM
-**0.26.0** for SM100/SM103. **The production version passed acceptance on the
-current B300 allocation:** the full pytest suite reports **57 passed**, and the
+**0.26.0** for SM100/SM103. **The previous baseline passed B300 acceptance;
+the newly adopted Step 9 cache is awaiting formal regression.** The recorded
+full pytest suite reports **57 passed**, and the
 official Step 10 benchmark passes all four sizes and **28/28 individual timing
 samples**. Results are in [step10_final.vM3h3I](results_b300/step10_final.vM3h3I/),
 executed at `6e5f5f4` on Slurm job 27503, step 0. Step 10 / 4096 has median
@@ -10,25 +11,33 @@ executed at `6e5f5f4` on Slurm job 27503, step 0. Step 10 / 4096 has median
 giving **32.27%** margin at the slowest sample. Both command exit codes are 0.
 
 Step 10 uses N128/EPI32 up to output area 4096², with double TMEM buffering when
-persistent reuse is needed; larger outputs retain N256/EPI64. Production kernels
-remain those adopted at `d283549`: all four sizes' CUDA and cubin files match
+persistent reuse is needed; larger outputs retain N256/EPI64. Step 10 remains
+as adopted at `d283549`: all four sizes' recorded CUDA and cubin files match
 the first formal acceptance run byte for byte. The original thresholds and
 CUDA-event timer remain unchanged. The review reported **636 passed** for the
 full local tool suite at `c788f3a`; the subsequent timing-order fix passed
 **311 distinct relevant tool/source-generation checks** across targeted runs.
-These are separate from GPU acceptance.
-Kernel comments have since been clarified without changing the Python AST.
-Five additional Step 10 GPU boundary tests are pending (62 tests in the full suite);
-the recorded 57-pass acceptance does not cover those new cases.
+These are separate from GPU acceptance. The Step 9 adoption passed **170 relevant
+tool/source-generation checks**, including replay of the recorded cache builder,
+CUDA and TMA descriptors. Other nine kernel builders are unchanged from `3a9d486`.
+The user also reported **5 passed** for the added Step 10 GPU boundary tests.
+The full suite now has 62 tests; those separate runs are not one 62-pass acceptance.
+
+Step 9 now snapshots the immutable TMEM allocation after cluster synchronization.
+AB/BA rechecks at `3a9d486` showed about **1.25% / 2.00%** paired speedup for
+4096/8192, with the cache faster in all seven trials at each size. Small sizes
+were nearly flat in the initial four-size run. The new rechecks are documented
+from user-provided terminal output; their result directories are not yet local.
+Run `bash run_step9_validate.sh` on B300 for the adopted version's full pytest
+and formal four-size Step 9 benchmark before recording new acceptance.
 
 Historical Step 10 / 4096 timing failures remain documented, including two of
 five all-step benchmarks above the limit. The current result establishes
 acceptance for the recorded GPU and conditions, not every allocation. Shared-A
 depth 5 showed a small **1.004371×** paired signal against its direct control in the
 201-trial diagnostic run, but review found a position bias in its measurement order.
-Step 9's cache candidate similarly needs an AB/BA recheck. Neither candidate has been
-adopted. Further candidate validation is optional and is not required to complete
-the current acceptance.
+Shared-A remains experimental. Its further validation is optional and does not
+affect the previous baseline's acceptance or Step 9 cache adoption.
 
 Probe order now balances candidate positions over complete cycles, and the formal
 benchmark alternates kernel/cuBLAS order and records paired samples. Earlier
