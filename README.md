@@ -16,12 +16,13 @@ The five accepted full runs below remain valid; performance stability
 in later conditions remains unresolved. This focused reproduction is complete.
 See [RUNNING.md](RUNNING.md) and [the latest evidence](B300_VALIDATION.md).
 
-**Current software optimization:** run `bash run_step10_epilogue.sh` to compare
-the production Step 10 / 4096 kernel with 64-column, 128-column, and double-buffered
-32-column output staging. All retain the current four-stage shared-B input path
-and original CUDA-event timer. These are unmeasured candidates; GPU verification
-precedes eight balanced timing trials. Device-policy investigation is not a
-prerequisite for this work. See RUNNING.md for the exact scope and checks.
+**Latest software experiment:** [output staging](results_b300/step10_epilogue.xVWC2d/)
+is complete. All three candidates lose every pair to production, increasing paired
+latency by 1.12%–2.98%; none is adopted. Baseline meets the limit in only 2/8 samples.
+The next isolated candidate separates B/A0/A1 input-ready notifications while
+retaining shared B, four input stages, both-consumer input release, and the original
+timer. After syncing the changes, run `bash run_step10_ready.sh`. This candidate
+has no B300 measurements yet. See RUNNING.md for scope and verification.
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` use Apache TVM
 **0.26.0** for SM100/SM103. **The five complete runs at `9e3b989` all pass:

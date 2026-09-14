@@ -11,6 +11,8 @@ Explicit tmem_l2_group* probes change only tile ordering on the current
 double-buffered narrow path, retaining the production group-eight fallbacks.
 Explicit tmem_epi* probes batch or double-buffer output stores on that path,
 retaining four input stages and the original single-slot/wide fallbacks.
+Explicit tmem_split_ready separates B/A0/A1 completion notifications while
+retaining the shared input-free barrier and all data buffers on that path.
 Step 9 has adopted cluster_cache_tmem_base after AB/BA rechecks. Replay that
 comparison at 3a9d486; use benchmark.py --steps 9 for the current production path.
 Historical experiments are explicit; adopted transforms refuse reapplication.
@@ -38,6 +40,7 @@ from probe_step10_geometry import (GEOMETRY_CONFIGS, GEOMETRY_CONTROLS,
                                    GEOMETRY_VERIFY_SHAPES, geometry_builder_source)
 from probe_step10_epilogue import (EPILOGUE_CONFIGS, EPILOGUE_CONTROLS,
                                    EPILOGUE_VERIFY_SHAPES, epilogue_builder_source)
+from probe_step10_ready import READY_VARIANT, READY_VERIFY_SHAPES, ready_builder_source
 
 
 STEP_VARIANTS = {
@@ -59,7 +62,7 @@ STEP_VARIANTS = {
          "tmem_input_depth2", "tmem_k128_depth2", "tmem_input_depth5",
          "tmem_share_a_depth5", "tmem_share_a_depth6",
          "tmem_l2_group4", "tmem_l2_group2", "tmem_l2_group1", *GEOMETRY_CONFIGS,
-         *EPILOGUE_CONFIGS),
+         *EPILOGUE_CONFIGS, READY_VARIANT),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
@@ -92,7 +95,7 @@ EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
                        "tmem_share_a_depth5": "tmem_input_depth5",
                        "tmem_share_a_depth6": "tmem_share_a_depth5",
                        **{f"tmem_l2_group{g}": "baseline" for g in (4, 2, 1)},
-                       **GEOMETRY_CONTROLS, **EPILOGUE_CONTROLS}
+                       **GEOMETRY_CONTROLS, **EPILOGUE_CONTROLS, READY_VARIANT: "baseline"}
 CURRENT_INPUT_VARIANTS = ("tmem_input_depth2", "tmem_k128_depth2", "tmem_input_depth5")
 SHARE_A_VARIANTS = ("tmem_share_a_depth5", "tmem_share_a_depth6")
 CURRENT_L2_VARIANTS = {f"tmem_l2_group{g}": g for g in (4, 2, 1)}
@@ -147,6 +150,7 @@ VERIFICATION_SHAPES = {
        for variant in CURRENT_L2_VARIANTS},
     **{variant: GEOMETRY_VERIFY_SHAPES for variant in GEOMETRY_CONFIGS},
     **{variant: EPILOGUE_VERIFY_SHAPES for variant in EPILOGUE_CONFIGS},
+    READY_VARIANT: READY_VERIFY_SHAPES,
 }
 
 
@@ -664,6 +668,8 @@ def variant_builder_source(source, step, variant):
         return geometry_builder_source(source, variant)
     if step == 10 and variant in EPILOGUE_CONFIGS:
         return epilogue_builder_source(source, variant)
+    if step == 10 and variant == READY_VARIANT:
+        return ready_builder_source(source)
     if step == 10 and variant != "baseline" and "    NARROW_N =" in source:
         raise ValueError("Step 10 has adopted workload-based narrow N and TMEM buffering; "
                          "validate with benchmark.py --steps 10 and tests/test_step10.py. "
@@ -1074,6 +1080,7 @@ def main(argv=None):
                     probe_step45_sha256=hashlib.sha256(Path(__file__).with_name("probe_step45.py").read_bytes()).hexdigest(),
                     probe_step10_geometry_sha256=hashlib.sha256(Path(__file__).with_name("probe_step10_geometry.py").read_bytes()).hexdigest(),
                     probe_step10_epilogue_sha256=hashlib.sha256(Path(__file__).with_name("probe_step10_epilogue.py").read_bytes()).hexdigest(),
+                    probe_step10_ready_sha256=hashlib.sha256(Path(__file__).with_name("probe_step10_ready.py").read_bytes()).hexdigest(),
                     profile_persistent_sha256=hashlib.sha256(Path(__file__).with_name("profile_persistent.py").read_bytes()).hexdigest(),
                     steps=list(selected), size=args.size, variants=selected,
                     verification_shapes={v: VERIFICATION_SHAPES[v] for variants in selected.values()

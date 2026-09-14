@@ -56,6 +56,8 @@ EXPERIMENTS = [
     ("s10_n64depth5_total", "step10_geometry.PywrmG/step10_4096", 10, "baseline", "tmem_n64_depth5", "not_adopted"),
     ("s10_batch_fixed", "step10_mma_unroll4.iR07fS/step10", 10, "mma_unroll4", "mma_batch_unroll4", "not_adopted"),
     ("s10_shared_a", "step10_share_a_state.fGOjDy/step10", 10, "tmem_input_depth5", "tmem_share_a_depth5", "candidate_not_adopted"),
+    *[(f"s10_{v}", "step10_epilogue.xVWC2d/step10_4096", 10, "baseline", f"tmem_{v}", "not_adopted")
+      for v in ("epi64", "epi128", "epi32_double")],
 ]
 
 

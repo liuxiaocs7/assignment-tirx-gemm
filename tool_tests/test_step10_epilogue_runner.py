@@ -11,9 +11,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize('runner,variants', [
+    ('run_step10_epilogue.sh', ['tmem_epi64', 'tmem_epi128', 'tmem_epi32_double']),
+    ('run_step10_ready.sh', ['tmem_split_ready']),
+])
 @pytest.mark.parametrize('failure', ['', 'device', 'probe', 'tee', 'snapshot'])
-def test_epilogue_runner_saves_failures_and_balanced_command(tmp_path, failure):
-    shutil.copy2(ROOT / 'run_step10_epilogue.sh', tmp_path)
+def test_epilogue_runner_saves_failures_and_balanced_command(tmp_path, failure, runner, variants):
+    shutil.copy2(ROOT / runner, tmp_path)
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     uv = bin_dir / 'uv'
@@ -36,7 +40,7 @@ sys.exit(4 if os.environ['TEST_FAILURE']=='device' else 0)
         tee.write_text('#!/bin/sh\ncat > "$1"\nexit 5\n')
         tee.chmod(0o755)
     env = dict(os.environ, PATH=f'{bin_dir}:{os.environ["PATH"]}', TEST_FAILURE=failure)
-    result = subprocess.run(['bash', 'run_step10_epilogue.sh'], cwd=tmp_path, env=env,
+    result = subprocess.run(['bash', runner], cwd=tmp_path, env=env,
                             capture_output=True, text=True, timeout=15)
     run, = (tmp_path / 'results_b300').iterdir()
     calls = [json.loads(line) for line in (tmp_path / 'calls.jsonl').read_text().splitlines()]
@@ -49,16 +53,16 @@ sys.exit(4 if os.environ['TEST_FAILURE']=='device' else 0)
     assert probe[probe.index('--size')+1] == '4096'
     for key, value in [('--trials', '8'), ('--warmup', '10'), ('--repeat', '30')]:
         assert probe[probe.index(key)+1] == value
-    assert probe[probe.index('--variants')+1:probe.index('--output')] == [
-        'tmem_epi64', 'tmem_epi128', 'tmem_epi32_double']
+    assert probe[probe.index('--variants')+1:probe.index('--output')] == variants
     assert (run / 'gpu_after.txt').exists()
     assert (run / 'overall_exitcode.txt').read_text().strip() == str(int(bool(failure)))
     assert (run / 'pipeline.txt').read_text().strip() == (
         f'probe={3 if failure == "probe" else 0} tee={5 if failure == "tee" else 0}')
 
 
-def test_bad_arguments_exit_before_any_run(tmp_path):
-    shutil.copy2(ROOT / 'run_step10_epilogue.sh', tmp_path)
-    result = subprocess.run(['bash', 'run_step10_epilogue.sh', '--unexpected'], cwd=tmp_path,
+@pytest.mark.parametrize('runner', ['run_step10_epilogue.sh', 'run_step10_ready.sh'])
+def test_bad_arguments_exit_before_any_run(tmp_path, runner):
+    shutil.copy2(ROOT / runner, tmp_path)
+    result = subprocess.run(['bash', runner, '--unexpected'], cwd=tmp_path,
                             capture_output=True, text=True, timeout=5)
     assert result.returncode == 2 and not (tmp_path / 'results_b300').exists()

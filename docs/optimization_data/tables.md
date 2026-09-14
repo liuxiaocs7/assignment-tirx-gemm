@@ -59,3 +59,6 @@
 | s10_n64depth5_total | 0.109001 → 0.135395 | 0.805065× | -24.217% | 0/8 | 4/8 | 是 | [JSON](../../results_b300/step10_geometry.PywrmG/step10_4096/samples.json) |
 | s10_batch_fixed | 0.138352 → 0.138343 | 0.998207× | -0.180% | 2/5 | 3/5 | 否 | [JSON](../../results_b300/step10_mma_unroll4.iR07fS/step10/samples.json) |
 | s10_shared_a | 0.112822 → 0.112003 | 1.004371× | +0.435% | 179/201 | 150/201 | 否 | [JSON](../../results_b300/step10_share_a_state.fGOjDy/step10/samples.json) |
+| s10_epi64 | 0.139205 → 0.141452 | 0.984119× | -1.614% | 0/8 | 4/8 | 是 | [JSON](../../results_b300/step10_epilogue.xVWC2d/step10_4096/samples.json) |
+| s10_epi128 | 0.139205 → 0.143390 | 0.971084× | -2.978% | 0/8 | 4/8 | 是 | [JSON](../../results_b300/step10_epilogue.xVWC2d/step10_4096/samples.json) |
+| s10_epi32_double | 0.139205 → 0.140787 | 0.988920× | -1.120% | 0/8 | 4/8 | 是 | [JSON](../../results_b300/step10_epilogue.xVWC2d/step10_4096/samples.json) |

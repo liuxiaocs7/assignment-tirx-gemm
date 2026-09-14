@@ -3,7 +3,8 @@
 Keep four input stages and the current grid/MMA/TMEM ownership. The narrow
 path has room to batch output stores or double-buffer them without reducing
 input depth, unlike the archived wide-N three-stage epilogue experiment.
-These are unmeasured candidates until the B300 probe returns paired results.
+Measured in step10_epilogue.xVWC2d: all three lose every pair to production.
+Retained for reproducibility; none is adopted. See B300_VALIDATION.md.
 """
 
 from probe_step45 import replace_once
