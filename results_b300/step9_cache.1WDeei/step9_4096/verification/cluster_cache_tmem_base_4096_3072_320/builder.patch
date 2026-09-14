@@ -1,0 +1,12 @@
+--- baseline.py
++++ cluster_cache_tmem_base.py
+@@ -55,7 +55,8 @@
+         T.ptx.fence.mbarrier_init()
+         T.cuda.cta_sync()
+         T.cuda.cluster_sync()
+-        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=tmem_addr[0],
++        mma_tmem_base: T.let = tmem_addr[0]
++        tmem = T.decl_buffer((128, 512), acc_type, scope="tmem", allocated_addr=mma_tmem_base,
+             layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
+ 
+         tile_scheduler = ClusterPersistentScheduler2D(

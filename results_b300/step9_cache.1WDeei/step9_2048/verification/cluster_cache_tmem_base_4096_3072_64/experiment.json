@@ -1,0 +1,10 @@
+{
+  "step": 9,
+  "variant": "cluster_cache_tmem_base",
+  "sources": [
+    {
+      "before_sha256": "7412ed7e75290dc43178bab0604c940d4cc52e299477bf7d5b93d4eed04670e4",
+      "compiled_sha256": "7412ed7e75290dc43178bab0604c940d4cc52e299477bf7d5b93d4eed04670e4"
+    }
+  ]
+}
