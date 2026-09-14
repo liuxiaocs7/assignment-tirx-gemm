@@ -1,0 +1,57 @@
+Code: f029ed762dce40c76e9dc99b40d5c156e20251f9; gemm_sha256=5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c
+GPU: NVIDIA B300 SXM6 AC; SMs: 148; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Separate builds; each experiment records its direct comparison control. Verify all outputs before interleaved CUDA-event timing.
+Verified step 10 / baseline
+Verified step 10 / tmem_input_depth5
+Verified step 10 / tmem_share_a_depth5
+Verified step 10 / tmem_share_a_depth6
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 128) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 192) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 256) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 384) twice (untimed)
+Verified boundary Step 10 / tmem_share_a_depth5 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / tmem_share_a_depth5 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / tmem_share_a_depth5 / (4096, 3072, 384) twice (untimed)
+Verified boundary Step 10 / tmem_share_a_depth5 / (4096, 3072, 448) twice (untimed)
+Verified boundary Step 10 / tmem_share_a_depth5 / (1536, 5376, 320) twice (untimed)
+Verified boundary Step 10 / tmem_share_a_depth6 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / tmem_share_a_depth6 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / tmem_share_a_depth6 / (4096, 3072, 384) twice (untimed)
+Verified boundary Step 10 / tmem_share_a_depth6 / (4096, 3072, 448) twice (untimed)
+Verified boundary Step 10 / tmem_share_a_depth6 / (1536, 5376, 320) twice (untimed)
+Trial 1: step 10 / baseline: 0.094356 ms
+Trial 1: step 10 / tmem_input_depth5: 0.092188 ms
+Trial 1: step 10 / tmem_share_a_depth5: 0.091997 ms
+Trial 1: step 10 / tmem_share_a_depth6: 0.091937 ms
+Trial 2: step 10 / baseline: 0.094261 ms
+Trial 2: step 10 / tmem_share_a_depth6: 0.092150 ms
+Trial 2: step 10 / tmem_share_a_depth5: 0.091222 ms
+Trial 2: step 10 / tmem_input_depth5: 0.091665 ms
+Trial 3: step 10 / tmem_share_a_depth5: 0.091207 ms
+Trial 3: step 10 / tmem_share_a_depth6: 0.093982 ms
+Trial 3: step 10 / baseline: 0.110364 ms
+Trial 3: step 10 / tmem_input_depth5: 0.110489 ms
+Trial 4: step 10 / tmem_share_a_depth5: 0.110606 ms
+Trial 4: step 10 / tmem_input_depth5: 0.112479 ms
+Trial 4: step 10 / baseline: 0.111851 ms
+Trial 4: step 10 / tmem_share_a_depth6: 0.111484 ms
+Trial 5: step 10 / baseline: 0.111850 ms
+Trial 5: step 10 / tmem_input_depth5: 0.111706 ms
+Trial 5: step 10 / tmem_share_a_depth5: 0.114092 ms
+Trial 5: step 10 / tmem_share_a_depth6: 0.114127 ms
+Trial 6: step 10 / baseline: 0.115052 ms
+Trial 6: step 10 / tmem_share_a_depth6: 0.114994 ms
+Trial 6: step 10 / tmem_share_a_depth5: 0.115135 ms
+Trial 6: step 10 / tmem_input_depth5: 0.115165 ms
+Trial 7: step 10 / tmem_share_a_depth5: 0.115228 ms
+Trial 7: step 10 / tmem_share_a_depth6: 0.115010 ms
+Trial 7: step 10 / baseline: 0.114684 ms
+Trial 7: step 10 / tmem_input_depth5: 0.114622 ms
+step variant         median_ms    min_ms    max_ms paired_speedup vs_cache control                   vs_control limit_ms status
+  10 baseline         0.111850  0.094261  0.115052          1.000      n/a baseline                       1.000 0.139100 PASS
+  10 tmem_input_depth5  0.111706  0.091665  0.115165          1.001      n/a baseline                       1.001 0.139100 PASS
+  10 tmem_share_a_depth5  0.110606  0.091207  0.115228          1.011      n/a tmem_input_depth5              1.002 0.139100 PASS
+  10 tmem_share_a_depth6  0.111484  0.091937  0.115010          1.003      n/a tmem_share_a_depth5            1.000 0.139100 PASS
+Saved results_b300/step10_share_a.r7r3iv/step10/summary.csv; SLOW is a measured result, not a tool error.
