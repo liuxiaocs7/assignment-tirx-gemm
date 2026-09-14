@@ -1,0 +1,6 @@
+2026-09-14T20:43:40Z
+dev-slurm
+f392bf177ffbcd480b1b34ff5f0d4596148b20fd
+?? results_b300/step10_ready.FAnkEQ/
+job=27690 step=0 step_gpus=0 visible=0
+size=4096 variants=baseline,tmem_split_ready trials=8 warmup=10 repeat=30 seed=0

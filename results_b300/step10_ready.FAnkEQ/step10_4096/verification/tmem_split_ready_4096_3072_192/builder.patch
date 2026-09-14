@@ -1,0 +1,78 @@
+--- baseline.py
++++ tmem_split_ready.py
+@@ -27,6 +27,7 @@
+     # slot = stage * TMEM_SLOT_STRIDE + consumer; tmem_col = slot * MMA_N.
+     # Ready/free barriers and TMEM columns always refer to the same slot.
+     TMEM_SLOT_STRIDE = NUM_CONSUMER if TMEM_BUFFERS == 2 else 0
++    SPLIT_INPUT_READY = TMEM_BUFFERS == 2
+     TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS
+     CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER
+     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
+@@ -53,6 +54,8 @@
+         mma2tma = TCGen05Bar(pool, PIPE_DEPTH)
+         mma2ld = TCGen05Bar(pool, TMEM_BUFFERS * NUM_CONSUMER)
+         ld2mma = MBarrier(pool, TMEM_BUFFERS * NUM_CONSUMER)
++        if SPLIT_INPUT_READY:
++            tma2mma_a = TMABar(pool, PIPE_DEPTH * NUM_CONSUMER)
+         pool.move_base_to(1024)
+         Asmem = pool.alloc((PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K), a_type, layout=A_layout)
+         Bsmem = pool.alloc((PIPE_DEPTH, BLK_N, BLK_K), b_type, layout=B_layout)
+@@ -61,6 +64,8 @@
+ 
+         # These helpers elect CTA thread zero internally; keep them at CTA scope.
+         tma2mma.init(1)
++        if SPLIT_INPUT_READY:
++            tma2mma_a.init(1)
+         mma2tma.init(NUM_CONSUMER)
+         mma2ld.init(1)
+         ld2mma.init(128 * CTA_GROUP)
+@@ -84,6 +89,8 @@
+         n_st = T.meta_var(tile_scheduler.n_idx * MMA_N + cbx * BLK_N)
+         n_out = T.meta_var(tile_scheduler.n_idx * MMA_N)
+         tma2mma_cta0 = tma2mma.remote_view(0)
++        if SPLIT_INPUT_READY:
++            tma2mma_a_cta0 = tma2mma_a.remote_view(0)
+         tma_phase = PipelineState(PIPE_DEPTH)
+         mma_phase = PipelineState(PIPE_DEPTH)
+         ld_phase = PipelineState(TMEM_BUFFERS)
+@@ -101,10 +108,12 @@
+                           mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
+             for consumer in T.unroll(NUM_CONSUMER):
+                 m_consumer = T.meta_var(m_st + consumer * MMA_M)
++                a_ready = T.meta_var(tma2mma_a_cta0.ptr_to([tma_phase.stage * NUM_CONSUMER + consumer])
++                    if SPLIT_INPUT_READY else tma2mma_cta0.ptr_to([tma_phase.stage]))
+                 Tx.copy_async(Asmem[tma_phase.stage, consumer, :, :],
+                               A[m_consumer:m_consumer + BLK_M, k_st:k_st + BLK_K],
+                               dispatch="tma_auto", cta_group=CTA_GROUP,
+-                              mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
++                              mbar=a_ready)
+ 
+         if wg_id == 2:
+             if warp_id == 3:
+@@ -115,8 +124,15 @@
+                             tma_load(k * BLK_K)
+                             # Both CTAs complete bytes against CTA 0's barrier.
+                             if cbx == 0:
+-                                tma2mma_cta0.arrive(tma_phase.stage,
+-                                    CTA_GROUP * (NUM_CONSUMER * BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
++                                if SPLIT_INPUT_READY:
++                                    # B is loaded once and acquired by both consumers.
++                                    tma2mma_cta0.arrive(tma_phase.stage, CTA_GROUP * BLK_N * BLK_K * F16_SIZE)
++                                    for consumer in T.unroll(NUM_CONSUMER):
++                                        tma2mma_a_cta0.arrive(tma_phase.stage * NUM_CONSUMER + consumer,
++                                            CTA_GROUP * BLK_M * BLK_K * F16_SIZE)
++                                else:
++                                    tma2mma_cta0.arrive(tma_phase.stage,
++                                        CTA_GROUP * (NUM_CONSUMER * BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
+                             tma_phase.advance()
+                         tile_scheduler.next_tile()
+             elif warp_id < NUM_CONSUMER:
+@@ -129,6 +145,8 @@
+                                 ld_phase.advance()
+                             for k in range(K_TILES):
+                                 tma2mma.wait(mma_phase.stage, mma_phase.phase)
++                                if SPLIT_INPUT_READY:
++                                    tma2mma_a.wait(mma_phase.stage * NUM_CONSUMER + warp_id, mma_phase.phase)
+                                 T.ptx.tcgen05.fence.after_thread_sync()
+                                 Tx.gemm_async(tmem[:, (ld_phase.stage * TMEM_SLOT_STRIDE + warp_id) * MMA_N:(ld_phase.stage * TMEM_SLOT_STRIDE + warp_id + 1) * MMA_N],
+                                     Asmem[mma_phase.stage, warp_id, :, :], Bsmem[mma_phase.stage, :, :],

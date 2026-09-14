@@ -1,0 +1,92 @@
+{
+  "git_revision": "f392bf177ffbcd480b1b34ff5f0d4596148b20fd",
+  "git_dirty": true,
+  "gemm_kernels_sha256": "727a44403b6c1ea0a0499c8212e5796d0fa2b31944929e9ecd50d60be4b961f2",
+  "utils_sha256": "af9cc13549f0726e295a5ae65c91f580c7728d2c795e53e0ffe3547023f38d30",
+  "benchmark_sha256": "99750ba84c133138994941c182c10eaa495663bf69570ad04c3f6be90fa2d1ab",
+  "benchmark_diagnostics_sha256": "5db36328f88d5a5758659814bdec098cf0e5ac20823ac5b713b0ef41d0e06f74",
+  "compiler": "nvrtc",
+  "ptxas_reg_level": "10",
+  "TVM_CUDA_PTXAS_EXTRA_OPTS": "",
+  "TVM_CUDA_NVRTC_EXTRA_OPTS": "",
+  "TVM_CUDA_NVCC_NO_FAST_MATH": "",
+  "TVM_KERNEL_DEBUG": "",
+  "TVM_KERNEL_DUMP": "",
+  "CUDA_LAUNCH_BLOCKING": "",
+  "CUDA_VISIBLE_DEVICES": "0",
+  "target": "{\"kind\":\"cuda\",\"tag\":\"\",\"keys\":[\"cuda\",\"gpu\"],\"max_num_threads\":1024,\"thread_warp_size\":32,\"arch\":\"sm_103a\"}",
+  "gpu": "NVIDIA B300 SXM6 AC",
+  "sm_count": 148,
+  "tvm": "0.26.0",
+  "torch": "2.14.0+cu130",
+  "cuda": "13.0",
+  "probe_sha256": "746a557d125eb253524e6b70ee19a6521f466d83e0570da290a2fd4bc218a56c",
+  "probe_step45_sha256": "34be9a024c7c1daf27b2df6ccbe43371d03a8fa551d5b658b5b9b30e3737fa94",
+  "probe_step10_geometry_sha256": "c39437c174784fdc4cb81ddfc890e416e8254445aafcd500f9c0007480f44f80",
+  "probe_step10_epilogue_sha256": "92ff63f1f1b420931112b221efec4f6e2bbbcdc885117d54b1a8f3fcc39d9076",
+  "probe_step10_ready_sha256": "9f4ba46a4af59d0ef0d5c565380e138d819d956383c672fe10564f7349ae5615",
+  "profile_persistent_sha256": "add93364d842628756370eff484a430dbf9ddce4121780996c1dae6360e91d8b",
+  "steps": [
+    10
+  ],
+  "size": 4096,
+  "variants": {
+    "10": [
+      "baseline",
+      "tmem_split_ready"
+    ]
+  },
+  "verification_shapes": {
+    "tmem_split_ready": [
+      [
+        4096,
+        3072,
+        64
+      ],
+      [
+        4096,
+        3072,
+        128
+      ],
+      [
+        4096,
+        3072,
+        192
+      ],
+      [
+        4096,
+        3072,
+        256
+      ],
+      [
+        4096,
+        3072,
+        320
+      ],
+      [
+        4096,
+        3072,
+        384
+      ],
+      [
+        4608,
+        2560,
+        320
+      ],
+      [
+        512,
+        9728,
+        192
+      ]
+    ]
+  },
+  "comparison_controls": {
+    "10": {
+      "tmem_split_ready": "baseline"
+    }
+  },
+  "trials": 8,
+  "warmup": 10,
+  "repeat": 30,
+  "seed": 0
+}
