@@ -19,7 +19,7 @@ from test_persistent_probe import body
 @pytest.mark.parametrize('arch', ['sm_100a', 'sm_103a'])
 @pytest.mark.parametrize('shape', [(1024,) * 3, (2048,) * 3, (4096,) * 3, (8192,) * 3,
                                   *VERIFICATION_SHAPES['role_registers'], (512, 256, 64)])
-def test_role_experiments_preserve_all_work_and_synchronization(arch, shape, tmp_path):
+def test_role_experiments_preserve_all_work_and_synchronization(arch, shape, tmp_path, pre_bfirst_step10):
     tvm = pytest.importorskip('tvm')
     target = tvm.target.Target({'kind': 'cuda', 'arch': arch})
     sources = {}
@@ -76,7 +76,7 @@ def test_role_experiments_preserve_all_work_and_synchronization(arch, shape, tmp
 
 
 @pytest.mark.parametrize('variant', ['role_registers', 'tma_b_first'])
-def test_role_probe_rejects_reapplication_and_unadopted_source(variant, tmp_path):
+def test_role_probe_rejects_reapplication_and_unadopted_source(variant, tmp_path, pre_bfirst_step10):
     pytest.importorskip('tvm')
     build_variant(10, (4096,) * 3, variant, tmp_path)
     with pytest.raises(ValueError):
@@ -88,7 +88,8 @@ def test_role_probe_rejects_reapplication_and_unadopted_source(variant, tmp_path
 
 def test_role_variants_use_independent_production_controls():
     variants = ['baseline', 'role_registers', 'tma_b_first']
-    assert select_variants(10) == variants
+    assert select_variants(10) == ['baseline']
+    assert select_variants(10, variants[1:]) == variants
     cases = [dict(step=10, size=4096, variant=v, samples_ms=s) for v, s in
              zip(variants, [[10, 20, 40], [8, 10, 20], [5, 10, 10]])]
     rows = summarize_with_cache_control(cases, {(10, 4096, 4096, 4096): 1}, 1.3)
@@ -128,5 +129,35 @@ def test_register_pool_checked_before_binary_is_returned_and_hook_restored(repor
         # A failed check must not leak a compiler wrapper into later runs.
         tvm_ffi.get_global_func(name)('after context')
         assert calls[-1] == 'after context'
+    finally:
+        tvm_ffi.register_global_func(name, saved, override=True)
+
+
+def test_ignored_register_hint_stops_before_launch_and_restores_hook(tmp_path):
+    pytest.importorskip('tvm')
+    import tvm_ffi
+    from tvm.support import nvcc  # Ensure the real callback is registered.
+
+    recorded = ROOT / 'results_b300/step10_roles.rx5lNL/step10/step10_4096_role_registers'
+    name = 'tvm_callback_cuda_compile'
+    saved = tvm_ffi.get_global_func(name)
+    calls = []
+    def capture(code):
+        calls.append(str(code))
+        for filename in ('module_01.resources.txt', 'nvrtc_01.log'):
+            (tmp_path / filename).write_text((recorded / filename).read_text())
+        return bytearray(b'cubin')
+    tvm_ffi.register_global_func(name, capture, override=True)
+    try:
+        with pytest.raises(RuntimeError, match='setmaxnreg.*ignored'):
+            with check_role_register_budget('role_registers', tmp_path):
+                tvm_ffi.get_global_func(name)('compiled source')
+        metadata = json.loads((tmp_path / 'register_budget.json').read_text())
+        assert metadata['initial_registers'] == 167
+        assert metadata['capacity_valid'] is True
+        assert metadata['setmaxnreg_ignored'] is True
+        assert metadata['valid'] is False
+        assert bytes(tvm_ffi.get_global_func(name)('after context')) == b'cubin'
+        assert calls == ['compiled source', 'after context']
     finally:
         tvm_ffi.register_global_func(name, saved, override=True)

@@ -1,8 +1,8 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
-Step 10 production is correct but still marginal at 4096. The default compares
-the production baseline with independent register-budget and B-first TMA
-experiments. Adopted transforms refuse reapplication.
+Step 10 has adopted the measured B-first TMA request order. The default runs
+only the production baseline; full-suite validation remains pending.
+Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
 All variants must verify before interleaved timing with the original CUDA-event
@@ -40,7 +40,7 @@ STEP_VARIANTS = {
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "role_registers", "tma_b_first")}
+                         10: ("baseline",)}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -252,6 +252,9 @@ def load_shared_b_first(source):
     prefix, rest = source.split(start)
     block, suffix = rest.split(end)
     split = "            Tx.copy_async(Bsmem[tma_phase.stage, :, :],\n"
+    if block.startswith(split):
+        raise ValueError("Step 10 has adopted tma_b_first; validate the production kernel "
+                         "with benchmark.py --steps 10 and tests/test_step10.py")
     if block.count(split) != 1 or not block.startswith("            for consumer in T.unroll(NUM_CONSUMER):\n"):
         raise ValueError("expected A-first TMA loader")
     a_loads, b_tail = block.split(split)
@@ -263,7 +266,7 @@ def load_shared_b_first(source):
 
 @contextmanager
 def check_role_register_budget(variant, directory):
-    """Reject an insufficient initial register pool before the first launch."""
+    """Reject insufficient capacity or explicitly ignored hints before launch."""
     if variant != "role_registers":
         yield
         return
@@ -284,11 +287,19 @@ def check_role_register_budget(variant, directory):
         # block until WG2 releases, but cannot succeed if the CTA pool is too
         # small. Also enforce the PTX inc/dec direction preconditions.
         required = 128 * (64 + 208 + 208)
-        valid = 64 <= initial <= 208 and initial * 384 >= required
+        capacity_valid = 64 <= initial <= 208 and initial * 384 >= required
+        # Capacity alone does not show the hint survived compilation. The
+        # uploaded B300 run had REG167 but ptxas C7508 discarded setmaxnreg.
+        ignored = any(re.search(r"\bsetmaxnreg\b[^\n]*\bignored\b", log.read_text(), re.I)
+                      for log in directory.glob("nvrtc_*.log"))
+        valid = capacity_valid and not ignored
         write_json(directory / "register_budget.json", dict(
             initial_registers=initial, threads=384, requested_registers=required,
-            budgets=[208, 208, 64], valid=valid))
-        if not valid:
+            budgets=[208, 208, 64], capacity_valid=capacity_valid,
+            setmaxnreg_ignored=ignored, valid=valid))
+        if ignored:
+            raise RuntimeError("role_registers setmaxnreg was ignored by ptxas; not launched")
+        if not capacity_valid:
             raise RuntimeError(f"role_registers initial REG:{initial} cannot support 64/208/208; not launched")
         return binary
 

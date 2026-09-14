@@ -17,7 +17,7 @@ from test_persistent_probe import body
 @pytest.mark.parametrize('arch', ['sm_100a', 'sm_103a'])
 @pytest.mark.parametrize('shape', [(1024,) * 3, (2048,) * 3, (4096,) * 3, (8192,) * 3,
                                   *VERIFICATION_SHAPES['epilogue_double_buffer']])
-def test_double_buffer_owns_distinct_storage_and_drains_before_reuse(arch, shape, tmp_path):
+def test_double_buffer_owns_distinct_storage_and_drains_before_reuse(arch, shape, tmp_path, pre_bfirst_step10):
     tvm = pytest.importorskip('tvm')
     target = tvm.target.Target({'kind': 'cuda', 'arch': arch})
     sources = {}

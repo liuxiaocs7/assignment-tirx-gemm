@@ -1,4 +1,4 @@
-"""Replay the measured Step 10 cache/grid winner; GPU timing stays external."""
+"""Replay the measured Step 10 B-first winner; GPU timing stays external."""
 
 import importlib
 from pathlib import Path
@@ -10,7 +10,7 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
 from test_step8_adoption import body, generate
 
-RECORDED = ROOT / "results_b300/step10_fused_a.1VXYz2/step10/step10_4096_cache_balanced_clusters"
+RECORDED = ROOT / "results_b300/step10_roles.rx5lNL/step10/step10_4096_tma_b_first"
 
 
 def test_step10_matches_winning_b300_compiler_input():
@@ -55,7 +55,8 @@ def test_profiler_grid_matches_adopted_kernel_and_covers_all_tiles(sm_count, sha
 
 
 @pytest.mark.parametrize("variant", ["cache_tmem_base", "balanced_clusters",
-                                     "cache_balanced_clusters", "balanced_fused_a"])
+                                     "cache_balanced_clusters", "balanced_fused_a",
+                                     "tma_b_first"])
 def test_adopted_step10_experiments_require_production_validation(variant, tmp_path):
     pytest.importorskip("tvm")
     from probe_persistent import build_variant, select_variants
