@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "mma_batch",
+  "sources": [
+    {
+      "before_sha256": "a8efc7238fdcd12ddcb5a8deb6ba52d0739224f659438c7c6404cdb7cd053899",
+      "compiled_sha256": "957dc154b43ef9dfaea13e07d10de484b4ec2b89b6c4d6ff57bec54b4e41db0b"
+    }
+  ]
+}

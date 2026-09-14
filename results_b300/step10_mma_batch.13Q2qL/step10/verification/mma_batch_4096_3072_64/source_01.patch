@@ -1,0 +1,56 @@
+--- baseline.cu
++++ mma_batch.cu
+@@ -430,6 +430,41 @@
+ __forceinline__ __device__ void tvm_builtin_cuda_warpgroup_sync(int name_bar_id) {
+     asm volatile("bar.sync %0, 128;" : : "r"(name_bar_id));
+ }
++__forceinline__ __device__ void tvm_probe_mma_batch_k64(uint32_t d, uint64_t a, uint64_t b, uint32_t desc, uint32_t accum) {
++    asm volatile(
++        "{\n"
++        ".reg .b64 a, b;\n"
++        ".reg .b32 alo, ahi, blo, bhi, z;\n"
++        ".reg .pred p;\n"
++        "mov.b64 {alo, ahi}, %1;\n"
++        "mov.b64 {blo, bhi}, %2;\n"
++        "mov.b64 a, %1;\n"
++        "mov.b64 b, %2;\n"
++        "mov.u32 z, 0;\n"
++        "setp.ne.b32 p, %4, 0;\n"
++        "tcgen05.mma.cta_group::2.kind::f16 [%0], a, b, %3, {z, z, z, z, z, z, z, z}, p;\n"
++        "setp.ne.b32 p, 1, 0;\n"
++        "add.u32 alo, alo, 2;\n"
++        "add.u32 blo, blo, 2;\n"
++        "mov.b64 a, {alo, ahi};\n"
++        "mov.b64 b, {blo, bhi};\n"
++        "tcgen05.mma.cta_group::2.kind::f16 [%0], a, b, %3, {z, z, z, z, z, z, z, z}, p;\n"
++        "add.u32 alo, alo, 2;\n"
++        "add.u32 blo, blo, 2;\n"
++        "mov.b64 a, {alo, ahi};\n"
++        "mov.b64 b, {blo, bhi};\n"
++        "tcgen05.mma.cta_group::2.kind::f16 [%0], a, b, %3, {z, z, z, z, z, z, z, z}, p;\n"
++        "add.u32 alo, alo, 2;\n"
++        "add.u32 blo, blo, 2;\n"
++        "mov.b64 a, {alo, ahi};\n"
++        "mov.b64 b, {blo, bhi};\n"
++        "tcgen05.mma.cta_group::2.kind::f16 [%0], a, b, %3, {z, z, z, z, z, z, z, z}, p;\n"
++        "}\n"
++        :
++        : "r"(d), "l"(a), "l"(b), "r"(desc), "r"(accum)
++    );
++}
++
+ extern "C" __global__ void __launch_bounds__(384) kernel_kernel(const __grid_constant__ CUtensorMap A_tensormap, const __grid_constant__ CUtensorMap B_tensormap, const __grid_constant__ CUtensorMap D_tensormap);
+ extern "C" __global__ void __launch_bounds__(384) kernel_kernel(const __grid_constant__ CUtensorMap A_tensormap, const __grid_constant__ CUtensorMap B_tensormap, const __grid_constant__ CUtensorMap D_tensormap) {
+   int warp_id_in_cta = __shfl_sync((uint)4294967295, (((int)threadIdx.x) >> 5), 0, 32);
+@@ -566,10 +601,7 @@
+               tvm_builtin_ptx_tcgen05_fence_after_thread_sync();
+               int cse_v24 = ((warp_id_in_cta & 3) * 1024);
+               uint cse_v31 = (mma_tmem_base + ((uint)((warp_id_in_cta & 3) * 256)));
+-              ptx_tcgen05_mma_cta_2_kind_f16_SS((mma_tmem_base + ((uint)((warp_id_in_cta & 3) * 256))), tvm_builtin_smem_desc_add_16B_offset(descA_ptr[0], ((mma_phase_stage_ptr[0] * 2048) + ((warp_id_in_cta & 3) * 1024))), tvm_builtin_smem_desc_add_16B_offset(descB_ptr[0], (mma_phase_stage_ptr[0] * 1024)), (uint)272629776, (bool)0, 0, 0, 0, 0, 0, 0, 0, 0);
+-              ptx_tcgen05_mma_cta_2_kind_f16_SS((mma_tmem_base + ((uint)((warp_id_in_cta & 3) * 256))), tvm_builtin_smem_desc_add_16B_offset(descA_ptr[0], (((mma_phase_stage_ptr[0] * 2048) + ((warp_id_in_cta & 3) * 1024)) + 2)), tvm_builtin_smem_desc_add_16B_offset(descB_ptr[0], ((mma_phase_stage_ptr[0] * 1024) + 2)), (uint)272629776, (bool)1, 0, 0, 0, 0, 0, 0, 0, 0);
+-              ptx_tcgen05_mma_cta_2_kind_f16_SS((mma_tmem_base + ((uint)((warp_id_in_cta & 3) * 256))), tvm_builtin_smem_desc_add_16B_offset(descA_ptr[0], (((mma_phase_stage_ptr[0] * 2048) + ((warp_id_in_cta & 3) * 1024)) + 4)), tvm_builtin_smem_desc_add_16B_offset(descB_ptr[0], ((mma_phase_stage_ptr[0] * 1024) + 4)), (uint)272629776, (bool)1, 0, 0, 0, 0, 0, 0, 0, 0);
+-              ptx_tcgen05_mma_cta_2_kind_f16_SS((mma_tmem_base + ((uint)((warp_id_in_cta & 3) * 256))), tvm_builtin_smem_desc_add_16B_offset(descA_ptr[0], (((mma_phase_stage_ptr[0] * 2048) + ((warp_id_in_cta & 3) * 1024)) + 6)), tvm_builtin_smem_desc_add_16B_offset(descB_ptr[0], ((mma_phase_stage_ptr[0] * 1024) + 6)), (uint)272629776, (bool)1, 0, 0, 0, 0, 0, 0, 0, 0);
++              tvm_probe_mma_batch_k64((mma_tmem_base + ((uint)((warp_id_in_cta & 3) * 256))), tvm_builtin_smem_desc_add_16B_offset(descA_ptr[0], ((mma_phase_stage_ptr[0] * 2048) + ((warp_id_in_cta & 3) * 1024))), tvm_builtin_smem_desc_add_16B_offset(descB_ptr[0], (mma_phase_stage_ptr[0] * 1024)), (uint)272629776, (bool)0);
+               ptx_tcgen05_commit_cta_group_2_multicast((&(((uint64_t*)pool_buf_ptr)[(mma_phase_stage_ptr[0] + 5)])), 3);
+               mma_phase_stage_ptr[0] = (mma_phase_stage_ptr[0] + 1);
+               if (mma_phase_stage_ptr[0] == 4) {
