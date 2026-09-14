@@ -103,7 +103,8 @@ def test_writeback_transform_rejects_reapplication_and_pre_adoption_source(varia
 
 
 def test_writeback_variants_compare_independently_to_production():
-    assert select_variants(10) == ['baseline', 'warp_release', 'paired_tmem_loads']
+    assert select_variants(10, ['warp_release', 'paired_tmem_loads']) == [
+        'baseline', 'warp_release', 'paired_tmem_loads']
     cases = [dict(step=10, size=4096, variant=name, samples_ms=samples) for name, samples in
              [('baseline', [10, 20, 40]), ('warp_release', [5, 10, 20]), ('paired_tmem_loads', [8, 10, 10])]]
     rows = summarize_with_cache_control(cases, {(10, 4096, 4096, 4096): 1}, 1.3)

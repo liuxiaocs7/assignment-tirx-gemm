@@ -1,9 +1,9 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
 Step 10 production is correct but still marginal at 4096. The default compares
-its measured cache/grid baseline with two independent writeback experiments:
-warp-aggregated TMEM release and paired x32 TMEM reads. Adopted transforms
-refuse reapplication. GPU verification precedes every scored experiment.
+the production baseline, a three-stage input-pipeline control, and double-
+buffered TMA writeback on that control. Adopted transforms refuse reapplication.
+GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
 All variants must verify before interleaved timing with the original CUDA-event
 timer. SLOW is a measured result; numerical or compilation errors stop the run.
@@ -34,11 +34,11 @@ STEP_VARIANTS = {
          "cache_tmem_base", "reuse_wait_64ns", "ring_wait_64ns",
          "cache_unroll_ring", "cache_mma_no_unroll", "cache_balanced_clusters",
          "balanced_depth3", "balanced_depth3_epi128", "balanced_fused_a",
-         "warp_release", "paired_tmem_loads"),
+         "warp_release", "paired_tmem_loads", "epilogue_depth3", "epilogue_double_buffer"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "warp_release", "paired_tmem_loads")}
+                         10: ("baseline", "epilogue_depth3", "epilogue_double_buffer")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -52,7 +52,8 @@ CACHE_EXPERIMENTS = {
 EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
                        "balanced_depth3": "cache_balanced_clusters",
                        "balanced_depth3_epi128": "balanced_depth3",
-                       "balanced_fused_a": "cache_balanced_clusters"}
+                       "balanced_fused_a": "cache_balanced_clusters",
+                       "epilogue_double_buffer": "epilogue_depth3"}
 DEPTH3_VARIANTS = ("balanced_depth3", "balanced_depth3_epi128")
 # K=1/3/5 stages covers shorter-than-ring, odd complete ring, and partial
 # ring; 96 cluster tiles force reuse of both consumers on the balanced grid.
@@ -62,6 +63,8 @@ VERIFICATION_SHAPES = {
     "balanced_fused_a": ((4096, 3072, 64), (4096, 3072, 320)),
     "warp_release": ((4096, 3072, 64), (4096, 3072, 320)),
     "paired_tmem_loads": ((4096, 3072, 64), (4096, 3072, 320)),
+    "epilogue_depth3": DEPTH3_VERIFY_SHAPES,
+    "epilogue_double_buffer": DEPTH3_VERIFY_SHAPES,
 }
 
 
@@ -188,6 +191,38 @@ def pair_tmem_loads(source):
     return replace_once(source, before, after)
 
 
+def double_buffer_epilogue(source):
+    """Overlap stores using separate SMEM buffers; drain before each tile ends."""
+    # Four input stages plus two output buffers exceed B300's SMEM budget.
+    # Compare only with the explicit three-stage control, not a hidden change.
+    if "    PIPE_DEPTH = 3\n" not in source:
+        raise ValueError("double-buffered epilogue requires the three-stage control")
+    for before, after in (
+        ("(NUM_CONSUMER, BLK_M, EPI_N)", "(NUM_CONSUMER, 2, BLK_M, EPI_N)"),
+        ("Dsmem[wg_id, warp_id * 32 + lane_id, :]",
+         "Dsmem[wg_id, i % 2, warp_id * 32 + lane_id, :]"),
+        ("Dsmem[wg_id, :, :]", "Dsmem[wg_id, i % 2, :, :]"),
+        ("                        if T.filter(lane_id, T.ptx.elect_sync()):\n",
+         "                        if T.filter(lane_id, lane_id == 0):\n"),
+    ):
+        # Shape occurs once in the layout and once in the pool allocation.
+        expected = 2 if before.startswith("(NUM_CONSUMER") else 1
+        if source.count(before) != expected:
+            raise ValueError(f"unexpected epilogue layout: {before}")
+        source = source.replace(before, after)
+    before = "                            T.ptx.cp_async.bulk.wait_group(0)\n"
+    after = '''                            if i == MMA_N // EPI_N - 1:
+                                T.ptx.cp_async.bulk.wait_group(0)
+                            elif i > 0:
+                                T.ptx.cp_async.bulk.wait_group(1)
+'''
+    # After stores 1/2, wait(1) frees the buffer used two chunks earlier;
+    # the unchanged trailing WG barrier publishes this to all writers.
+    # Store 3 drains both groups before any next tile or cluster teardown.
+    # Bulk groups are per thread: a fixed lane owns all commits and waits.
+    return replace_once(source, before, after)
+
+
 def stream_epilogue(source):
     """Retain only EPI_N FP16 values, releasing TMEM after the final chunk."""
     source = replace_once(source, "            Dreg_f16 = T.alloc_local((MMA_N,), d_type)\n",
@@ -251,6 +286,11 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant in ("epilogue_depth3", "epilogue_double_buffer"):
+        if "mma_tmem_base: T.let" not in source or "TILES_PER_CLUSTER =" not in source:
+            raise ValueError("epilogue experiments require the adopted Step 10 cache/grid baseline")
+        source = replace_once(source, "    PIPE_DEPTH = 4\n", "    PIPE_DEPTH = 3\n")
+        return double_buffer_epilogue(source) if variant == "epilogue_double_buffer" else source
     if variant in ("warp_release", "paired_tmem_loads"):
         if "mma_tmem_base: T.let" not in source or "TILES_PER_CLUSTER =" not in source:
             raise ValueError("writeback experiments require the adopted Step 10 cache/grid baseline")

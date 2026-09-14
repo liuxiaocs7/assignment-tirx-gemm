@@ -27,7 +27,9 @@
 所有数值校验通过，Step 8 全过，Step 10 其他评分尺寸及两个矩形边界也通过。
 同目录独立 Step 10 benchmark 四个尺寸 × 五轮，共 20 个样本全过，但 4096 最慢
 样本仅有 0.38% 余量。正式 CUDA/cubin/参数与此前胜出 probe 完全一致；改动已生效，
-仍需增加性能余量。`48d743a` 的缓存基址和均衡网格保留，本轮只增加独立诊断变体。
+仍需增加性能余量。最新 `step10_writeback.2bP3jK` 的三个版本都只有 4/5 轮达标；
+warp 聚合与成对 TMEM 读取的同轮收益分别仅 0.054% 和 0.175%，暂不采用。
+`48d743a` 的缓存基址和均衡网格保留，本轮准备双缓冲 TMA 写回实验。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
@@ -35,13 +37,13 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 详见 [最新验证和对照记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **352 项本地通过，143.52 s**；
+（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **369 项本地通过，158.24 s**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：Step 10 写回交接实验
+### 当前进度：Step 10 双缓冲写回实验
 
 同步本轮工具提交后，只需跑以下一个 probe。生产内核保持已验证的缓存加均衡网格。
 
@@ -49,21 +51,21 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/step10_writeback.XXXXXX)
+tirx_run=$(mktemp -d results_b300/step10_epilogue.XXXXXX)
 uv run python -u probe_persistent.py --steps 10 --size 4096 \
   --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-默认三个独立版本：`baseline`、`warp_release`、`paired_tmem_loads`。第一个实验在
-全 warp 同步之后，用一个 leader 的 `count=32` 远端到达代替逐 lane 到达；第二个
-实验保留八条 x32 TMEM load，每两条独立读取之后等待一次，再转换数据。两个实验
-不叠加，均以生产 baseline 作对照；不改变计时、容差或原性能门槛。
+默认三个版本：`baseline`、`epilogue_depth3`、`epilogue_double_buffer`。
+三级输入对照只改变流水线深度，为双写回缓冲区腾出 SMEM。双缓冲直接与三级对照
+比较：两个 consumer 各用两块独立 Dsmem，让 TMA store 与下一块 SMEM 写入重叠，
+每个 tile 末尾排空读组。固定发射线程并保留复用同步，不改变计时、容差或原性能门槛。
 
-工具先为各实验验算 K=64/320 的矩形复用路径，每个形状两次、不计时，之后进行
+工具先为各实验验算 K=64/192/320 的矩形复用路径，每个形状两次、不计时，之后进行
 五轮交错计时和数值检查。保存 builder/CUDA、资源和可用 SASS，以确认优化是否
 真正减少工作或产生新的栈开销。本地仅验证源码生成与协议，GPU 结论仍待回传。
-详见 [最新结果与实验依据](B300_VALIDATION.md#最新结果step10_adoptuft7xo)。
+详见 [最新结果与实验依据](B300_VALIDATION.md#最新结果step10_writeback2bp3jk)。
 
 已采用的 Step 6/7 K128、Step 8 等待提示/基址缓存、Step 10 基址缓存/均衡网格
 拒绝重复应用；依赖旧基线的历史组合需在对应历史提交重放。profiling 使用当前

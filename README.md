@@ -9,10 +9,13 @@ checks and Step 8 pass. Only Step 10 / 4096 fails: 0.139278 ms versus the
 across four shapes, but the worst 4096 sample has just 0.38% margin.
 The production CUDA/cubin matches the earlier winning cache/grid probe exactly.
 The adopted implementation is retained; passing the benchmark does not yet
-resolve the full-suite failure. Two new independent diagnostics test warp-level
-TMEM-release aggregation and paired x32 reads with fewer waits. They preserve
-the production pipeline, numerical tolerances and timing rules. All 352 local
-tool/source-generation checks pass; GPU validation of the new variants is pending.
+resolve the full-suite failure. The latest `step10_writeback.2bP3jK` probe has
+only four of five samples within the limit for each version. Warp-level release
+and paired TMEM loads yield only 0.054% and 0.175% paired gains and are not adopted.
+The next diagnostic compares double-buffered TMA writeback with an explicit
+three-stage input-pipeline control, preserving numerical tolerances and timing
+rules. All 369 local tool/source-generation checks pass; GPU validation of this
+experiment is pending.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 

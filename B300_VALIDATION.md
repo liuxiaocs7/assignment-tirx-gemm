@@ -1,6 +1,77 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step10_adopt.UFT7xo
+## 最新结果：step10_writeback.2bP3jK
+
+数据：[summary](results_b300/step10_writeback.2bP3jK/step10/summary.csv)、
+[samples](results_b300/step10_writeback.2bP3jK/step10/samples.json)、
+[run.json](results_b300/step10_writeback.2bP3jK/step10/run.json)。
+版本 `50b0987`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+七个源码指纹、七份 builder/编译 CUDA 指纹及四份边界验算记录核对通过。
+baseline 的 CUDA、cubin、NVRTC 参数与 `step10_adopt.UFT7xo` 完全一致。
+三个版本的初始、逐轮数值校验通过；两个新版本各自在矩形 K=64/320 下两次验算通过。
+
+### 中位数达标，仍无足够余量
+
+| 版本 | 中位数 ms | 最大值 ms | 达标轮次 | 同轮加速比 | REG / STACK |
+|---|---:|---:|---:|---:|---:|
+| baseline | 0.138267 | 0.139415 | 4/5 | 1.000000× | 167 / 0 |
+| warp_release | 0.138192 | 0.139214 | 4/5 | 1.000540× | 168 / 0 |
+| paired_tmem_loads | 0.138149 | 0.139172 | 4/5 | 1.001747× | 168 / 0 |
+
+门槛仍为 **0.139100 ms**。三个版本均在第一轮超限；summary 的 PASS 只代表中位数。
+warp 聚合四轮快、一轮慢，同轮加速中位数 **0.054%**；成对读取五轮都快，但同轮
+加速中位数仅 **0.175%**，最慢样本仍超限 **0.072 微秒**。没有足够证据把任一版本
+作为解决性能余量的正式改动，也不叠加两项微小收益。最新全量仍为 **56/57**。
+
+SASS 确认聚合到达变成带 count 的 `SYNCS.ARRIVE.TRANS64.RED.ART0`；成对读取仍是
+八条 `LDTM.x32`，CUDA 中 `wait.ld` 从八次减至四次。三个版本均有四处 `UTMASTG.2D`、
+16 处 `UTCHMMA.2CTA`，没有 `LDL`/`STL`。这次结果不支持栈溢出解释，也表明这两处
+调整尚不足以解决剩余失败。
+
+### 下一轮：双缓冲 TMA 写回
+
+按当前证据保留三个可区分的假设：
+
+1. **写回串行化**：若每块输出都等待同一个 Dsmem 的 TMA 读取完成限制尾部延迟，
+   两个交替缓冲区应允许下一块 SMEM 写入与前一块 TMA store 重叠，缩短写回耗时。
+2. **输入流水线深度**：双缓冲额外需要 32 KiB；保留四级输入会达到 263,168 字节，
+   超出共享内存预算。减为三级后总量为 214,016 字节，但可能影响 TMA/MMA 隐藏延迟，
+   因此必须保留独立三级对照，不能把深度变化算作写回收益。
+3. **主要限制在输入/MMA**：若双缓冲相对三级对照仍无明显收益，写回交接和读取的
+   优化都不足以解释剩余耗时，应回到输入/MMA 路径；暂不继续堆叠写回小改动。
+
+默认三个构建：
+
+- `baseline`：当前正式四级输入、单写回缓冲区。
+- `epilogue_depth3`：只将输入改为三级，动态 SMEM 181,248 字节；4096 CUDA 与此前
+  实测 `balanced_depth3` 完全一致。作为新接口支持当前已采用缓存/网格的生产源码。
+- `epilogue_double_buffer`：直接对照是 `epilogue_depth3`；保持 EPI_N=64，两个
+  consumer 各自拥有两个 128×64 的 FP16 缓冲区。四块输出交替使用 0/1/0/1。
+  第一块提交后不等待，第二、三块提交后 `wait_group(1)`，第四块 `wait_group(0)`
+  排空读取。每次原 warpgroup 同步保留，确保等待完成后其他 lane 才复用缓冲区。
+
+TMA bulk group 属于发射线程，双缓冲版本固定由各 consumer 的 warp 0 / lane 0
+执行所有 store/commit/wait，避免不同次选举的线程拥有不同提交组。`wait_group`
+沿用 TVM 的 `.read` 语义，等待 TMA 完成共享内存读取；在每个 tile 末尾排空，
+不会把未完成的 SMEM 读取带入下一 tile 或最终 cluster 同步。TMEM 读取、释放点、
+producer 协议、FP16 转换、输出坐标和原性能门槛保持不变。
+
+本地新增 17 项检查已通过，包括两个架构、四个评分尺寸、矩形 K=64/192/320，
+并从实际 CUDA 检查缓冲区覆盖、固定发射线程、最迟完成条件下的复用和最终排空顺序。
+完整本地工具/源码生成回归 **369 项通过，158.24 s**。
+**双缓冲尚无 GPU 编译、数值或性能结果，生产内核不变。**
+工具在计时前对三级对照和双缓冲各做三种矩形形状、每种两次验算；之后五轮交错计时。
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_epilogue.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：step10_adopt.UFT7xo
 
 数据：[全量 pytest](results_b300/step10_adopt.UFT7xo/pytest_all.log)、
 [Step 10 benchmark](results_b300/step10_adopt.UFT7xo/step10.csv)、
@@ -31,7 +102,7 @@ benchmark 与 pytest 是不同的计时运行。4096 仅有很小余量，和已
 不应通过反复重跑挑选 PASS、改变容差或改动计时规则来处理。保留已验证有效的缓存和
 均衡网格，继续检验具体开销，争取足以覆盖波动的收益。
 
-### 下一轮：写回交接与 TMEM 成对读取
+### 已完成实验：写回交接与 TMEM 成对读取
 
 已排除或未测到额外收益的方向包括等待提示、循环展开、三级流水线、宽 TMA 写回和
 合并 A。剩下三个可区分的假设按优先级为：
@@ -61,8 +132,8 @@ SMEM、网格、TMA 加载、MMA、原容差和 10 warmup / 30 repeat / 五轮 C
 本地已在 SM100a/SM103a 对四个评分形状及两个矩形形状检查实际生成代码：
 到达指令的 count/remote、warp 同步顺序、源列覆盖、成对寄存器范围、等待/转换顺序，
 并比对未改动的全部 producer 和 TMA 写回路径。完整本地工具/源码生成回归
-**352 项通过，143.52 s**。**新实验尚无 GPU 编译、数值或性能结论**。
-本轮不修改生产内核，下一轮只需运行：
+**352 项通过，143.52 s**。随后 GPU 结果见本文最新记录。
+当时未修改生产内核，以下为已执行的历史命令：
 
 ```bash
 mkdir -p results_b300
