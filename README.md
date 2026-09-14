@@ -27,10 +27,13 @@ The full suite now has 62 tests (57 previous + 5 new); the latest run failed the
 existing 4096 performance assertion at **0.140561 ms**, versus **0.139100 ms**.
 Its `pytest_3a9d486_2.log` filename alone does not verify the source revision/hash.
 
-The next independent probe is `bash run_step10_l2.sh`: compare L2 groups 8/4/2/1
-on the current narrow, double-buffered path over eight balanced trials, with
-numerical boundary checks before timing. Production kernels, shared-B consumers,
-input depth, launch grid, timer and thresholds are unchanged. GPU results are pending.
+The balanced eight-trial L2 probe at `9ad4a38` is complete: groups 4/2/1 were
+about 0.64%/0.55%/0.41% slower in paired latency; none is adopted. The group-eight
+baseline passed only 3/8 samples. Details are recorded from user terminal output
+for `step10_l2.nqNoLW`; that directory is not yet local.
+Next run `bash run_step10_depth5.sh` to recheck the existing depth-five input
+candidate with eight AB/BA trials. Earlier small gains used biased ordering;
+this recheck changes no production kernel, shared-B structure, timer or threshold.
 
 Step 9 now snapshots the immutable TMEM allocation after cluster synchronization.
 AB/BA rechecks at `3a9d486` showed about **1.25% / 2.00%** paired speedup for
