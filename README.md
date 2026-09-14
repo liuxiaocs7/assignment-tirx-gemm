@@ -1,12 +1,14 @@
 # Assignment: Blackwell GEMM Kernel Optimization
 
-**Latest reproduction (2026-09-15):** the user reported another **61 passed /
-1 failed** run at `32d4fa8`: Step 10 / 4096 took **0.139973 ms**, above the unchanged
-0.139100 ms limit; a subsequent run failed the same timing assertion again.
-The five accepted runs below remain valid, but reliable performance in later
-runs is not established. Use `bash run_step10_diagnose.sh` on the failing allocation
-to preserve targeted pytest results, formal benchmark samples and device/compiler
-metadata. See [RUNNING.md](RUNNING.md) and [the latest evidence](B300_VALIDATION.md).
+**Latest reproduction (2026-09-15):** [step10_diagnose.MBawzh](results_b300/step10_diagnose.MBawzh/)
+has three targeted Step 10 / 4096 pytest timing failures and only **2/8** formal
+benchmark samples within the unchanged 0.139100 ms limit (median **0.139725 ms**).
+The generated CUDA, cubin and compiler options exactly match earlier, faster
+artifacts. This run uses GPU **778768b4…**; identified faster historical runs use
+**dadf9f3b…**, but a controlled device/job comparison is still needed to establish
+the cause. The five accepted full runs below remain valid; performance stability
+in later conditions remains unresolved. This focused reproduction is complete.
+See [RUNNING.md](RUNNING.md) and [the latest evidence](B300_VALIDATION.md).
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` use Apache TVM
 **0.26.0** for SM100/SM103. **The five complete runs at `9e3b989` all pass:
