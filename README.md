@@ -30,9 +30,13 @@ depth 5 passed only **4/7** samples (maximum **0.139429 ms**, above the limit).
 Both runs used identical binaries. Depth 5 remains a candidate for a small gain;
 it has not been adopted and does not resolve timing stability.
 
-The next explicit probe places consumers along N to share A. It reduces requested
-input bytes per stage by 20% and compares five/six stages within the SMEM limit.
-The production kernel is unchanged; these candidates await B300 validation.
+Shared-A five/six-stage probes in `step10_share_a.r7r3iv` passed all numerical
+checks and 28 timing samples. However, the byte-identical baseline had about
+19.8% lower median time than in the preceding retest, and its times varied from 0.094261 to
+0.115052 ms within this run. Shared-A depth 5 gained only 1.002075× against the
+original depth 5; depth 6 showed no additional gain. The large timing drift
+prevents a reliable adoption decision. Keep production unchanged and collect
+GPU identity and runtime state during the next comparison; the cause is unproven.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10

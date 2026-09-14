@@ -34,9 +34,11 @@
 仅 1/7 达标；K64 五级略快且 7/7 通过，但最慢仅余 0.180%，尚未采用。
 独立复测 `step10_depth5_recheck.sMMqkr` 中五级仅 **4/7** 达标，配对加速约
 1.0029×。小收益重复出现，稳定性仍未修复；无需继续重复同一组复测来确认。
-下一项独立实验把 consumer 改为沿 N 排列、共享 A，减少每级输入请求量，
-再对照五级/六级预取。完整证据见 [B300_VALIDATION.md](B300_VALIDATION.md)，
-新实验和历史重放命令见下节。
+最新 `step10_share_a.r7r3iv` 四个版本的数值校验及 28 个计时样本全部通过，
+但同一 baseline 二进制比上次快约 19.8%，本轮又从约 0.094 升至 0.115 ms。
+共享 A 五级对原五级的配对收益仅约 0.21%，六级无明确额外收益，暂不采用。
+下一步记录 GPU 身份和运行状态再比较。完整证据见
+[B300_VALIDATION.md](B300_VALIDATION.md)，状态采集与历史重放命令见下节。
 各步原理与后续优化见 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)。
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
@@ -121,10 +123,69 @@ benchmark 保存正式 CUDA/cubin、编译参数和七轮原始样本，可核�
 probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder，会明确拒绝重复
 应用。要重放四尺寸历史实验需使用其记录的 `0f23484`，不能把新旧 baseline 混用。
 
+### 共享 A 结果漂移时的状态采集复测
+
+`step10_share_a.r7r3iv` 已完成下面的四版本实验，数值与计时均通过，但
+baseline 比历史同一二进制快约 19.8%，且单轮序列中存在明显漂移。现在先
+补齐运行状态再复测，不增加新候选，也不把本轮最小值当作优化成绩。
+沿用 `f029ed7` 即可，无需新实验代码。保持当前 Slurm 分配，在 B300 终端运行：
+
+```bash
+bash <<'SH'
+set -uo pipefail
+mkdir -p results_b300
+tirx_run=$(mktemp -d results_b300/step10_share_a_state.XXXXXX) || exit 1
+{
+  date -Is
+  hostname
+  git log -1 --oneline
+  printf 'job=%s step=%s job_gpus=%s step_gpus=%s visible=%s\n' \
+    "${SLURM_JOB_ID:-}" "${SLURM_STEP_ID:-}" "${SLURM_JOB_GPUS:-}" \
+    "${SLURM_STEP_GPUS:-}" "${CUDA_VISIBLE_DEVICES:-}"
+} > "$tirx_run/session.txt"
+uv run python -c 'import torch; i = torch.cuda.current_device(); p = torch.cuda.get_device_properties(i); print("logical_device:", i, "uuid:", getattr(p, "uuid", "unavailable"), "name:", p.name, "SMs:", p.multi_processor_count)' \
+  > "$tirx_run/cuda_device.txt" 2>&1
+nvidia-smi -q > "$tirx_run/gpu_before.txt" 2>&1
+nvidia-smi \
+  --query-gpu=timestamp,uuid,pstate,clocks.current.sm,clocks.current.memory,power.draw,power.limit,temperature.gpu,utilization.gpu \
+  --format=csv,nounits --loop-ms=200 \
+  > "$tirx_run/gpu_samples.csv" 2> "$tirx_run/gpu_samples.err" &
+tirx_monitor_pid=$!
+cleanup() {
+  kill "$tirx_monitor_pid" 2>/dev/null || true
+  wait "$tirx_monitor_pid" 2>/dev/null || true
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Timestamp log lines for coarse alignment with GPU samples; CUDA timing is unchanged.
+uv run python -u probe_persistent.py --steps 10 --size 4096 --trials 7 \
+  --variants tmem_share_a_depth6 --output "$tirx_run/step10" 2>&1 \
+  | while IFS= read -r tirx_line; do
+      printf '[%s] %s\n' "$(date -Is)" "$tirx_line"
+    done | tee "$tirx_run/step10.log"
+tirx_probe_exit=$?
+printf '%s\n' "$tirx_probe_exit" > "$tirx_run/probe_exitcode.txt"
+nvidia-smi -q > "$tirx_run/gpu_after.txt" 2>&1
+printf '结果目录：%s；退出码：%s\n' "$tirx_run" "$tirx_probe_exit"
+exit "$tirx_probe_exit"
+SH
+```
+
+`nvidia-smi -q` 保存驱动、UUID、功耗限制和时钟事件等可用字段；连续 CSV
+保存运行期间的状态。CUDA 设备 UUID 用来对应物理 GPU，不能仅靠逻辑序号 0
+判断两次是否使用同一张卡。若采样命令不受支持，错误保存在 `gpu_samples.err`，
+不能把缺失状态解释成稳定。工具只读取状态，不锁频或调整功耗。
+
+这轮带监控的运行用于诊断；200 ms 采样、秒级日志时间戳不足以覆盖每个 kernel，
+日志和监控也可能扰动进程间隔。保留所有样本，查看时间区间与状态是否共同变化，
+不要据单个快照直接断言降频。确定可比较条件后，再用下方原命令无监控复测候选。
+
 ### 共享 A 与六级输入缓冲实验
 
-先把包含 `tmem_share_a_depth6` 的新提交同步至服务器，再在 B300 上运行。
-本轮测试新的输入共享方式，不需要先重跑全量 pytest：
+首轮已在 `f029ed7` 执行，结果见本文开头；以下保留原实验命令。
+用于独立比较输入共享方式，不需要先重跑全量 pytest：
 
 ```bash
 mkdir -p results_b300
