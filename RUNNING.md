@@ -39,8 +39,11 @@
 共享 A 五级对原五级的配对收益仅约 0.21%，六级无明确额外收益，暂不采用。
 随后 `step10_share_a_state.X3xsC4` 也全部达标，慢段观察到 SM 2032→1507 MHz，
 SW Power Capping 计数增加 231.687 ms，热降频计数未增；本次 UUID 与此前角色
-诊断不同。原七轮窗口只有一个状态采样点，下一步延长同一序列至 201 轮。
-完整证据见
+诊断不同。随后同卡同作业的 `step10_share_a_state.fGOjDy` 延长到 201 轮，
+**804/804 样本达标**，20 个窗口内状态点显示持续负载下低于起始频率运行，
+功耗限制计数增加 4.195769 s、热降频计数未增。共享 A 五级在 179/201 轮快于
+原五级，约 0.44% 配对收益在四个时间段和四种顺序下均出现；六级无额外收益。
+下一步只验收五级的四尺寸表现，不再重复长时间状态采集。完整证据见
 [B300_VALIDATION.md](B300_VALIDATION.md)，状态采集与历史重放命令见下节。
 各步原理与后续优化见 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)。
 
@@ -126,7 +129,59 @@ benchmark 保存正式 CUDA/cubin、编译参数和七轮原始样本，可核�
 probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder，会明确拒绝重复
 应用。要重放四尺寸历史实验需使用其记录的 `0f23484`，不能把新旧 baseline 混用。
 
+### 共享 A 五级采用前验证
+
+`step10_share_a_state.fGOjDy` 已完成 201 轮状态采集，五级约 0.44% 的直接配对
+收益跨时间段和顺序重复出现，六级没有额外收益。下一步只测试五级，在同一
+Slurm 分配/同一 GPU 上完成无监控四尺寸验收；已有 `f029ed7` 及其后续提交
+即可运行，无需新实验代码：
+
+```bash
+bash <<'SH'
+set -uo pipefail
+mkdir -p results_b300
+tirx_run=$(mktemp -d results_b300/step10_share_a_validate.XXXXXX) || exit 1
+{
+  date -Iseconds
+  hostname
+  git log -1 --oneline
+  printf 'job=%s step=%s step_gpus=%s visible=%s\n' \
+    "${SLURM_JOB_ID:-}" "${SLURM_STEP_ID:-}" \
+    "${SLURM_STEP_GPUS:-}" "${CUDA_VISIBLE_DEVICES:-}"
+} > "$tirx_run/session.txt"
+nvidia-smi -q > "$tirx_run/gpu_before.txt" 2>&1
+tirx_exit=0
+for tirx_size in 1024 2048 4096 8192; do
+  uv run python -u probe_persistent.py --steps 10 --size "$tirx_size" --trials 7 \
+    --variants tmem_share_a_depth5 \
+    --output "$tirx_run/step10_$tirx_size" 2>&1 | tee "$tirx_run/step10_$tirx_size.log"
+  tirx_status=("${PIPESTATUS[@]}")
+  printf '%s\n' "${tirx_status[0]}" > "$tirx_run/probe_$tirx_size.exitcode.txt"
+  printf 'probe=%s tee=%s\n' "${tirx_status[@]}" > "$tirx_run/pipeline_$tirx_size.txt"
+  tirx_exit=${tirx_status[0]}
+  if (( tirx_exit == 0 )); then tirx_exit=${tirx_status[1]}; fi
+  if (( tirx_exit != 0 )); then break; fi
+done
+nvidia-smi -q > "$tirx_run/gpu_after.txt" 2>&1
+printf '结果目录：%s；退出码：%s\n' "$tirx_run" "$tirx_exit"
+exit "$tirx_exit"
+SH
+```
+
+每个尺寸自动包含 `baseline`、`tmem_input_depth5`、`tmem_share_a_depth5` 三项。
+1024/2048/8192 保留正式 fallback，4096 执行共享 A 新布局；同样进行矩形短 K
+边界校验。这里仅保存运行前后快照，不启动连续监控；保持 warmup=10、repeat=30。
+比较全部样本和直接对照，不因 SLOW 重跑直到通过。若数值/CUDA/日志错误则
+保留现场并停止后续尺寸；SLOW 作为有效测量保存，probe 仍返回 0。
+
+这一步只确认采用候选及回退路径的行为和无监控收益；通过后再正式改内核，
+并执行全量 pytest 与正式 benchmark。当前不需要先跑全量 pytest，也不用继续
+201 轮状态采集。历史另一 GPU 上的贴线失败仍保留，不把本轮余量外推给所有 GPU。
+
 ### 共享 A 结果漂移时的状态采集复测
+
+以下流程已经完成，结果为 `step10_share_a_state.fGOjDy`。当前下一步见上节，
+此处保留供重放或未来出现新的状态变化时使用。
 
 `step10_share_a_state.X3xsC4` 已完成七轮状态采集。慢段的 SM 采样降到
 1507 MHz，前后 SW Power Capping 计数增加 231.687 ms，没有热降频计数增长。

@@ -42,8 +42,17 @@ The follow-up `step10_share_a_state.X3xsC4` passed all 28 samples and observed
 SW Power Capping time across the run. Thermal-slowdown counters did not increase.
 Its GPU UUID differs from the earlier role profile's GPU. Only one 200 ms state
 sample fell inside the roughly 131 ms timing window, so per-sample causes remain
-unresolved. Keep production unchanged; the next diagnostic extends the same
-sequence to 201 trials with the original per-trial warmup/repeat settings.
+unresolved.
+
+The 201-trial extension `step10_share_a_state.fGOjDy` passed **804/804** samples
+on the same GPU/job. Shared-A depth 5 beat the original depth 5 in **179/201**
+pairs, with **1.004371×** paired speedup and gains across all four time blocks
+and order patterns. Depth 6 added no benefit. Twenty in-window state samples
+showed sustained lower SM clocks and power readings near the 1100 W limit;
+SW Power Capping time increased by 4.195769 s, with no thermal-counter increase.
+Keep depth 5 as the adoption candidate and validate four sizes without monitoring
+before changing production. The baseline also passed every sample, so its roughly
+16.7% worst-sample margin must not be attributed to the small candidate gain.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10
