@@ -1,73 +1,62 @@
 # Assignment: Blackwell GEMM Kernel Optimization
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` use Apache TVM
-**0.26.0** for SM100/SM103. **The latest user-reported full run has 61 passed /
-1 failed out of 62 tests: Step 10 / 4096 exceeds the timing limit by 1.05%.**
-Numerical verification and the five new boundary cases passed. Improving this
-performance margin is in progress; the Step 9 cache adoption still awaits formal
-regression. The historical accepted full pytest suite reports **57 passed**, and the
-official Step 10 benchmark passes all four sizes and **28/28 individual timing
-samples**. Results are in [step10_final.vM3h3I](results_b300/step10_final.vM3h3I/),
-executed at `6e5f5f4` on Slurm job 27503, step 0. Step 10 / 4096 has median
-**0.094018 ms** and maximum **0.094208 ms** against a **0.139100 ms** limit,
-giving **32.27%** margin at the slowest sample. Both command exit codes are 0.
+**0.26.0** for SM100/SM103. **The five complete runs at `9e3b989` all pass:
+62/62 pytest cases per run and 185/185 all-step benchmark rows in total.**
+This completes the B300 acceptance of the current implementation, including the
+Step 9 TMEM-base cache adoption, for the recorded runs. Each benchmark process
+used trials=1, warmup=10, repeat=30; these were five full runs, not seven trials
+per shape. The original thresholds are unchanged.
 
-Step 10 uses N128/EPI32 up to output area 4096², with double TMEM buffering when
-persistent reuse is needed; larger outputs retain N256/EPI64. Step 10 remains
-as adopted at `d283549`: all four sizes' recorded CUDA and cubin files match
-the first formal acceptance run byte for byte. The original thresholds and
-CUDA-event timer remain unchanged. The review reported **636 passed** for the
-full local tool suite at `c788f3a`; the subsequent timing-order fix passed
-**311 distinct relevant tool/source-generation checks** across targeted runs.
-These are separate from GPU acceptance. The Step 9 adoption passed **170 relevant
-tool/source-generation checks**, including replay of the recorded cache builder,
-CUDA and TMA descriptors. Other nine kernel builders are unchanged from `3a9d486`.
-The user also reported **5 passed** for the added Step 10 GPU boundary tests.
-The full suite now has 62 tests (57 previous + 5 new); the latest run failed the
-existing 4096 performance assertion at **0.140561 ms**, versus **0.139100 ms**.
-Its `pytest_3a9d486_2.log` filename alone does not verify the source revision/hash.
+The five [pytest logs](results_b300/pytest_9e3b989_1.log) and
+[all-step CSVs](results_b300/all_steps_9e3b989_1.csv), numbered 1–5, were archived
+at `0961ddc` and checked individually. All CSVs record revision `9e3b989` and
+matching hashes for the kernel, utilities and benchmark sources. Step 10 / 4096
+ranges from **0.094261 to 0.094725 ms**, leaving **31.90%** margin at its slowest
+sample against the **0.139100 ms** limit. Step 10 / 8192 ranges from
+**0.642770 to 0.649407 ms**, also passing. The production kernel, benchmark,
+utilities and GPU tests are unchanged between that run and `f06d88f`.
+Detailed evidence and provenance limits are in [B300_VALIDATION.md](B300_VALIDATION.md).
 
-The balanced eight-trial L2 probe at `9ad4a38` is complete: groups 4/2/1 were
-about 0.64%/0.55%/0.41% slower in paired latency; none is adopted. The group-eight
-baseline passed only 3/8 samples. `step10_l2.nqNoLW` is now archived locally.
-The depth-five AB/BA recheck in `step10_depth5_balanced.Fm3CcJ` is also complete:
-**8/8 faster**, paired speedup **1.003139×**, but only **6/8 samples below the limit**
-(maximum 0.139322 ms). Original samples, source hashes and compiled artifacts have
-been checked. This supports a small gain; it does not resolve the performance
-margin. Depth five remains a candidate, production stays at depth four, and these
-completed probes need not be repeated. No timer or threshold has changed.
+The geometry probe [step10_geometry.PywrmG](results_b300/step10_geometry.PywrmG/)
+is complete. All four 4096 builds and 48 boundary launches verified, but the
+three candidates were slower than baseline in **all eight paired trials**.
+N128 with 74 clusters, N64/depth4 and N64/depth5 increased paired latency by
+about **4.75%, 36.50% and 24.22%**, respectively. None is adopted; this probe
+need not be repeated. N64/depth5's 1.099× speedup is relative to N64/depth4,
+not production. The baseline passed 8/8 samples.
 
-The next independent probe is `bash run_step10_geometry.sh`: production baseline
-→ N128 with all 74 clusters → N64/depth4 → N64/depth5, using eight balanced trials.
-It retains two consumers sharing B and checks short K, persistent reuse and
-dispatch boundaries before timing. **GPU results are pending; none is adopted.**
-See [the run instructions](RUNNING.md#step-10-网格与-n64-tile-对照待-b300-实测).
+Step 10 retains N128/EPI32 up to output area 4096², double TMEM buffering for
+persistent reuse, and N256/EPI64 for larger outputs. For 4096 on B300 it uses
+64 balanced clusters, group8 and depth4; both consumers share B. Smaller L2
+groups were rejected. The N128 depth-five recheck was 8/8 faster by about 0.31%,
+but only 6/8 samples met the limit, so it remains unadopted. Shared-A is also
+experimental. Further performance work is optional and does not block the
+accepted version.
 
 Step 9 now snapshots the immutable TMEM allocation after cluster synchronization.
-AB/BA rechecks at `3a9d486` showed about **1.25% / 2.00%** paired speedup for
-4096/8192, with the cache faster in all seven trials at each size. Small sizes
-were nearly flat in the initial four-size run. The new rechecks are documented
-from user-provided terminal output; their result directories are not yet local.
-Run `bash run_step9_validate.sh` on B300 for the adopted version's full pytest
-and formal four-size Step 9 benchmark before recording new acceptance.
+Its original AB/BA cache rechecks showed about 1.25% / 2.00% paired speedup for
+4096/8192, with all seven pairs faster at each size; adoption regression is now
+covered by the five accepted full runs. Small-size gains were not established.
 
-Historical Step 10 / 4096 timing failures remain documented, including two of
-five all-step benchmarks above the limit. The historical accepted result establishes
-acceptance for the recorded GPU and conditions, not every allocation. Shared-A
-depth 5 showed a small **1.004371×** paired signal against its direct control in the
-201-trial diagnostic run, but review found a position bias in its measurement order.
-Shared-A remains experimental. Its further validation is optional and does not
-affect the previous baseline's acceptance or Step 9 cache adoption.
+Historical failures remain recorded: an earlier full run had 61 passed / 1 failed
+at Step 10 / 4096 (**0.140561 ms**), and older benchmarks also had slow samples.
+The historical [57-test acceptance](results_b300/step10_final.vM3h3I/) and its
+28/28 Step 10 samples remain valid. These results describe their recorded
+conditions, not every GPU allocation. Probe baselines have identical compiled
+code but vary across devices and within a run; a faster new allocation is not
+an optimization result.
 
-Probe order now balances candidate positions over complete cycles, and the formal
-benchmark alternates kernel/cuBLAS order and records paired samples. Earlier
-cuBLAS ratios are observations from sequential measurements, not evidence of a
-stable performance lead. The fixed assignment-threshold PASS records remain valid.
+Probe order balances candidate positions over complete cycles. The formal
+benchmark supports alternating kernel/cuBLAS order; the five trials=1 processes
+all actually used kernel-first order, so this acceptance does not establish a
+stable cuBLAS lead. The geometry experiment's **331 local checks** passed before
+GPU execution; the previously reported **636-test tool suite** was at `c788f3a`.
+This result review checked recorded data and did not rerun GPU tests locally.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10
-optimization guide and remaining improvements, and
-[B300_VALIDATION.md](B300_VALIDATION.md) for evidence and experiment history.
+optimization guide, and [B300_VALIDATION.md](B300_VALIDATION.md) for experiment history.
 
 In this assignment, you will progressively build a high-performance FP16 GEMM kernel for NVIDIA Blackwell (SM100) GPUs using TVM/TIRX. Starting from a minimal single-tile kernel, you will incrementally add optimizations — K-loop accumulation, spatial tiling, TMA async loads, software pipelining, persistent kernels, warp specialization, deeper pipelines, multi-CTA clusters, and multi-consumer parallelism — until you arrive at a fully optimized kernel that matches the structure of production-grade implementations.
 
