@@ -88,7 +88,6 @@ def test_role_probe_rejects_reapplication_and_unadopted_source(variant, tmp_path
 
 def test_role_variants_use_independent_production_controls():
     variants = ['baseline', 'role_registers', 'tma_b_first']
-    assert select_variants(10) == ['baseline']
     assert select_variants(10, variants[1:]) == variants
     cases = [dict(step=10, size=4096, variant=v, samples_ms=s) for v, s in
              zip(variants, [[10, 20, 40], [8, 10, 20], [5, 10, 10]])]

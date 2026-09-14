@@ -2,19 +2,18 @@
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` are implemented using
 Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
-source generation checks. The latest full B300 run, `step10_adopt.UFT7xo`, is
-**56 passed / 1 performance failure out of 57 tests** (75.28 s). All numerical
-checks and Step 8 pass. Only Step 10 / 4096 fails: 0.139278 ms versus the
-0.139100 ms limit, about 0.13% over. Its separate benchmark passes all 20 samples
-across four shapes, but the worst 4096 sample has just 0.38% margin.
-In `step10_roles.rx5lNL`, B-first TMA requests beat the same-trial baseline in
-all five trials, with a median paired speedup of 1.004687× and all samples below
-the limit. Step 10 now adopts that request order; generated CUDA matches the
-measured kernel. Its worst sample has only 0.356% margin, so full-suite GPU
-validation is still required. The register-budget experiment was ignored by
-ptxas (C7508), and does not establish a benefit from register redistribution.
-The diagnostic tool now rejects that ignored-hint warning before launch.
-All **395 local tool/source-generation checks pass** (188.26 s); they do not
+source generation checks. B-first Step 10 passed the full B300 suite once:
+**57 passed** in `step10_bfirst.A0Iwp0` (74.54 s). A subsequent user-reported
+run at `1e37e76` returned **56 passed / 1 performance failure** (74.17 s).
+Only Step 10 / 4096 fails: 0.139284 ms versus the 0.139100 ms limit.
+The earlier passing value was 0.139047 ms, with just 0.038% margin.
+All numerical checks pass. The formal 4096 CUDA/cubin and compiler options
+match the B-first probe exactly; the production source is unchanged between
+these commits. A single passing run has not established stable performance.
+The next diagnostics isolate narrower N tiles, smaller epilogue chunks and
+a five-stage input pipeline with direct controls. Production remains unchanged
+until measured evidence supports another adoption.
+All **415 local tool/source-generation checks pass** (205.25 s); they do not
 replace GPU correctness and timing validation of the adopted implementation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.

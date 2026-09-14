@@ -1,6 +1,84 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step10_roles.rx5lNL
+## 最新结果：B-first 一次全过，复测仍有性能失败
+
+正式验收数据：[pytest](results_b300/step10_bfirst.A0Iwp0/pytest_all.log)、
+[Step 10 benchmark](results_b300/step10_bfirst.A0Iwp0/step10.csv)、
+[编译记录](results_b300/step10_bfirst.A0Iwp0/compiler_step10/run.json)。
+版本 `cb26383`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+四个记录的源码指纹核对通过，4096 的 CUDA、cubin 和 NVRTC 参数与实测
+`step10_roles.rx5lNL` 中的 B-first 胜出版本完全一致。
+
+| 运行 | 全量结果 | Step 10 / 4096 ms | 相对 0.139100 ms 门槛 |
+|---|---|---:|---|
+| `step10_bfirst.A0Iwp0` | **57 passed，74.54 s** | 0.139047 | 低 0.053 微秒 / 0.038% |
+| 用户回传 `pytest_1e37e7_1.log` | **56 passed / 1 failed，74.17 s** | 0.139284 | 高 0.184 微秒 / 0.132% |
+
+第二行来自本次用户粘贴的完整终端输出；其所报路径为
+`results_b300/pytest_1e37e7_1.log`，当前本地仓库尚无该文件，不能额外核对该次运行
+的编译产物。仓库 `1e37e76` 相对 `cb26383` 的生产内核、评分代码和 GPU 测试未变。
+两次的所有数值检查都通过，失败只在同一个性能门槛。
+**上次“本次全部通过”属实，但不表示已取得稳定通过的余量。**
+
+正式 Step 10 benchmark 的四个尺寸共 20 个样本均达标：
+
+| 大小 | 中位数 ms | 最大值 ms | 门槛 ms | 最慢样本余量 |
+|---|---:|---:|---:|---:|
+| 1024 | 0.027481 | 0.027627 | 0.032500 | 14.99% |
+| 2048 | 0.043169 | 0.043280 | 0.045500 | 4.88% |
+| 4096 | 0.138409 | 0.138994 | 0.139100 | **0.076%** |
+| 8192 | 0.869102 | 0.869911 | 0.946400 | 8.08% |
+
+这些结果与极小余量下的跨运行波动相符，不能据此确定波动来自频率、负载或其他具体
+原因。继续原计时和评分规则，优化目标是增大余量，而非重跑挑选通过的一次。
+
+### 下一轮：缩小 N 分块与输入供给
+
+按可区分的预测安排三个实验，每一步有直接对照：
+
+1. 若 256 列的 accumulator 写回暂存/调度限制性能，将 MMA_N 从 256 降至 128，
+   每个 CTA 的 B 行数从 128 降至 64，应降低写回暂存和输入 SMEM。反面代价是
+   输出 tile 数翻倍、A 的重复读取与每矩阵 barrier 次数增加，收益必须实测。
+2. 若缩小 epilogue 能释放更多 SMEM，EPI64 改为 EPI32 后应降低占用；其 store/wait
+   次数翻倍可能抵消收益，因此将这一步单独计时，不能把代价隐藏在流水线深度实验中。
+3. 若供数延迟仍限制窄 N 的 MMA，利用腾出的 SMEM 将输入由四级加到五级应加速；
+   若没有加速，则更深的 ring 和额外 phase 计算没有净收益。
+
+| 版本 | 直接对照 | MMA_N / 每 CTA 的 B 行数 | EPI_N | 输入深度 | 动态 SMEM 字节 |
+|---|---|---:|---:|---:|---:|
+| baseline | baseline | 256 / 128 | 64 | 4 | 230400 |
+| n_tile_128 | baseline | 128 / 64 | 64 | 4 | 197632 |
+| n128_epi32 | n_tile_128 | 128 / 64 | 32 | 4 | 181248 |
+| n128_epi32_depth5 | n128_epi32 | 128 / 64 | 32 | 5 | 222208 |
+
+所有实验保留两个 MMA consumer、两个写回 warpgroup、B 优先加载、缓存 TMEM 基址、
+均衡网格公式、512 列 TMEM 分配和现有同步协议。4096 输出从 128 个 512×256 tile
+变为 256 个 512×128 tile，仍由 64 个 cluster 覆盖，但每个 cluster 由两个 tile
+变为四个。两个 consumer 分别读写 TMEM 的 `[0,128)` 和 `[128,256)`。
+每级 TMA transaction bytes 从 98,304 变为 81,920。
+EPI32 使用与 64 字节行匹配的 `SWIZZLE_64B_ATOM`；A/B 的 128 字节 swizzle 保留。
+五级输入和 EPI64 会占 238,592 字节，超过本工具使用的 232,448 字节动态预算，
+因此以独立 EPI32 对照作为五级实验的基础。
+
+计时前，每个新变体在 `(4096,3072,K)` 的 K=64/320/384 各验算两次，覆盖短于 ring、
+完整五级 ring 和不完整 ring，以及三个输出 tile 的重用。数值验证失败会停止。
+之后四个版本使用原 10 warmup / 30 repeat / 五轮交错 CUDA-event 计时，保存直接
+对照、源码指纹、编译资源与 SASS。新 GPU 结果尚未取得，**生产内核本轮不变**。
+本地完整工具/源码生成回归 **415 项通过，205.25 s**。新增 20 项覆盖两个架构、
+评分与边界形状，检查实际 TMA box/stride/swizzle、SMEM 范围、MMA N 描述符、
+consumer TMEM 偏移、写回坐标、barrier/phase、比较链与重复应用拒绝。
+这些检查不替代 B300 上的编译、数值验算和性能测量。
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_n128.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：step10_roles.rx5lNL
 
 数据：[summary](results_b300/step10_roles.rx5lNL/step10/summary.csv)、
 [samples](results_b300/step10_roles.rx5lNL/step10/samples.json)、
@@ -16,7 +94,7 @@ baseline 的 CUDA、cubin 和 NVRTC 参数与 `step10_adopt.UFT7xo` 相同。
 | role_registers | 0.138396 | 0.138643 | 5/5 | 1.001733× | 167 / 0 |
 | tma_b_first | **0.137891** | **0.138605** | **5/5** | **1.004687×** | 167 / 0 |
 
-### 采用 B 优先加载，仍需正式全量验收
+### 采用 B 优先加载
 
 `tma_b_first` 五轮都快于同轮 baseline，同轮加速中位数约 **0.469%**。
 最慢样本距 0.139100 ms 门槛约 **0.495 微秒 / 0.356%**，收益一致但余量仍窄。
@@ -32,7 +110,7 @@ EPI64、缓存 TMEM 基址和均衡网格。4096 生成的 CUDA kernel 与实测
 `3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7`。
 实测 B-first cubin SHA256：
 `afadd2f4f7f171021362e419883ab200ac3fa1e7f504c58e9a762eb471725e3d`。
-本地无 NVIDIA GPU，cubin 一致性和性能需由下一次服务器运行确认。
+随后的正式 cubin 一致性已核对，验收和复测结果见本文最新记录。
 
 ### 寄存器提示被编译器忽略
 
@@ -45,12 +123,11 @@ SASS 中没有对应的寄存器重分配指令。因此这次实验**没有实�
 遇到该忽略诊断会在返回 cubin、启动 kernel 之前停止，并恢复编译回调。
 没有此诊断也不等于提示必然生效，今后的寄存器实验仍需检查实际 SASS。
 
-默认 probe 现只运行正式 baseline；已采用的 `tma_b_first` 拒绝重复应用，
+当时默认 probe 只运行正式 baseline；已采用的 `tma_b_first` 拒绝重复应用，
 历史角色和双缓冲实验的本地回归使用记录的旧 builder，保留原对照含义。
 完整本地工具/源码生成回归 **395 项通过，188.26 s**，包含实测 CUDA 重放、
 跨架构边界检查和忽略提示时停止/恢复回调的回归。原评分、容差、计时规则和 GPU
-测试未改。最新全量仍为 **56/57**；
-下一步是运行正式代码的全量 pytest 和 Step 10 五轮 benchmark：
+测试未改。该次采用时最新全量为 **56/57**；以下正式验收已完成，见本文最新记录：
 
 ```bash
 mkdir -p results_b300

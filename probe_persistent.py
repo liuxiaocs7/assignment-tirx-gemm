@@ -1,7 +1,8 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
-Step 10 has adopted the measured B-first TMA request order. The default runs
-only the production baseline; full-suite validation remains pending.
+Step 10 has adopted B-first TMA requests but still crosses the 4096 limit.
+The default isolates narrower N tiles, smaller epilogues, and deeper input
+buffering, with a direct control for each change.
 Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
@@ -36,11 +37,11 @@ STEP_VARIANTS = {
          "cache_unroll_ring", "cache_mma_no_unroll", "cache_balanced_clusters",
          "balanced_depth3", "balanced_depth3_epi128", "balanced_fused_a",
          "warp_release", "paired_tmem_loads", "epilogue_depth3", "epilogue_double_buffer",
-         "role_registers", "tma_b_first"),
+         "role_registers", "tma_b_first", "n_tile_128", "n128_epi32", "n128_epi32_depth5"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline",)}
+                         10: ("baseline", "n_tile_128", "n128_epi32", "n128_epi32_depth5")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -55,7 +56,10 @@ EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
                        "balanced_depth3": "cache_balanced_clusters",
                        "balanced_depth3_epi128": "balanced_depth3",
                        "balanced_fused_a": "cache_balanced_clusters",
-                       "epilogue_double_buffer": "epilogue_depth3"}
+                       "epilogue_double_buffer": "epilogue_depth3",
+                       "n128_epi32": "n_tile_128",
+                       "n128_epi32_depth5": "n128_epi32"}
+NARROW_N_VARIANTS = ("n_tile_128", "n128_epi32", "n128_epi32_depth5")
 DEPTH3_VARIANTS = ("balanced_depth3", "balanced_depth3_epi128")
 # K=1/3/5 stages covers shorter-than-ring, odd complete ring, and partial
 # ring; 96 cluster tiles force reuse of both consumers on the balanced grid.
@@ -69,6 +73,10 @@ VERIFICATION_SHAPES = {
     "epilogue_double_buffer": DEPTH3_VERIFY_SHAPES,
     "role_registers": ((4096, 3072, 64), (4096, 3072, 320)),
     "tma_b_first": ((4096, 3072, 64), (4096, 3072, 320)),
+    # One stage, exactly one five-stage ring, and a partial second ring.
+    # 192 narrow output tiles on 64 clusters force three tiles per cluster.
+    **{variant: ((4096, 3072, 64), (4096, 3072, 320), (4096, 3072, 384))
+       for variant in NARROW_N_VARIANTS},
 }
 
 
@@ -373,6 +381,27 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant in NARROW_N_VARIANTS:
+        loader = "        def tma_load(k_st):\n            Tx.copy_async(Bsmem["
+        if ("mma_tmem_base: T.let" not in source or "TILES_PER_CLUSTER =" not in source
+                or loader not in source):
+            raise ValueError("narrow N experiments require the adopted Step 10 B-first baseline")
+        # Each CTA loads half of the cluster's N dimension. Retain two MMA
+        # consumers, TMEM allocation, and all barrier/phase protocols.
+        source = replace_once(source, "    BLK_M, BLK_N, BLK_K = 128, 128, 64\n",
+                              "    BLK_M, BLK_N, BLK_K = 128, 64, 64\n")
+        source = replace_once(source, "    MMA_M, MMA_N = 256, 256\n",
+                              "    MMA_M, MMA_N = 256, 128\n")
+        if variant != "n_tile_128":
+            source = replace_once(source, "    EPI_N = 64\n", "    EPI_N = 32\n")
+            # A 32-half output row needs a 64-byte swizzle atom; the old
+            # 128-byte atom requires at least 64 halves. Input layouts stay.
+            source = replace_once(source,
+                "    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (NUM_CONSUMER, BLK_M, EPI_N))\n",
+                "    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_64B_ATOM, (NUM_CONSUMER, BLK_M, EPI_N))\n")
+        if variant == "n128_epi32_depth5":
+            source = replace_once(source, "    PIPE_DEPTH = 4\n", "    PIPE_DEPTH = 5\n")
+        return source
     if variant in ("role_registers", "tma_b_first"):
         if "mma_tmem_base: T.let" not in source or "TILES_PER_CLUSTER =" not in source:
             raise ValueError("role experiments require the adopted Step 10 cache/grid baseline")

@@ -22,15 +22,13 @@
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
 覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线。
-最新 `step10_adopt.UFT7xo` 全量为 **56 passed / 1 failed，共 57 项，75.28 s**。
-唯一失败是 Step 10 / 4096 的性能：0.139278 ms，比 0.139100 ms 门槛慢约 0.13%。
-所有数值校验通过，Step 8 全过，Step 10 其他评分尺寸及两个矩形边界也通过。
-同目录独立 Step 10 benchmark 四个尺寸 × 五轮，共 20 个样本全过，但 4096 最慢
-样本仅有 0.38% 余量。当时正式 CUDA/cubin/参数与缓存加均衡网格的胜出 probe 一致。
-最新 `step10_roles.rx5lNL` 的 B 优先加载五轮都快于同轮 baseline，全部达标，
-同轮加速中位数约 0.469%，最慢样本余量仍仅 0.356%。正式 Step 10 现已采用此顺序，
-本地生成的 CUDA 与实测版本一致，尚待新代码的全量 GPU 验收。
-寄存器重分配实验被 ptxas C7508 忽略，不能将其计时变化视为该策略的收益。
+`step10_bfirst.A0Iwp0` 正式全量 **57 passed，74.54 s**，但用户随后在 `1e37e76`
+复测得到 **56 passed / 1 failed，74.17 s**。唯一失败仍是 Step 10 / 4096：
+0.139284 ms，高于 0.139100 ms 门槛约 0.132%；此前通过时为 0.139047 ms，
+余量仅 0.038%。所有数值校验通过，一次全过尚不足以证明稳定达标。
+正式 4096 的 CUDA/cubin/编译参数与 B-first probe 一致；两个提交之间生产源码未变。
+同目录独立 Step 10 benchmark 的 20 个样本虽全过，4096 最慢样本余量仅 0.076%。
+下一轮检验更明显的 tile/流水线结构变化，生产暂时保持已采用的 B 优先加载。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
@@ -38,34 +36,32 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 详见 [最新验证和对照记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **395 项本地通过，188.26 s**；
+（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **415 项本地通过，205.25 s**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：验收采用 B 优先加载的正式 Step 10
+### 当前进度：Step 10 窄 N 与五级输入实验
 
-同步本轮提交后，运行正式全量测试和 Step 10 benchmark；最新全量结果仍为 56/57。
+同步本轮工具提交后，运行以下一个 probe；当前生产内核没有新增未实测的改动。
 
 ```bash
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/step10_bfirst.XXXXXX)
-uv run python -m pytest tests/ -vs --tb=short \
-  2>&1 | tee "$tirx_run/pytest_all.log"
-uv run python -u benchmark.py --steps 10 --trials 5 \
-  --csv "$tirx_run/step10.csv" \
-  --diagnostics-dir "$tirx_run/compiler_step10" \
-  2>&1 | tee "$tirx_run/benchmark_step10.log"
+tirx_run=$(mktemp -d results_b300/step10_n128.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-每级 TMA 请求已从 A0/A1/B 改为 B/A0/A1，四级输入、单写回缓冲区和所有同步保留。
-probe 默认只运行 baseline。寄存器实验的初始配额检查现在也拦截 NVRTC 日志中
-`setmaxnreg` 被忽略的诊断，避免将没有实施的变更当作性能实验。
-详见 [最新结果与采用依据](B300_VALIDATION.md#最新结果step10_rolesrx5lnl)。
+默认比较 `baseline`、`n_tile_128`、`n128_epi32`、`n128_epi32_depth5`：依次缩小
+N 分块、缩小输出 chunk、加深输入 ring，各自与上一步直接比较。所有版本保留两个
+consumer；每个变体在计时前先对矩形 K=64/320/384 各验算两次，再交错计时五轮。
+实验有减少寄存器暂存/改善供数的可能，也有 tile 数翻倍和 store/wait 增多的代价。
+本地源码检查不能证明性能收益，必须等 B300 数值与计时结果。
+详见 [最新复测与实验依据](B300_VALIDATION.md)。
 
 已采用的 Step 6/7 K128、Step 8 等待提示/基址缓存、Step 10 基址缓存/均衡网格/B 优先
 拒绝重复应用；依赖旧基线的历史组合需在对应历史提交重放。profiling 使用当前
