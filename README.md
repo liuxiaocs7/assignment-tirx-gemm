@@ -13,16 +13,27 @@ Step 10 uses N128/EPI32 up to output area 4096², with double TMEM buffering whe
 persistent reuse is needed; larger outputs retain N256/EPI64. Production kernels
 remain those adopted at `d283549`: all four sizes' CUDA and cubin files match
 the first formal acceptance run byte for byte. The original thresholds and
-CUDA-event measurement remain unchanged. Latest full local tool/source-generation
-regression: **614 passed**, recorded separately from GPU acceptance.
+CUDA-event timer remain unchanged. The review reported **636 passed** for the
+full local tool suite at `c788f3a`; the subsequent timing-order fix passed
+**311 distinct relevant tool/source-generation checks** across targeted runs.
+These are separate from GPU acceptance.
+Kernel comments have since been clarified without changing the Python AST.
+Five additional Step 10 GPU boundary tests are pending (62 tests in the full suite);
+the recorded 57-pass acceptance does not cover those new cases.
 
 Historical Step 10 / 4096 timing failures remain documented, including two of
 five all-step benchmarks above the limit. The current result establishes
 acceptance for the recorded GPU and conditions, not every allocation. Shared-A
-depth 5 showed a small **1.004371×** gain against its direct control in the
-201-trial diagnostic run; depth 6 added no benefit. Neither candidate has been
+depth 5 showed a small **1.004371×** paired signal against its direct control in the
+201-trial diagnostic run, but review found a position bias in its measurement order.
+Step 9's cache candidate similarly needs an AB/BA recheck. Neither candidate has been
 adopted. Further candidate validation is optional and is not required to complete
 the current acceptance.
+
+Probe order now balances candidate positions over complete cycles, and the formal
+benchmark alternates kernel/cuBLAS order and records paired samples. Earlier
+cuBLAS ratios are observations from sequential measurements, not evidence of a
+stable performance lead. The fixed assignment-threshold PASS records remain valid.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10
@@ -1155,6 +1166,11 @@ Total: **100 points**. Each step is graded on correctness, performance (within a
 ## Submission
 
 Please follow the instructions carefully.
+
+The archive format below is the original course requirement. This implementation
+targets TVM 0.26; compatibility with the old `mlc-ai-tirx-cu130==0.0.1b2`
+grader has not been established. Confirm the actual grader environment before
+using the B300 acceptance record as evidence for a course submission.
 
 ### What is graded
 

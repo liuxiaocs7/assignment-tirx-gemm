@@ -227,6 +227,27 @@ def test_interleaved_results_use_same_trial_baseline():
     assert len({tuple(order) for order in orders}) == 5
 
 
+def test_two_candidates_alternate_first_position():
+    assert [trial_order(2, trial) for trial in range(7)] == [
+        [0, 1], [1, 0], [0, 1], [1, 0], [0, 1], [1, 0], [0, 1],
+    ]
+
+
+@pytest.mark.parametrize("count", range(1, 10))
+def test_trial_schedule_balances_positions_and_pair_precedence(count):
+    cycle = count if count % 2 == 0 else 2 * count
+    orders = [trial_order(count, trial) for trial in range(cycle)]
+    assert all(sorted(order) == list(range(count)) for order in orders)
+    for candidate in range(count):
+        assert [sum(order[position] == candidate for order in orders)
+                for position in range(count)] == [cycle // count] * count
+        for other in range(candidate + 1, count):
+            assert sum(order.index(candidate) < order.index(other)
+                       for order in orders) == cycle // 2
+    # A long run must repeat a balanced cycle, not gradually favor one slot.
+    assert [trial_order(count, trial + cycle) for trial in range(cycle)] == orders
+
+
 @pytest.mark.parametrize("argv", [["--trials", "0"], ["--repeat", "0"], ["--warmup", "-1"],
                                   ["--size", "123"], ["--steps", "6"],
                                   ["--steps", "5", "--variants", "k_tile_128"],

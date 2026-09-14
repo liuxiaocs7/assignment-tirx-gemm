@@ -20,6 +20,7 @@ from pathlib import Path
 import re
 import statistics
 
+from benchmark import trial_order
 from benchmark_diagnostics import capture_compilation, run_metadata, write_json
 
 
@@ -217,14 +218,6 @@ def source_experiment(step, variant, directory, *, transform=variant_source):
     finally:
         tvm_ffi.register_global_func(name, original, override=True)
         write_json(directory / "experiment.json", dict(step=step, variant=variant, sources=calls))
-
-
-def trial_order(count, trial):
-    """Rotate and reverse measurement order to expose ordering/clock drift."""
-    order = list(range(count))
-    offset = trial % count
-    order = order[offset:] + order[:offset]
-    return order if trial % 2 == 0 else order[::-1]
 
 
 def summarize(cases, reference_times, tolerance):

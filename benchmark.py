@@ -9,6 +9,19 @@ from pathlib import Path
 from benchmark_diagnostics import capture_compilation, run_metadata, write_json
 
 
+def trial_order(count, trial):
+    """Pair each order with its reverse, rotating by two between pairs.
+
+    A cycle takes count trials for even counts and 2*count for odd counts.
+    Each cycle balances every position and both orders of every pair. With
+    two cases this is AB/BA; an incomplete cycle can still be unbalanced.
+    """
+    order = list(range(count))
+    offset = (2 * (trial // 2)) % count
+    order = order[offset:] + order[:offset]
+    return order if trial % 2 == 0 else order[::-1]
+
+
 def parse_steps(value):
     if value == "all":
         return list(range(1, 11))
@@ -86,6 +99,7 @@ def main(argv=None):
     target = blackwell_target()
     metadata = run_metadata()
     metadata["target"] = str(target)
+    metadata["comparison_order"] = "paired_reverse_rotation_v1"
     print(f"Code: {metadata['git_revision']}; dirty={metadata['git_dirty']}; "
           f"gemm_sha256={metadata['gemm_kernels_sha256']}")
     print(f"Compiler: {metadata['compiler']}; ptxas register-usage-level={metadata['ptxas_reg_level']}; "
@@ -96,6 +110,7 @@ def main(argv=None):
     print(f"GPU: {device.name}; SMs: {device.multi_processor_count}")
     print(f"TVM: {tvm.__version__}; PyTorch: {torch.__version__}; CUDA: {torch.version.cuda}")
     print(f"CUDA events: warmup={args.warmup}, repeat={args.repeat}, trials={args.trials}, seed={args.seed}")
+    print("cuBLAS comparison: alternate kernel/cuBLAS and cuBLAS/kernel per trial; save paired samples.")
     if args.diagnostics_dir:
         # A fresh directory prevents stale compiler logs from a previous run.
         args.diagnostics_dir.mkdir(parents=True, exist_ok=False)
@@ -106,7 +121,7 @@ def main(argv=None):
             trials=args.trials, seed=args.seed,
         ))
         print(f"Compiler artifacts: {args.diagnostics_dir} (hooks removed before timing)")
-    print("step       M       N       K   median_ms   TFLOP/s   cuBLAS_ms   vs_cuBLAS   limit_ms   status")
+    print("step       M       N       K   median_ms   TFLOP/s   cuBLAS_ms   vs_cuBLAS  paired_vs   limit_ms   status")
 
     rows = []
     failed = False
@@ -121,13 +136,24 @@ def main(argv=None):
                     executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
                     executable.mod(A, B, output)
                 verify(output, A, B)
-                samples = [time_cuda_call(lambda: executable.mod(A, B, output), args.warmup, args.repeat)
-                           for _ in range(args.trials)]
-            # Time cuBLAS with preallocated output on the same data and stream.
-            reference = torch.empty_like(output)
-            reference_samples = [time_cuda_call(lambda: torch.mm(A, B.T, out=reference), args.warmup, args.repeat)
-                                 for _ in range(args.trials)]
-            torch.testing.assert_close(output, reference, rtol=1e-3, atol=1e-2)
+                # Prepare and verify the exact cuBLAS call before either timing.
+                # Both calls use the same inputs/current stream and separate outputs.
+                reference = torch.empty_like(output)
+                calls = (lambda: executable.mod(A, B, output),
+                         lambda: torch.mm(A, B.T, out=reference))
+                calls[1]()
+                torch.testing.assert_close(output, reference, rtol=1e-3, atol=1e-2)
+                samples, reference_samples, orders = [], [], []
+                sample_lists = (samples, reference_samples)
+                names = ("kernel", "cublas")
+                for trial in range(args.trials):
+                    order = trial_order(2, trial)
+                    orders.append([names[index] for index in order])
+                    for index in order:
+                        sample_lists[index].append(time_cuda_call(calls[index], args.warmup, args.repeat))
+                    torch.testing.assert_close(output, reference, rtol=1e-3, atol=1e-2)
+            paired_ratios = [ref / value for value, ref in zip(samples, reference_samples)]
+            paired_speedup = statistics.median(paired_ratios)
             elapsed = statistics.median(samples)
             cublas_ms = statistics.median(reference_samples)
             tflops = 2 * M * N * K / (elapsed * 1e-3) / 1e12
@@ -137,7 +163,8 @@ def main(argv=None):
             failed |= status == "SLOW"
             limit = "-" if limit_ms is None else f"{limit_ms:.6f}"
             print(f"{step:>4} {M:>7} {N:>7} {K:>7} {elapsed:>11.6f} {tflops:>9.2f} "
-                  f"{cublas_ms:>11.6f} {cublas_ms / elapsed:>10.2f} {limit:>10}   {status}", flush=True)
+                  f"{cublas_ms:>11.6f} {cublas_ms / elapsed:>10.2f} {paired_speedup:>10.3f} "
+                  f"{limit:>10}   {status}", flush=True)
             rows.append(dict(step=step, M=M, N=N, K=K, median_ms=elapsed, min_ms=min(samples),
                              max_ms=max(samples), tflops=tflops, cublas_ms=cublas_ms,
                              speedup_vs_cublas=cublas_ms / elapsed, reference_ms=ref_ms,
@@ -145,7 +172,11 @@ def main(argv=None):
                              warmup=args.warmup, repeat=args.repeat, trials=args.trials,
                              gpu=device.name, sm_count=device.multi_processor_count,
                              tvm=tvm.__version__, torch=torch.__version__, cuda=torch.version.cuda,
-                             samples_ms=samples, cublas_samples_ms=reference_samples, **metadata))
+                             samples_ms=samples, cublas_samples_ms=reference_samples,
+                             trial_orders=orders, cublas_speedup_samples=paired_ratios,
+                             paired_speedup_vs_cublas=paired_speedup, **metadata))
+            if dump_dir:
+                write_json(dump_dir / "timing.json", rows[-1])
             if args.csv:
                 args.csv.parent.mkdir(parents=True, exist_ok=True)
                 with args.csv.open("w", newline="") as stream:

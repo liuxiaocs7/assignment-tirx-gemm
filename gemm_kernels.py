@@ -904,9 +904,9 @@ def hgemm_v7(M, N, K):
 
 # ======================================================================
 # Step 8: Deeper pipeline (PIPE_DEPTH=4)
-#   Same warp-specialized structure as v7, but with 4-stage pipeline
-#   to better hide TMA latency. Only changes: PIPE_DEPTH=2 → 4,
-#   which affects barrier array sizes and Asmem/Bsmem stage dimensions.
+#   Retains warp specialization, using K64 and a 4-stage input pipeline.
+#   Also uses chunked TMEM readback, early accumulator release, a cached
+#   TMEM base, a 64 ns TMA wait hint, and a grid capped by the tile count.
 # ======================================================================
 
 def hgemm_v8(M, N, K):
@@ -1277,6 +1277,8 @@ def hgemm_v10(M, N, K):
     # A single wave has no next tile to overlap. For persistent narrow tiles,
     # use both 128-column slots per consumer within the same 512-column TMEM.
     TMEM_BUFFERS = 2 if NARROW_N and TOTAL_TILES > MAX_CLUSTERS else 1
+    # slot = stage * TMEM_SLOT_STRIDE + consumer; tmem_col = slot * MMA_N.
+    # Ready/free barriers and TMEM columns always refer to the same slot.
     TMEM_SLOT_STRIDE = NUM_CONSUMER if TMEM_BUFFERS == 2 else 0
     TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS
     CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER
@@ -1375,6 +1377,7 @@ def hgemm_v10(M, N, K):
                     if T.filter(lane_id, T.ptx.elect_sync()):
                         while tile_scheduler.valid():
                             ld2mma.wait(ld_phase.stage * TMEM_SLOT_STRIDE + warp_id, ld_phase.phase)
+                            # One slot: stage stays zero; only the next wait phase flips.
                             if TMEM_BUFFERS == 1:
                                 ld_phase.advance()
                             for k in range(K_TILES):
@@ -1386,6 +1389,8 @@ def hgemm_v10(M, N, K):
                                 mma2tma.arrive(mma_phase.stage, cta_group=CTA_GROUP, cta_mask=3)
                                 mma_phase.advance()
                             mma2ld.arrive(ld_phase.stage * TMEM_SLOT_STRIDE + warp_id, cta_group=CTA_GROUP, cta_mask=3)
+                            # Two slots: advance after publishing this slot, flipping
+                            # phase only when the slot ring wraps.
                             if TMEM_BUFFERS == 2:
                                 ld_phase.advance()
                             tile_scheduler.next_tile()
@@ -1408,6 +1413,7 @@ def hgemm_v10(M, N, K):
                 # All TMEM reads have finished. MMA can overlap the TMA epilogue.
                 T.ptx.tcgen05.fence.before_thread_sync()
                 ld2mma.arrive(wb_phase.stage * TMEM_SLOT_STRIDE + wg_id, remote=0)
+                # Keep the readback slot through its release; then advance the ring.
                 if TMEM_BUFFERS == 2:
                     wb_phase.advance()
                 for i in T.unroll(MMA_N // EPI_N):

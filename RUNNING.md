@@ -29,7 +29,8 @@ job 27503 / step 0 执行：全量 pytest **57 passed，76.59 s**；正式 Step 
 正式内核仍为 `d283549` 采用的配置，四尺寸 CUDA/cubin 与首次验收逐字节一致。
 历史 `ea69b2c` 五轮全步骤 benchmark 中 4096 的两次 SLOW 仍保留；本次验收
 限定于记录的 GPU 与运行条件。共享 A 五级在前次 201 轮诊断中有约 0.44%
-直接配对收益，但尚未采用，后续验证属于可选优化，当前验收不依赖它。
+直接配对信号，但旧测量顺序存在位置偏置，尚未确认归因或采用。
+后续验证属于可选优化，当前验收不依赖它。
 完整证据与历史见 [B300_VALIDATION.md](B300_VALIDATION.md)，各步原理与
 可选改进见 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)。
 
@@ -39,16 +40,29 @@ job 27503 / step 0 执行：全量 pytest **57 passed，76.59 s**；正式 Step 
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
 （覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调、角色插桩及硬件采集入口，
-共 **614 项本地通过，358.02 s**；
-依赖 TVM 的用例在没有 TVM 时跳过）。
+review 报告在 `c788f3a` 完整运行 **636 passed**；本轮覆盖 **311 个不同用例**：
+相关回归 230 passed，候选生成检查 79 passed，随后扩充 CLI 检查并重跑
+21 passed（其中 19 项与前述重叠）。未重跑完整工具集。
+依赖 TVM 的用例在没有 TVM 时跳过，跳过不能作为源码生成通过）。
 
-主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
-奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
+主文件保持自包含。原作业提交说明只收 `gemm_kernels.py`，但当前实现使用
+TVM 0.26，不能据此推断兼容旧 `mlc-ai-tirx-cu130==0.0.1b2` grader；若要
+提交原课程平台，需先核对实际 grader 依赖与调用接口。新增测试覆盖短 K、
+奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个评分用例不变。
+review 后新增五个 Step 10 分支边界用例，当前全量为 62 项，其中新增五项
+尚待 B300 验证。可单独运行：
+
+```bash
+uv run python -m pytest tests/test_step10.py -k dispatch_boundaries -vs --tb=short
+```
 
 ### 当前采用的配置与最新验收成绩
 
-正式内核提交为 `d2835492913d94532bcd160ea79891a8f0e9d836`，SHA256 为
+历史验收内核提交为 `d2835492913d94532bcd160ea79891a8f0e9d836`，SHA256 为
 `5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c`。
+review 后仅增加/更正内核注释，当前 SHA256 为
+`1a06fa5715eda5567a5635eb285480ef8c0f2dc67e85da65cf38e6fc57052f85`，
+Python AST 不变，生成代码通过现有已测版本重放检查。
 以下是最新正式 Step 10 benchmark 汇总，四个尺寸均为 7/7 样本达标。
 首次验收与中间超线结果保留在 [验证历史](B300_VALIDATION.md) 中：
 
@@ -117,23 +131,28 @@ probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder�
 
 ### 可选优化：Step 9 缓存 TMEM 基址
 
-当前正式验收已通过。继续优化时可先运行新增的独立候选
+当前正式验收已通过。可选独立候选
 `cluster_cache_tmem_base`：在初始化的 CTA/cluster 同步之后读取一次 TMEM
 基址，用于后续 MMA 和读回，保留 Step 9 的四级输入、单 consumer、网格与
-同步协议。Step 8/10 已采用过同类优化，但 Step 9 的收益需单独测量。
+同步协议。首轮 [step9_cache.1WDeei](results_b300/step9_cache.1WDeei/) 已完成
+四尺寸和边界验证，56/56 计时样本达标。4096/8192 配对加速约
+1.0146×/1.0201×，但旧顺序七轮都先测 baseline，暂不采用。
 
-在 B300 仓库目录运行：
+同步修复后的代码，在 B300 仓库目录仅复核这两个尺寸：
 
 ```bash
-bash run_step9_cache.sh
+bash run_step9_cache.sh --size 4096
+bash run_step9_cache.sh --size 8192
 ```
 
-脚本顺序测试 1024/2048/4096/8192，每个尺寸包含正式 baseline 与一个缓存
-候选，各测七轮，warmup=10、repeat=30。自动记录版本、CUDA 设备 UUID、
+不带参数时脚本测试全部四尺寸。每个尺寸包含正式 baseline 与一个缓存
+候选，各测七轮，warmup=10、repeat=30；修复后为 AB/BA 交替，即七轮
+4 次 baseline 先测、3 次候选先测，顺序保存在 `samples.json`。
+自动记录版本、CUDA 设备 UUID、
 前后 GPU 快照、日志及 probe/tee 退出码；结果放在 `results_b300/step9_cache.*`。
 每个尺寸计时前，还校验单 tile、矩形 K64/192/256/320，以及 9×9 cluster
-tile 网格的部分 L2 分组，每组执行两次。若只做首轮筛选，可以运行
-`bash run_step9_cache.sh --size 4096`；采用前仍需完整四尺寸数据。
+tile 网格的部分 L2 分组，每组执行两次。已有四尺寸首轮数据，本次先确认
+大尺寸收益是否在两种先后顺序下都出现，再确定候选采用范围。
 
 底层调用是 `probe_persistent.py --steps 9 --variants cluster_cache_tmem_base`。
 baseline 是直接对照，默认不启用候选；工具不修改 `gemm_kernels.py`。SLOW
@@ -151,9 +170,9 @@ CUDA 函数体和 TMA 描述符与 baseline 一致，动态 SMEM 仍为 148480 b
 **可选后续优化：当前正式版本已验收通过，以下流程尚未执行，也不是当前验收要求。**
 
 `step10_share_a_state.fGOjDy` 已完成 201 轮状态采集，五级约 0.44% 的直接配对
-收益跨时间段和顺序重复出现，六级没有额外收益。若以后决定继续优化，可只测试
-五级，在同一 Slurm 分配/同一 GPU 上完成无监控四尺寸对照；已有 `f029ed7`
-及其后续提交即可运行，无需新实验代码：
+信号跨时间段和旧顺序出现，但位置偏置仍需复核，六级没有额外收益。
+若以后决定继续优化，可只测试五级，在同一 Slurm 分配/同一 GPU 上完成无监控
+四尺寸对照；请使用修复 `trial_order()` 后的代码，旧 `f029ed7` 只用于历史重放：
 
 ```bash
 bash <<'SH'
@@ -444,7 +463,7 @@ uv run python -c "import sys, tvm, gemm_kernels; print(sys.executable); print(tv
 # 快速获得所有 step 的 37 组正确性检查、性能、cuBLAS 对照和 CSV
 uv run python -u benchmark.py --steps all --trials 1 --csv results/all_steps.csv 2>&1 | tee results/benchmark.log
 
-# 完整验收：57 个 GPU 用例，包含 20 个额外边界用例
+# 完整验收：62 个 GPU 用例，包含 25 个额外边界用例
 uv run python -m pytest tests/ -v -s --tb=short 2>&1 | tee results/pytest.log
 ```
 
@@ -561,13 +580,14 @@ SH
 python -m pytest tests/ -xvs
 ```
 
-当前共有 **57 个 GPU 用例**。其中原有 37 个用例依次执行：
+当前共有 **62 个 GPU 用例**。其中原有 37 个用例依次执行：
 
 1. 编译并运行 TIRX 内核。
 2. 与 `torch.matmul(A, B.T)` 比较，要求 `rtol=1e-3, atol=1e-2`。
 3. 预热 10 次，CUDA event 测量 30 次，要求平均耗时不超过参考值的 `1.30` 倍。
 
-其余 20 个新增边界用例只检查正确性，没有任意新增性能门槛。
+其余 25 个边界用例只检查正确性，没有任意新增性能门槛。
+历史验收覆盖其中 20 项；review 后新增五项尚待 B300 运行。
 默认随机种子是 0；通过后可换种子检查稳定性：
 
 ```bash
@@ -580,7 +600,8 @@ GEMM_TEST_SEED=1 python -m pytest tests/test_step09.py tests/test_step10.py -xvs
 ## 5. 测量性能、比较 cuBLAS、导出 CSV
 
 `benchmark.py` 默认先检查正确性，每个形状只编译一次，再重复计时。
-输出每次测量的中位耗时、TFLOP/s、同形状 cuBLAS 耗时、相对 cuBLAS 的速度比和评分门槛。
+每轮交替 kernel/cuBLAS 与 cuBLAS/kernel，计时前分配输出并校验。输出中位
+耗时、TFLOP/s、同形状 cuBLAS 耗时、中位数比值、配对速度比和评分门槛。
 
 ```bash
 # 最终 Step 10：默认形状 1024 / 2048 / 4096 / 8192
@@ -607,19 +628,25 @@ python benchmark.py --steps 2 --sizes 64 512 1024 4096
 输出示意（具体数值取决于实测）：
 
 ```text
-step       M       N       K   median_ms   TFLOP/s   cuBLAS_ms   vs_cuBLAS   limit_ms   status
+step       M       N       K   median_ms   TFLOP/s   cuBLAS_ms   vs_cuBLAS  paired_vs   limit_ms   status
 ```
 
 - `vs_cuBLAS = cuBLAS_ms / median_ms`，大于 1 表示本内核在当前测量下更快。
+- `paired_vs` 是同轮 `cuBLAS_ms / kernel_ms` 比值的中位数，CSV 为
+  `paired_speedup_vs_cublas`。原 `speedup_vs_cublas` 含义不变。
 - `PASS`：正确性通过且耗时在参考门槛内；`SLOW`：正确但慢；`UNSCORED`：自定义形状没有参考门槛。
 - 有 `SLOW` 时脚本退出码为 1，CSV 仍保留。数值验证失败则立即报错。
-- CSV 包含 GPU / SM 数、TVM / PyTorch / CUDA 版本、种子、计时配置、各 trial 的原始耗时及最小/最大值。
+- CSV 包含环境、种子、计时配置、原始耗时、`trial_orders` 和逐轮
+  `cublas_speedup_samples`；启用 diagnostics 时每个形状还保存 `timing.json`。
 - 日志和 CSV 记录 commit、工作区是否有修改、内核/工具源码 SHA256、目标架构和编译参数。
 
 计算公式为 `TFLOP/s = 2*M*N*K / (time_ms*1e-3) / 1e12`。
 默认计时方式与原测试保持一致：当前 CUDA stream 上的 event 包围重复 kernel launch，
 不包含编译和输入创建。Python 发射间隙仍可能影响小矩阵结果；它不是 CUDA Graph 或峰值吞吐测试。
 `benchmark.py` 报告多轮中位数，pytest 使用单轮平均值，最终作业验收以 pytest 为准。
+旧 CSV 是先测完 kernel 再测 cuBLAS，不能事后视为交替测量。新顺序减少
+位置偏置，但不能消除状态漂移；七轮的先后次数为 4/3，偶数轮可以完全平衡。
+不要只凭一次约 1% 的比值认定稳定领先 cuBLAS。
 
 Step 10 的 B200 参考门槛如下，仅用于比较：
 

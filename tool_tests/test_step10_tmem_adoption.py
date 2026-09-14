@@ -50,7 +50,9 @@ def test_production_replays_each_measured_winner(size, variant, monkeypatch):
     ((512, 9472, 192), "n128_epi32"),
     ((512, 9728, 192), "n128_tmem_double_buffer"),
     ((4096, 4096, 320), "n128_tmem_double_buffer"),
+    ((4096, 4352, 64), "baseline"),
     ((4096, 4352, 320), "baseline"),
+    ((4608, 2560, 320), "n128_tmem_double_buffer"),
     *[((4096, 3072, k), "n128_tmem_double_buffer") for k in (64, 192, 256, 320)],
 ])
 def test_dispatch_preserves_measured_protocol_at_boundaries(arch, shape, variant):
