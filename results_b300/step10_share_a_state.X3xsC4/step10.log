@@ -1,0 +1,57 @@
+[2026-09-14T06:13:53.355+00:00] Code: 74cb1e084301b47d667c36c0d461f05e3de194a6; gemm_sha256=5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c
+[2026-09-14T06:13:53.355+00:00] GPU: NVIDIA B300 SXM6 AC; SMs: 148; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+[2026-09-14T06:13:53.355+00:00] Separate builds; each experiment records its direct comparison control. Verify all outputs before interleaved CUDA-event timing.
+[2026-09-14T06:13:55.407+00:00] Verified step 10 / baseline
+[2026-09-14T06:13:56.697+00:00] Verified step 10 / tmem_input_depth5
+[2026-09-14T06:13:57.819+00:00] Verified step 10 / tmem_share_a_depth5
+[2026-09-14T06:13:58.918+00:00] Verified step 10 / tmem_share_a_depth6
+[2026-09-14T06:13:59.853+00:00] Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 64) twice (untimed)
+[2026-09-14T06:14:00.780+00:00] Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 128) twice (untimed)
+[2026-09-14T06:14:01.711+00:00] Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 192) twice (untimed)
+[2026-09-14T06:14:02.641+00:00] Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 256) twice (untimed)
+[2026-09-14T06:14:03.581+00:00] Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 320) twice (untimed)
+[2026-09-14T06:14:04.512+00:00] Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 384) twice (untimed)
+[2026-09-14T06:14:05.439+00:00] Verified boundary Step 10 / tmem_share_a_depth5 / (4096, 3072, 64) twice (untimed)
+[2026-09-14T06:14:06.541+00:00] Verified boundary Step 10 / tmem_share_a_depth5 / (4096, 3072, 320) twice (untimed)
+[2026-09-14T06:14:07.480+00:00] Verified boundary Step 10 / tmem_share_a_depth5 / (4096, 3072, 384) twice (untimed)
+[2026-09-14T06:14:08.410+00:00] Verified boundary Step 10 / tmem_share_a_depth5 / (4096, 3072, 448) twice (untimed)
+[2026-09-14T06:14:09.304+00:00] Verified boundary Step 10 / tmem_share_a_depth5 / (1536, 5376, 320) twice (untimed)
+[2026-09-14T06:14:10.232+00:00] Verified boundary Step 10 / tmem_share_a_depth6 / (4096, 3072, 64) twice (untimed)
+[2026-09-14T06:14:11.157+00:00] Verified boundary Step 10 / tmem_share_a_depth6 / (4096, 3072, 320) twice (untimed)
+[2026-09-14T06:14:12.091+00:00] Verified boundary Step 10 / tmem_share_a_depth6 / (4096, 3072, 384) twice (untimed)
+[2026-09-14T06:14:13.018+00:00] Verified boundary Step 10 / tmem_share_a_depth6 / (4096, 3072, 448) twice (untimed)
+[2026-09-14T06:14:13.924+00:00] Verified boundary Step 10 / tmem_share_a_depth6 / (1536, 5376, 320) twice (untimed)
+[2026-09-14T06:14:13.928+00:00] Trial 1: step 10 / baseline: 0.094122 ms
+[2026-09-14T06:14:13.932+00:00] Trial 1: step 10 / tmem_input_depth5: 0.092558 ms
+[2026-09-14T06:14:13.936+00:00] Trial 1: step 10 / tmem_share_a_depth5: 0.092099 ms
+[2026-09-14T06:14:13.940+00:00] Trial 1: step 10 / tmem_share_a_depth6: 0.092268 ms
+[2026-09-14T06:14:13.945+00:00] Trial 2: step 10 / baseline: 0.094176 ms
+[2026-09-14T06:14:13.949+00:00] Trial 2: step 10 / tmem_share_a_depth6: 0.092526 ms
+[2026-09-14T06:14:13.953+00:00] Trial 2: step 10 / tmem_share_a_depth5: 0.092121 ms
+[2026-09-14T06:14:13.957+00:00] Trial 2: step 10 / tmem_input_depth5: 0.091803 ms
+[2026-09-14T06:14:13.961+00:00] Trial 3: step 10 / tmem_share_a_depth5: 0.091714 ms
+[2026-09-14T06:14:13.965+00:00] Trial 3: step 10 / tmem_share_a_depth6: 0.091684 ms
+[2026-09-14T06:14:13.969+00:00] Trial 3: step 10 / baseline: 0.093755 ms
+[2026-09-14T06:14:13.974+00:00] Trial 3: step 10 / tmem_input_depth5: 0.102613 ms
+[2026-09-14T06:14:13.979+00:00] Trial 4: step 10 / tmem_share_a_depth5: 0.109014 ms
+[2026-09-14T06:14:13.984+00:00] Trial 4: step 10 / tmem_input_depth5: 0.115631 ms
+[2026-09-14T06:14:13.989+00:00] Trial 4: step 10 / baseline: 0.115547 ms
+[2026-09-14T06:14:13.994+00:00] Trial 4: step 10 / tmem_share_a_depth6: 0.115049 ms
+[2026-09-14T06:14:13.999+00:00] Trial 5: step 10 / baseline: 0.116083 ms
+[2026-09-14T06:14:14.004+00:00] Trial 5: step 10 / tmem_input_depth5: 0.116100 ms
+[2026-09-14T06:14:14.009+00:00] Trial 5: step 10 / tmem_share_a_depth5: 0.115053 ms
+[2026-09-14T06:14:14.015+00:00] Trial 5: step 10 / tmem_share_a_depth6: 0.118131 ms
+[2026-09-14T06:14:14.020+00:00] Trial 6: step 10 / baseline: 0.117861 ms
+[2026-09-14T06:14:14.025+00:00] Trial 6: step 10 / tmem_share_a_depth6: 0.115354 ms
+[2026-09-14T06:14:14.030+00:00] Trial 6: step 10 / tmem_share_a_depth5: 0.115197 ms
+[2026-09-14T06:14:14.035+00:00] Trial 6: step 10 / tmem_input_depth5: 0.115084 ms
+[2026-09-14T06:14:14.040+00:00] Trial 7: step 10 / tmem_share_a_depth5: 0.114658 ms
+[2026-09-14T06:14:14.045+00:00] Trial 7: step 10 / tmem_share_a_depth6: 0.114940 ms
+[2026-09-14T06:14:14.050+00:00] Trial 7: step 10 / baseline: 0.115294 ms
+[2026-09-14T06:14:14.055+00:00] Trial 7: step 10 / tmem_input_depth5: 0.115289 ms
+[2026-09-14T06:14:14.055+00:00] step variant         median_ms    min_ms    max_ms paired_speedup vs_cache control                   vs_control limit_ms status
+[2026-09-14T06:14:14.056+00:00]   10 baseline         0.115294  0.093755  0.117861          1.000      n/a baseline                       1.000 0.139100 PASS
+[2026-09-14T06:14:14.056+00:00]   10 tmem_input_depth5  0.115084  0.091803  0.116100          1.000      n/a baseline                       1.000 0.139100 PASS
+[2026-09-14T06:14:14.056+00:00]   10 tmem_share_a_depth5  0.109014  0.091714  0.115197          1.022      n/a tmem_input_depth5              1.005 0.139100 PASS
+[2026-09-14T06:14:14.056+00:00]   10 tmem_share_a_depth6  0.114940  0.091684  0.118131          1.018      n/a tmem_share_a_depth5            0.998 0.139100 PASS
+[2026-09-14T06:14:14.056+00:00] Saved results_b300/step10_share_a_state.X3xsC4/step10/summary.csv; SLOW is a measured result, not a tool error.
