@@ -34,7 +34,9 @@
 仅 1/7 达标；K64 五级略快且 7/7 通过，但最慢仅余 0.180%，尚未采用。
 独立复测 `step10_depth5_recheck.sMMqkr` 中五级仅 **4/7** 达标，配对加速约
 1.0029×。小收益重复出现，稳定性仍未修复；无需继续重复同一组复测来确认。
-完整证据见 [B300_VALIDATION.md](B300_VALIDATION.md)，历史实验命令保留在下节。
+下一项独立实验把 consumer 改为沿 N 排列、共享 A，减少每级输入请求量，
+再对照五级/六级预取。完整证据见 [B300_VALIDATION.md](B300_VALIDATION.md)，
+新实验和历史重放命令见下节。
 各步原理与后续优化见 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)。
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
@@ -43,7 +45,7 @@
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
 （覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调、角色插桩及硬件采集入口，
-共 **585 项本地通过，338.64 s**；
+共 **614 项本地通过，358.02 s**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
@@ -118,6 +120,37 @@ benchmark 保存正式 CUDA/cubin、编译参数和七轮原始样本，可核�
 实测候选一致。这里是正式评分路径，不再使用 `--variants n128_tmem_double_buffer`。
 probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder，会明确拒绝重复
 应用。要重放四尺寸历史实验需使用其记录的 `0f23484`，不能把新旧 baseline 混用。
+
+### 共享 A 与六级输入缓冲实验
+
+先把包含 `tmem_share_a_depth6` 的新提交同步至服务器，再在 B300 上运行。
+本轮测试新的输入共享方式，不需要先重跑全量 pytest：
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_share_a.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 --trials 7 \
+  --variants tmem_share_a_depth6 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+tirx_probe_exit=$?
+printf '%s\n' "$tirx_probe_exit" > "$tirx_run/probe_exitcode.txt"
+printf '结果目录：%s；退出码：%s\n' "$tirx_run" "$tirx_probe_exit"
+```
+
+工具自动补齐四个版本：`baseline` → `tmem_input_depth5` →
+`tmem_share_a_depth5` → `tmem_share_a_depth6`。后两项各自相对前一项只推进
+输入共享方式或输入深度，前两项保留正式及实测对照。共享 A 的每级 TMA 请求
+减少 20%，但不保证相同比例的提速；寄存器与实际延迟需看 B300 编译产物和计时。
+
+新候选保持 TMEM 双槽和原正确性容差，在计时前检查评分形状及五个矩形短 K
+组合，各边界执行两次。输入环 K64/320/384/448 覆盖六级前、恰好一圈及超出
+一圈；`(1536,5376,320)` 检查非完整 L2 分组。原五级对照的六个边界也会验算。
+全部通过后按原 warmup=10、repeat=30 交错计时，保存样本、源码、cubin 和 SASS。
+
+重点比较共享 A 五级相对原五级、共享 A 六级相对共享 A 五级的配对收益，以及
+相对正式 baseline 的最慢样本余量。出现数值/CUDA 错误先处理；SLOW 是有效
+测量，不能丢弃。明确有益后再做独立复测、适用形状验证和正式采用后的全量验收。
 
 ### 当前路径输入环对照实验
 

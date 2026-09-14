@@ -15,7 +15,7 @@ sample had only **0.589%** margin. Its CUDA/cubin match the selected probe varia
 exactly. The five newer CSVs have matching kernel and timing-source fingerprints;
 they do not include per-run binaries. The original thresholds and CUDA-event
 measurement remain unchanged. Latest full local tool/source-generation regression:
-**585 passed**; GPU timing stability remains an open optimization item.
+**614 passed**; GPU timing stability remains an open optimization item.
 
 The current N128/TMEM profile is now available in `step10_current_profile.3cjntP`.
 Its baseline passed 7/7 samples, with only **0.345%** margin at the slowest sample.
@@ -29,6 +29,10 @@ depth-2 candidates regressed substantially. Independent retesting in
 depth 5 passed only **4/7** samples (maximum **0.139429 ms**, above the limit).
 Both runs used identical binaries. Depth 5 remains a candidate for a small gain;
 it has not been adopted and does not resolve timing stability.
+
+The next explicit probe places consumers along N to share A. It reduces requested
+input bytes per stage by 20% and compares five/six stages within the SMEM limit.
+The production kernel is unchanged; these candidates await B300 validation.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10

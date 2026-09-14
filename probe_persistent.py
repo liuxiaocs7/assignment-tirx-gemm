@@ -5,6 +5,8 @@ The default validates the production baseline. Historical wide-N probes must
 be replayed at their recorded commits, before the workload dispatch adoption.
 Explicit tmem_input_* / tmem_k128_depth2 probes vary the input ring only for
 the current double-buffered narrow path, retaining single-slot/wide fallbacks.
+Explicit tmem_share_a_depth* probes place the two consumers along N to reuse A,
+then compare five/six input stages on that layout.
 Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
@@ -43,7 +45,8 @@ STEP_VARIANTS = {
          "role_registers", "tma_b_first", "n_tile_128", "n128_epi32", "n128_epi32_depth5",
          "epilogue_32", "split_tma", "mma_batch", "mma_batch_no_unroll",
          "mma_unroll4", "mma_batch_unroll4", "n128_tmem_double_buffer",
-         "tmem_input_depth2", "tmem_k128_depth2", "tmem_input_depth5"),
+         "tmem_input_depth2", "tmem_k128_depth2", "tmem_input_depth5",
+         "tmem_share_a_depth5", "tmem_share_a_depth6"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
@@ -70,8 +73,11 @@ EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
                        "n128_tmem_double_buffer": "n128_epi32",
                        "tmem_input_depth2": "baseline",
                        "tmem_k128_depth2": "tmem_input_depth2",
-                       "tmem_input_depth5": "baseline"}
+                       "tmem_input_depth5": "baseline",
+                       "tmem_share_a_depth5": "tmem_input_depth5",
+                       "tmem_share_a_depth6": "tmem_share_a_depth5"}
 CURRENT_INPUT_VARIANTS = ("tmem_input_depth2", "tmem_k128_depth2", "tmem_input_depth5")
+SHARE_A_VARIANTS = ("tmem_share_a_depth5", "tmem_share_a_depth6")
 NARROW_N_VARIANTS = ("n_tile_128", "n128_epi32", "n128_epi32_depth5")
 DEPTH3_VARIANTS = ("balanced_depth3", "balanced_depth3_epi128")
 # K=1/3/5 stages covers shorter-than-ring, odd complete ring, and partial
@@ -105,6 +111,11 @@ VERIFICATION_SHAPES = {
     # odd/even two-stage rings. K320/384 also cross the five-stage ring.
     **{variant: tuple((4096, 3072, k) for k in (64, 128, 192, 256, 320, 384))
        for variant in CURRENT_INPUT_VARIANTS},
+    # Same output area, now 256x256 per cluster. Three tiles force TMEM reuse;
+    # K320/384/448 end before/on/after the six-stage input ring boundary.
+    **{variant: tuple((4096, 3072, k) for k in (64, 320, 384, 448))
+       + ((1536, 5376, 320),)  # 6x21 output tiles, partial L2 group and two waves.
+       for variant in SHARE_A_VARIANTS},
 }
 
 
@@ -507,12 +518,81 @@ def current_input_ring(source, variant):
     return replace_once(source, required[7], config + required[7])
 
 
+def share_a_consumers(source, variant):
+    """Transpose the consumer grid, retaining each 256x128 MMA and TMEM slot."""
+    if variant not in SHARE_A_VARIANTS:
+        raise ValueError(f"unsupported shared-A variant: {variant}")
+    # This validates the production baseline and reproduces the measured
+    # depth-five control before changing operand sharing.
+    source = current_input_ring(source, "tmem_input_depth5")
+    depth = 6 if variant == "tmem_share_a_depth6" else 5
+    config = "    PIPE_DEPTH = 5 if TMEM_BUFFERS == 2 else 4\n"
+    source = replace_once(source, config,
+        "    SHARE_A = TMEM_BUFFERS == 2\n"
+        "    A_CONSUMERS = 1 if SHARE_A else NUM_CONSUMER\n"
+        "    B_CONSUMERS = NUM_CONSUMER if SHARE_A else 1\n"
+        f"    PIPE_DEPTH = {depth} if SHARE_A else 4\n")
+    # M and N alignment guarantees that transposing the consumer grid leaves
+    # TOTAL_TILES and CLUSTER_COUNT unchanged, so both variants do equal work.
+    replacements = (
+        ("(PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K)",
+         "(PIPE_DEPTH, A_CONSUMERS, BLK_M, BLK_K)"),
+        ("(PIPE_DEPTH, BLK_N, BLK_K)",
+         "(PIPE_DEPTH, B_CONSUMERS, BLK_N, BLK_K)"),
+    )
+    for before, after in replacements:
+        if source.count(before) != 2:  # layout and allocation
+            raise ValueError(f"shared-A probe expected layout and allocation: {before}")
+        source = source.replace(before, after)
+    source = replace_once(source,
+        '"ts", num_m_tiles=M // (MMA_M * NUM_CONSUMER), num_n_tiles=N // MMA_N,',
+        '"ts", num_m_tiles=M // (MMA_M * A_CONSUMERS), num_n_tiles=N // (MMA_N * B_CONSUMERS),')
+    source = replace_once(source,
+        "m_st = T.meta_var(tile_scheduler.m_idx * MMA_M * NUM_CONSUMER + cbx * BLK_M)",
+        "m_st = T.meta_var(tile_scheduler.m_idx * MMA_M * A_CONSUMERS + cbx * BLK_M)")
+    source = replace_once(source,
+        "n_st = T.meta_var(tile_scheduler.n_idx * MMA_N + cbx * BLK_N)",
+        "n_st = T.meta_var(tile_scheduler.n_idx * MMA_N * B_CONSUMERS + cbx * BLK_N)")
+    source = replace_once(source, "n_out = T.meta_var(tile_scheduler.n_idx * MMA_N)",
+                          "n_out = T.meta_var(tile_scheduler.n_idx * MMA_N * B_CONSUMERS)")
+    old_load = ("            Tx.copy_async(Bsmem[tma_phase.stage, :, :],\n"
+                "                          B[n_st:n_st + BLK_N, k_st:k_st + BLK_K],\n"
+                '                          dispatch="tma_auto", cta_group=CTA_GROUP,\n'
+                "                          mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))\n"
+                "            for consumer in T.unroll(NUM_CONSUMER):\n")
+    new_load = ("            for consumer in T.unroll(B_CONSUMERS):\n"
+                "                n_consumer = T.meta_var(n_st + consumer * MMA_N)\n"
+                "                Tx.copy_async(Bsmem[tma_phase.stage, consumer, :, :],\n"
+                "                              B[n_consumer:n_consumer + BLK_N, k_st:k_st + BLK_K],\n"
+                '                              dispatch="tma_auto", cta_group=CTA_GROUP,\n'
+                "                              mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))\n"
+                "            for consumer in T.unroll(A_CONSUMERS):\n")
+    source = replace_once(source, old_load, new_load)
+    source = replace_once(source,
+        "CTA_GROUP * (NUM_CONSUMER * BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE",
+        "CTA_GROUP * (A_CONSUMERS * BLK_M * BLK_K + B_CONSUMERS * BLK_N * BLK_K) * F16_SIZE")
+    source = replace_once(source,
+        "Asmem[mma_phase.stage, warp_id, :, :], Bsmem[mma_phase.stage, :, :],",
+        "Asmem[mma_phase.stage, 0 if SHARE_A else warp_id, :, :], "
+        "Bsmem[mma_phase.stage, warp_id if SHARE_A else 0, :, :],")
+    source = replace_once(source,
+        "            m_out = T.meta_var(m_st + wg_id * MMA_M)\n",
+        "            m_out = T.meta_var(m_st + (0 if SHARE_A else wg_id) * MMA_M)\n"
+        "            n_consumer_out = T.meta_var(n_out + (wg_id if SHARE_A else 0) * MMA_N)\n")
+    source = replace_once(source,
+        "D[m_out:m_out + BLK_M, n_out + col:n_out + col + EPI_N]",
+        "D[m_out:m_out + BLK_M, n_consumer_out + col:n_consumer_out + col + EPI_N]")
+    return source
+
+
 def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
     if step == 10 and variant in CURRENT_INPUT_VARIANTS:
         return current_input_ring(source, variant)
+    if step == 10 and variant in SHARE_A_VARIANTS:
+        return share_a_consumers(source, variant)
     if step == 10 and variant != "baseline" and "    NARROW_N =" in source:
         raise ValueError("Step 10 has adopted workload-based narrow N and TMEM buffering; "
                          "validate with benchmark.py --steps 10 and tests/test_step10.py. "
