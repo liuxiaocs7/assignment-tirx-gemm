@@ -28,9 +28,9 @@
 余量仅 0.038%。所有数值校验通过，一次全过尚不足以证明稳定达标。
 正式 4096 的 CUDA/cubin/编译参数与 B-first probe 一致；两个提交之间生产源码未变。
 同目录独立 Step 10 benchmark 的 20 个样本虽全过，4096 最慢样本余量仅 0.076%。
-最新 `step10_wide_tma.FBbwDr` 中，宽 N 的 EPI32 引入了栈访问，五轮中四轮慢于
-baseline；拆分 A/B producer 的同轮加速中位数仅 0.147%，最慢样本余量 0.203%。
-两项均未采用；生产保持已采用的 B 优先加载，继续检验 MMA 描述符准备的开销。
+最新 `step10_mma_batch.13Q2qL` 中，batch 的同轮加速中位数为 0.451%，最慢样本
+余量 0.262%；SASS 同时把自动展开从四级改成八级，且每级 R2UR 未减少。关闭展开
+没有明显额外收益，两项暂不采用；下一轮双方固定展开四次，分离这个编译变化。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
@@ -38,13 +38,13 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 详见 [最新验证和对照记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **458 项本地通过，232.84 s**；
+（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **477 项本地通过，249.46 s**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：Step 10 MMA 描述符复用与循环展开实验
+### 当前进度：Step 10 固定 MMA 展开因子的对照
 
 同步本轮工具提交后，运行以下一个 probe；当前生产内核没有新增未实测的改动。
 
@@ -52,19 +52,19 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/step10_mma_batch.XXXXXX)
+tirx_run=$(mktemp -d results_b300/step10_mma_unroll4.XXXXXX)
 uv run python -u probe_persistent.py --steps 10 --size 4096 \
   --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-默认比较 `baseline`、`mma_batch`、`mma_batch_no_unroll`。`mma_batch` 把同一级
-的四条 K16 MMA 放入一个 PTX 块，复用并递增 A/B 描述符，直接对照 baseline；
-`mma_batch_no_unroll` 再单独关闭 MMA 的 K 循环展开，直接对照 `mma_batch`。
-原 builder/TIR、数学运算、同步、输入和写回保持不变；不是减少硬件 MMA 次数。
-每个变体在计时前先对矩形 K=64/256/320 各验算两次，再交错计时五轮，并保存 SASS
-以检查描述符搬运是否减少。K=64 时没有循环，两项实验相同。历史实验仍可显式运行，
-例如 `--variants epilogue_32 split_tma` 或 `--variants n128_epi32_depth5`。
+默认比较 `baseline`、`mma_unroll4`、`mma_batch_unroll4`。两项新实验都只给 MMA
+K 循环加 `#pragma unroll 4`，后者再使用已验算的四条 K16 batch 发射块，直接对照
+`mma_unroll4`。保留 baseline 检查显式 pragma 本身是否改变原先自动展开的结果。
+原 builder/TIR、数学运算、同步、输入和写回保持不变；实际展开因子仍需看 SASS。
+计时前对矩形 K=64/192/256/320 各验算两次，再交错计时五轮。K=64 没有循环，
+pragma 不起作用；K=192/320 验证展开后的短循环和尾部。历史 batch 比较可通过
+`--variants mma_batch_no_unroll` 显式运行。
 本地源码检查不能证明性能收益，必须等 B300 数值与计时结果。
 详见 [最新复测与实验依据](B300_VALIDATION.md)。
 

@@ -10,13 +10,13 @@ The earlier passing value was 0.139047 ms, with just 0.038% margin.
 All numerical checks pass. The formal 4096 CUDA/cubin and compiler options
 match the B-first probe exactly; the production source is unchanged between
 these commits. A single passing run has not established stable performance.
-The latest `step10_wide_tma.FBbwDr` probes did not establish a stability fix:
-EPI32 introduced stack accesses and was slower in four of five paired trials;
-split A/B producers gained only 0.147% with 0.203% worst-sample margin.
-Neither was adopted. The next diagnostics retain the production builder and
-test descriptor reuse across four K16 MMA instructions, then isolate compiler
-unrolling of that loop. Production remains unchanged pending GPU evidence.
-All **458 local tool/source-generation checks pass** (232.84 s); they do not
+The latest `step10_mma_batch.13Q2qL` probes showed a 0.451% paired median gain
+for batched MMA emission, but only 0.262% worst-sample margin. SASS also changed
+automatic K-loop unrolling from four stages to eight, without reducing R2UR
+per stage. Disabling unrolling gave no clear further gain. Neither candidate
+was adopted. The next comparison requests unroll factor four for both original
+and batched emission to separate these effects. Production remains unchanged.
+All **477 local tool/source-generation checks pass** (249.46 s); they do not
 replace GPU correctness and timing validation of the adopted implementation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.

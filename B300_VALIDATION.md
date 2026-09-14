@@ -1,6 +1,80 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step10_wide_tma.FBbwDr，写回与加载分工仍无足够收益
+## 最新结果：step10_mma_batch.13Q2qL，小幅改善伴随自动展开变化
+
+数据：[summary](results_b300/step10_mma_batch.13Q2qL/step10/summary.csv)、
+[samples](results_b300/step10_mma_batch.13Q2qL/step10/samples.json)、
+[run.json](results_b300/step10_mma_batch.13Q2qL/step10/run.json)。
+版本 `56301a2`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+七个源码指纹、九份 builder/编译 CUDA 指纹及六份边界验算记录核对通过。
+矩形 K=64/256/320 的两次验算和逐轮数值检查均通过。
+baseline 的 CUDA、cubin 和 NVRTC 参数与正式 B-first 验收产物完全一致。
+
+| 版本 | 中位数 ms | 最大值 ms | 达标轮次 | 同轮相对 baseline | 同轮相对直接对照 | 最慢样本余量 |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline | 0.138100 | 0.139365 | 4/5 | 1.000000× | 1.000000× | -0.191% |
+| mma_batch | 0.137809 | 0.138735 | 5/5 | 1.004509× | 1.004509× | 0.262% |
+| mma_batch_no_unroll | 0.138135 | 0.138566 | 5/5 | 1.001556× | 1.000062×（对 mma_batch） | 0.384% |
+
+`mma_batch` 五轮中四轮更快，同轮加速中位数 **0.451%**，第五轮却慢于 baseline
+约 0.625 微秒。关闭展开相对 `mma_batch` 的同轮加速中位数仅 **0.006%**，且整体
+中位耗时更高。两个候选虽 5/5 达标，最慢样本仍只低于门槛 0.365/0.534 微秒。
+本轮保留候选但不采用，不能据此宣布稳定性已解决；最新完整 GPU 套件仍是
+**56 passed / 1 failed**。
+
+### SASS：自动展开从四级变成八级，原假设未得到直接支持
+
+三个版本资源数都是 **REG167 / STACK0**，没有 LDL/STL。输入和输出静态指令数
+相同：12 处 UTMALDG、四处 UTMASTG、八处 LDTM。MMA 主循环则不同：
+
+| 版本 | 每次主循环的 K64 stage 数 | 循环内 UTCHMMA | 循环内 R2UR | R2UR / stage |
+|---|---:|---:|---:|---:|
+| baseline | 4 | 16 | 63 | 15.75 |
+| mma_batch | 8 | 32 | 134 | 16.75 |
+| mma_batch_no_unroll | 1 | 4 | 5 | 5.00 |
+
+循环范围分别为 `0x1620–0x21c0`、`0x1580–0x2900`、`0x15a0–0x1860`，按包含
+MMA 的主循环回跳统计，不含跳出循环范围的等待分支。上述是代码结构计数，不是
+硬件 profiler 的动态指令数；不能把静态 MMA 数增减解读为总数学运算变化。
+
+默认编译的 batch 没有按预期减少每 stage 的 R2UR，同时自动展开由四级变为八级。
+无展开版减少了搬运但没有明显额外加速。因此上一轮的约 0.45% 收益不能单独归因
+于描述符复用，也不足以证明任何具体硬件瓶颈。
+
+### 下一轮：双方固定展开四次，消除自动展开差异
+
+按以下可区分的预测补齐对照：
+
+1. 若固定展开后 batch 的发射方式仍有独立收益，`mma_batch_unroll4` 应快于
+   `mma_unroll4`，且 SASS 需确认两者每轮处理相同数量的 K stage。
+2. 若之前的收益主要伴随自动展开八次或测量波动，固定四次后这点优势可能消失；
+   此时不继续把它归因于描述符复用，也不直接采用上一轮的 batch。
+3. 若显式 pragma 本身改变编译器决策，`mma_unroll4` 也可能不同于 baseline；
+   保留生产 baseline 以发现这一点，不能假设“原先自动四次”等于“强制四次”。
+
+默认比较 `baseline`、`mma_unroll4`、`mma_batch_unroll4`。第一个新版本只给原
+MMA K 循环加 `#pragma unroll 4`；第二个在相同 pragma 下使用已经验算过的四条
+K16 batch helper，直接对照 `mma_unroll4`。三个版本的 builder/TIR 相同。
+K=64 的循环已被 TVM 消去，原版保持原源码，batch 保持已测的单级发射块。
+不改变 producer 的展开、不移动 fence/wait/commit，也不改变所有 stage 的运算。
+
+每项实验计时前在 `(4096,3072,K)` 的 **K=64/192/256/320** 下各验算两次，
+覆盖单级、短于展开因子、整组四级和一组加尾部，以及 persistent tile 重用。
+随后使用原 10 warmup / 30 repeat / 五轮交错 CUDA-event 计时并保存编译产物。
+19 项新增检查覆盖两个架构和九种形状，重放本轮实际编译输入，逐字比较除 pragma
+与四次 MMA 调用之外的源码；完整工具/源码生成回归 **477 项通过，249.46 s**。
+实际展开因子、GPU 数值和性能仍需 B300 验证。**生产内核和评分规则不变。**
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_mma_unroll4.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：step10_wide_tma.FBbwDr，写回与加载分工仍无足够收益
 
 数据：[summary](results_b300/step10_wide_tma.FBbwDr/step10/summary.csv)、
 [samples](results_b300/step10_wide_tma.FBbwDr/step10/samples.json)、
@@ -27,7 +101,7 @@ EPI32 收益未能在原 N256 上重现。SASS 中 UTMASTG 从四处增至八处
 UTMALDG、四处 UTMASTG、八处 LDTM。本轮没有足够证据把拆分 producer 作为
 稳定性修复，两项均不采用。最新完整 GPU 套件仍是 **56 passed / 1 failed**。
 
-### 下一轮：MMA 描述符复用与编译器展开
+### 已完成实验：MMA 描述符复用与编译器展开
 
 本轮 baseline SASS 的 MMA 循环在每组四条 UTCHMMA 周围仍有反复的 R2UR、
 描述符准备及 uniform 寄存器搬运。此前等待提示、写回、输入深度和 producer 分工
@@ -41,7 +115,7 @@ UTMALDG、四处 UTMASTG、八处 LDTM。本轮没有足够证据把拆分 produ
 3. 若实际指令减少仍未加速，则本轮不支持描述符准备是主要限制，应继续区分
    异步数据供给与硬件执行等待。若 SASS 不变，则该源码改动未影响实际发射。
 
-默认比较 `baseline`、`mma_batch`、`mma_batch_no_unroll`。`mma_batch` 直接对照
+当时默认比较 `baseline`、`mma_batch`、`mma_batch_no_unroll`。`mma_batch` 直接对照
 baseline；`mma_batch_no_unroll` 直接对照 `mma_batch`，只增加 MMA K 循环的
 `#pragma unroll 1`。K=64 时 TVM 已移除单次循环，两项实验生成相同代码。
 
@@ -59,14 +133,14 @@ B 优先加载和调度网格不变。GPU 计时前，两项实验分别对矩�
 完整本地工具/源码生成回归 **458 项通过，232.84 s**。其中 24 项新增检查
 覆盖两个架构、四个评分尺寸、三个矩形边界和单 tile；
 包含对实际生成 PTX 的整数/谓词解释，核对 descriptor 高低位、mask 和累加行为。
-本机无 NVIDIA GPU，尚未完成这两个候选的 NVRTC 编译和数值/性能验证。
-**本轮生产内核、评分、容差、GPU 测试和计时规则不变。**
+GPU 结果见本文最新记录，两项暂不采用。以下为该轮历史命令，现需显式选变体：
 
 ```bash
 mkdir -p results_b300
 set -o pipefail
 tirx_run=$(mktemp -d results_b300/step10_mma_batch.XXXXXX)
 uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --variants mma_batch_no_unroll \
   --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```

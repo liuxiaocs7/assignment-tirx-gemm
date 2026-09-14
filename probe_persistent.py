@@ -1,8 +1,8 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
 Step 10 has adopted B-first TMA requests but still crosses the 4096 limit.
-The default tests descriptor reuse across each four-instruction MMA stage,
-then isolates the effect of disabling compiler unrolling of that K loop.
+The default requests unroll factor four for both original and batched MMA K
+loops, separating descriptor emission from the compiler's automatic unrolling.
 Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
@@ -39,11 +39,12 @@ STEP_VARIANTS = {
          "balanced_depth3", "balanced_depth3_epi128", "balanced_fused_a",
          "warp_release", "paired_tmem_loads", "epilogue_depth3", "epilogue_double_buffer",
          "role_registers", "tma_b_first", "n_tile_128", "n128_epi32", "n128_epi32_depth5",
-         "epilogue_32", "split_tma", "mma_batch", "mma_batch_no_unroll"),
+         "epilogue_32", "split_tma", "mma_batch", "mma_batch_no_unroll",
+         "mma_unroll4", "mma_batch_unroll4"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "mma_batch", "mma_batch_no_unroll")}
+                         10: ("baseline", "mma_unroll4", "mma_batch_unroll4")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -61,7 +62,8 @@ EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
                        "epilogue_double_buffer": "epilogue_depth3",
                        "n128_epi32": "n_tile_128",
                        "n128_epi32_depth5": "n128_epi32",
-                       "mma_batch_no_unroll": "mma_batch"}
+                       "mma_batch_no_unroll": "mma_batch",
+                       "mma_batch_unroll4": "mma_unroll4"}
 NARROW_N_VARIANTS = ("n_tile_128", "n128_epi32", "n128_epi32_depth5")
 DEPTH3_VARIANTS = ("balanced_depth3", "balanced_depth3_epi128")
 # K=1/3/5 stages covers shorter-than-ring, odd complete ring, and partial
@@ -84,6 +86,8 @@ VERIFICATION_SHAPES = {
     "split_tma": ((4096, 3072, 64), (4096, 3072, 256), (4096, 3072, 320)),
     "mma_batch": ((4096, 3072, 64), (4096, 3072, 256), (4096, 3072, 320)),
     "mma_batch_no_unroll": ((4096, 3072, 64), (4096, 3072, 256), (4096, 3072, 320)),
+    "mma_unroll4": ((4096, 3072, 64), (4096, 3072, 192), (4096, 3072, 256), (4096, 3072, 320)),
+    "mma_batch_unroll4": ((4096, 3072, 64), (4096, 3072, 192), (4096, 3072, 256), (4096, 3072, 320)),
 }
 
 
@@ -416,7 +420,7 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
-    if variant in ("mma_batch", "mma_batch_no_unroll"):
+    if variant in ("mma_batch", "mma_batch_no_unroll", "mma_unroll4", "mma_batch_unroll4"):
         for required in ("mma_tmem_base: T.let", "TILES_PER_CLUSTER =",
                          "    BLK_M, BLK_N, BLK_K = 128, 128, 64\n",
                          "    MMA_M, MMA_N = 256, 256\n",
@@ -659,6 +663,22 @@ def variant_source(source, step, variant):
     """Apply isolated CUDA wait, MMA emission, or loop-pragma experiments."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant in ("mma_unroll4", "mma_batch_unroll4"):
+        batched = batch_mma_stage(source)  # Validate the same K64 operands in both controls.
+        if variant == "mma_batch_unroll4":
+            source = batched
+        # Reuse the existing guarded MMA-only pragma insertion. Keeping the
+        # original and batch controls at the same factor isolates emission.
+        loop = re.search(r"for \(int k_1 =", source)
+        if loop is None:
+            # The K=64 loop was removed by TVM; only the known single-stage
+            # accumulation pattern may treat the pragma as a no-op.
+            if not re.search(r"tvm_probe_mma_batch_k64\([^\n]+, \(bool\)0\);", batched):
+                raise ValueError("missing MMA K loop without a single-stage fallback")
+            return source
+        changed = variant_source(source, step, "cache_mma_no_unroll")
+        return re.sub(r"#pragma unroll 1\n(?= +for \(int k_1 =)",
+                      "#pragma unroll 4\n", changed)
     if variant in ("mma_batch", "mma_batch_no_unroll"):
         source = batch_mma_stage(source)
         if variant == "mma_batch":
@@ -680,7 +700,7 @@ def variant_source(source, step, variant):
         if len(matches) != 1:
             raise ValueError("expected exactly one MMA K loop; use a larger K")
         match = matches[0]
-        if source[:match.start()].rstrip().endswith("#pragma unroll 1"):
+        if re.search(r"#pragma unroll(?: \d+)?$", source[:match.start()].rstrip()):
             raise ValueError("MMA unroll experiment is already applied")
         if not source[match.end():].lstrip().startswith("tvm_builtin_ptx_mbarrier_try_wait("):
             raise ValueError("unexpected MMA K loop entry")

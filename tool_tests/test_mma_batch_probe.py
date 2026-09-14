@@ -135,7 +135,7 @@ def test_mma_batch_rejects_changed_operands_or_intervening_work(before, after):
 def test_mma_batch_controls_and_baseline_guard(tmp_path):
     pytest.importorskip('tvm')
     variants = ['baseline', 'mma_batch', 'mma_batch_no_unroll']
-    assert select_variants(10) == select_variants(10, ['mma_batch_no_unroll']) == variants
+    assert select_variants(10, ['mma_batch_no_unroll']) == variants
     build_variant(10, (4096,) * 3, 'mma_batch', tmp_path)
     source = (tmp_path / 'builder.py').read_text()
     for variant in variants[1:]:
