@@ -24,8 +24,11 @@ is only about 0.175% of the traced MMA role. Explicit input-depth/K128 probes
 in `step10_input_ring.9SsKZM` show a small gain from K64/depth 5: paired speedup
 **1.0044×**, 7/7 samples passing, but only **0.180%** margin at the slowest sample.
 The unchanged production baseline passed just 1/7 samples in that run; both
-depth-2 candidates regressed substantially. Depth 5 awaits independent retesting
-and has not been adopted.
+depth-2 candidates regressed substantially. Independent retesting in
+`step10_depth5_recheck.sMMqkr` confirmed a small **1.0029×** paired speedup, but
+depth 5 passed only **4/7** samples (maximum **0.139429 ms**, above the limit).
+Both runs used identical binaries. Depth 5 remains a candidate for a small gain;
+it has not been adopted and does not resolve timing stability.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10
