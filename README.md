@@ -1,9 +1,11 @@
 # Assignment: Blackwell GEMM Kernel Optimization
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` use Apache TVM
-**0.26.0** for SM100/SM103. **The previous baseline passed B300 acceptance;
-the newly adopted Step 9 cache is awaiting formal regression.** The recorded
-full pytest suite reports **57 passed**, and the
+**0.26.0** for SM100/SM103. **The latest user-reported full run has 61 passed /
+1 failed out of 62 tests: Step 10 / 4096 exceeds the timing limit by 1.05%.**
+Numerical verification and the five new boundary cases passed. Improving this
+performance margin is in progress; the Step 9 cache adoption still awaits formal
+regression. The historical accepted full pytest suite reports **57 passed**, and the
 official Step 10 benchmark passes all four sizes and **28/28 individual timing
 samples**. Results are in [step10_final.vM3h3I](results_b300/step10_final.vM3h3I/),
 executed at `6e5f5f4` on Slurm job 27503, step 0. Step 10 / 4096 has median
@@ -21,7 +23,14 @@ These are separate from GPU acceptance. The Step 9 adoption passed **170 relevan
 tool/source-generation checks**, including replay of the recorded cache builder,
 CUDA and TMA descriptors. Other nine kernel builders are unchanged from `3a9d486`.
 The user also reported **5 passed** for the added Step 10 GPU boundary tests.
-The full suite now has 62 tests; those separate runs are not one 62-pass acceptance.
+The full suite now has 62 tests (57 previous + 5 new); the latest run failed the
+existing 4096 performance assertion at **0.140561 ms**, versus **0.139100 ms**.
+Its `pytest_3a9d486_2.log` filename alone does not verify the source revision/hash.
+
+The next independent probe is `bash run_step10_l2.sh`: compare L2 groups 8/4/2/1
+on the current narrow, double-buffered path over eight balanced trials, with
+numerical boundary checks before timing. Production kernels, shared-B consumers,
+input depth, launch grid, timer and thresholds are unchanged. GPU results are pending.
 
 Step 9 now snapshots the immutable TMEM allocation after cluster synchronization.
 AB/BA rechecks at `3a9d486` showed about **1.25% / 2.00%** paired speedup for
@@ -32,7 +41,7 @@ Run `bash run_step9_validate.sh` on B300 for the adopted version's full pytest
 and formal four-size Step 9 benchmark before recording new acceptance.
 
 Historical Step 10 / 4096 timing failures remain documented, including two of
-five all-step benchmarks above the limit. The current result establishes
+five all-step benchmarks above the limit. The historical accepted result establishes
 acceptance for the recorded GPU and conditions, not every allocation. Shared-A
 depth 5 showed a small **1.004371×** paired signal against its direct control in the
 201-trial diagnostic run, but review found a position bias in its measurement order.

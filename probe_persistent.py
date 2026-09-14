@@ -7,6 +7,8 @@ Explicit tmem_input_* / tmem_k128_depth2 probes vary the input ring only for
 the current double-buffered narrow path, retaining single-slot/wide fallbacks.
 Explicit tmem_share_a_depth* probes place the two consumers along N to reuse A,
 then compare five/six input stages on that layout.
+Explicit tmem_l2_group* probes change only tile ordering on the current
+double-buffered narrow path, retaining the production group-eight fallbacks.
 Step 9 has adopted cluster_cache_tmem_base after AB/BA rechecks. Replay that
 comparison at 3a9d486; use benchmark.py --steps 9 for the current production path.
 Historical experiments are explicit; adopted transforms refuse reapplication.
@@ -49,7 +51,8 @@ STEP_VARIANTS = {
          "epilogue_32", "split_tma", "mma_batch", "mma_batch_no_unroll",
          "mma_unroll4", "mma_batch_unroll4", "n128_tmem_double_buffer",
          "tmem_input_depth2", "tmem_k128_depth2", "tmem_input_depth5",
-         "tmem_share_a_depth5", "tmem_share_a_depth6"),
+         "tmem_share_a_depth5", "tmem_share_a_depth6",
+         "tmem_l2_group4", "tmem_l2_group2", "tmem_l2_group1"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
@@ -80,9 +83,11 @@ EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
                        "tmem_k128_depth2": "tmem_input_depth2",
                        "tmem_input_depth5": "baseline",
                        "tmem_share_a_depth5": "tmem_input_depth5",
-                       "tmem_share_a_depth6": "tmem_share_a_depth5"}
+                       "tmem_share_a_depth6": "tmem_share_a_depth5",
+                       **{f"tmem_l2_group{g}": "baseline" for g in (4, 2, 1)}}
 CURRENT_INPUT_VARIANTS = ("tmem_input_depth2", "tmem_k128_depth2", "tmem_input_depth5")
 SHARE_A_VARIANTS = ("tmem_share_a_depth5", "tmem_share_a_depth6")
+CURRENT_L2_VARIANTS = {f"tmem_l2_group{g}": g for g in (4, 2, 1)}
 NARROW_N_VARIANTS = ("n_tile_128", "n128_epi32", "n128_epi32_depth5")
 DEPTH3_VARIANTS = ("balanced_depth3", "balanced_depth3_epi128")
 # K=1/3/5 stages covers shorter-than-ring, odd complete ring, and partial
@@ -126,6 +131,12 @@ VERIFICATION_SHAPES = {
     **{variant: tuple((4096, 3072, k) for k in (64, 320, 384, 448))
        + ((1536, 5376, 320),)  # 6x21 output tiles, partial L2 group and two waves.
        for variant in SHARE_A_VARIANTS},
+    # Three persistent tiles per cluster with short/full/partial input rings;
+    # nine M tiles exercise complete L2 groups followed by a one-row tail.
+    # The last shape has only one M tile and just exceeds the single-wave limit.
+    **{variant: tuple((4096, 3072, k) for k in (64, 192, 256, 320))
+       + ((4608, 2560, 320), (512, 9728, 192))
+       for variant in CURRENT_L2_VARIANTS},
 }
 
 
@@ -498,6 +509,29 @@ def specialize_role(source, role):
     return prefix + replacement + block + end + suffix
 
 
+def current_l2_group(source, variant):
+    """Change work-to-tile ordering only on the adopted two-slot narrow path."""
+    required = (
+        "    NARROW_N = M * N <= 4096 * 4096\n",
+        "    BLK_M, BLK_N, BLK_K = 128, (64 if NARROW_N else 128), 64\n",
+        "    MMA_M, MMA_N = 256, (128 if NARROW_N else 256)\n",
+        "    NUM_CONSUMER = 2\n",
+        "    PIPE_DEPTH = 4\n",
+        "    EPI_N = 32 if NARROW_N else 64\n",
+        "    TMEM_BUFFERS = 2 if NARROW_N and TOTAL_TILES > MAX_CLUSTERS else 1\n",
+        "    TMEM_SLOT_STRIDE = NUM_CONSUMER if TMEM_BUFFERS == 2 else 0\n",
+        '            "ts", num_m_tiles=M // (MMA_M * NUM_CONSUMER), num_n_tiles=N // MMA_N,\n',
+        "            l2_group_size=8, num_clusters=CLUSTER_COUNT)\n",
+        "        def tma_load(k_st):\n            Tx.copy_async(Bsmem[",
+    )
+    if variant not in CURRENT_L2_VARIANTS or any(source.count(s) != 1 for s in required):
+        raise ValueError("current L2 probes require the adopted Step 10 narrow/TMEM baseline")
+    group = CURRENT_L2_VARIANTS[variant]
+    return replace_once(source, required[9],
+                        f"            l2_group_size={group} if TMEM_BUFFERS == 2 else 8, "
+                        "num_clusters=CLUSTER_COUNT)\n")
+
+
 def current_input_ring(source, variant):
     """Isolate input depth/K width on the adopted narrow, two-TMEM-slot path."""
     required = (
@@ -614,6 +648,8 @@ def variant_builder_source(source, step, variant):
         return current_input_ring(source, variant)
     if step == 10 and variant in SHARE_A_VARIANTS:
         return share_a_consumers(source, variant)
+    if step == 10 and variant in CURRENT_L2_VARIANTS:
+        return current_l2_group(source, variant)
     if step == 10 and variant != "baseline" and "    NARROW_N =" in source:
         raise ValueError("Step 10 has adopted workload-based narrow N and TMEM buffering; "
                          "validate with benchmark.py --steps 10 and tests/test_step10.py. "
