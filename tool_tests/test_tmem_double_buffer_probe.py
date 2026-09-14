@@ -30,8 +30,10 @@ def simulate_handoffs(cuda, tiles, seed):
     release_op = 'tvm_builtin_ptx_mbarrier_arrive_shared_cluster_remote_pred('
     mma = next(line for line in cuda.splitlines() if 'ptx_tcgen05_mma_cta_2_kind_f16_SS(' in line)
     mma_expr = re.search(r'\(mma_tmem_base \+ \(\(uint\)(.*?)\)\),', mma)[1]
-    read = next(line for line in cuda.splitlines() if 'tvm_builtin_ptx_tcgen05_ld_32x32b_x32(' in line)
-    read_expr = read.split(', mma_tmem_base, 0, ')[1].removesuffix(');')
+    mma_n = ((int(re.search(r', \(uint\)(\d+),', mma)[1]) >> 17) & 63) * 8
+    reads = [line for line in cuda.splitlines() if 'tvm_builtin_ptx_tcgen05_ld_32x32b_x32(' in line]
+    read_exprs = [line.split(', mma_tmem_base, 0, ')[1].removesuffix(');') for line in reads]
+    assert len(read_exprs) * 32 == mma_n
 
     def expression(op, role):
         line = next(line for line in cuda.splitlines() if op in line and role + '_stage_ptr' in line)
@@ -81,9 +83,10 @@ def simulate_handoffs(cuda, tiles, seed):
         if action == 'issue':
             tile = issued[consumer]
             address = evaluate(mma_expr, 'ld_phase', tile, consumer)
-            assert contents.get(address) is None, 'MMA overwrote an unread accumulator'
-            assert 0 <= address <= 384
-            contents[address] = tile
+            assert 0 <= address and address + mma_n <= 512
+            for col in range(address, address + mma_n):
+                assert contents.get(col) is None, 'MMA overwrote an unread accumulator'
+                contents[col] = (consumer, tile)
             pending[consumer].append(tile)
             issued[consumer] += 1
             overlap |= issued[consumer] - min(consumed[consumer]) >= 2
@@ -96,14 +99,19 @@ def simulate_handoffs(cuda, tiles, seed):
             completed[consumer] += 1
         else:
             tile = consumed[consumer][rank]
-            address = evaluate(read_expr, 'wb_phase', tile, consumer)
-            assert contents[address] == tile, 'writeback read a stale/different output tile'
+            columns = [col for expr in read_exprs
+                       for start in [evaluate(expr, 'wb_phase', tile, consumer)]
+                       for col in range(start, start + 32)]
+            address = evaluate(mma_expr, 'ld_phase', tile, consumer)
+            assert sorted(columns) == list(range(address, address + mma_n))
+            assert all(contents[col] == (consumer, tile) for col in columns), 'writeback read a stale/different output tile'
             slot = evaluate(free_release, 'wb_phase', tile, consumer)
             arrivals[slot] = arrivals.get(slot, 0) + 128
             if arrivals[slot] == 256:
                 free[slot] = free.get(slot, 0) ^ 1
                 arrivals[slot] = 0
-                contents[address] = None
+                for col in columns:
+                    contents[col] = None
             consumed[consumer][rank] += 1
     assert issued == completed == [tiles] * 2
     assert consumed == [[tiles, tiles], [tiles, tiles]]

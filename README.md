@@ -37,6 +37,12 @@ been checked. This supports a small gain; it does not resolve the performance
 margin. Depth five remains a candidate, production stays at depth four, and these
 completed probes need not be repeated. No timer or threshold has changed.
 
+The next independent probe is `bash run_step10_geometry.sh`: production baseline
+→ N128 with all 74 clusters → N64/depth4 → N64/depth5, using eight balanced trials.
+It retains two consumers sharing B and checks short K, persistent reuse and
+dispatch boundaries before timing. **GPU results are pending; none is adopted.**
+See [the run instructions](RUNNING.md#step-10-网格与-n64-tile-对照待-b300-实测).
+
 Step 9 now snapshots the immutable TMEM allocation after cluster synchronization.
 AB/BA rechecks at `3a9d486` showed about **1.25% / 2.00%** paired speedup for
 4096/8192, with the cache faster in all seven trials at each size. Small sizes

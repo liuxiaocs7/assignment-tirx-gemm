@@ -32,6 +32,8 @@ from pathlib import Path
 from benchmark_diagnostics import capture_compilation, run_metadata, write_json
 from probe_step45 import replace_once, source_experiment, summarize, trial_order
 from profile_persistent import dump_sass
+from probe_step10_geometry import (GEOMETRY_CONFIGS, GEOMETRY_CONTROLS,
+                                   GEOMETRY_VERIFY_SHAPES, geometry_builder_source)
 
 
 STEP_VARIANTS = {
@@ -52,7 +54,7 @@ STEP_VARIANTS = {
          "mma_unroll4", "mma_batch_unroll4", "n128_tmem_double_buffer",
          "tmem_input_depth2", "tmem_k128_depth2", "tmem_input_depth5",
          "tmem_share_a_depth5", "tmem_share_a_depth6",
-         "tmem_l2_group4", "tmem_l2_group2", "tmem_l2_group1"),
+         "tmem_l2_group4", "tmem_l2_group2", "tmem_l2_group1", *GEOMETRY_CONFIGS),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
@@ -84,7 +86,8 @@ EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
                        "tmem_input_depth5": "baseline",
                        "tmem_share_a_depth5": "tmem_input_depth5",
                        "tmem_share_a_depth6": "tmem_share_a_depth5",
-                       **{f"tmem_l2_group{g}": "baseline" for g in (4, 2, 1)}}
+                       **{f"tmem_l2_group{g}": "baseline" for g in (4, 2, 1)},
+                       **GEOMETRY_CONTROLS}
 CURRENT_INPUT_VARIANTS = ("tmem_input_depth2", "tmem_k128_depth2", "tmem_input_depth5")
 SHARE_A_VARIANTS = ("tmem_share_a_depth5", "tmem_share_a_depth6")
 CURRENT_L2_VARIANTS = {f"tmem_l2_group{g}": g for g in (4, 2, 1)}
@@ -137,6 +140,7 @@ VERIFICATION_SHAPES = {
     **{variant: tuple((4096, 3072, k) for k in (64, 192, 256, 320))
        + ((4608, 2560, 320), (512, 9728, 192))
        for variant in CURRENT_L2_VARIANTS},
+    **{variant: GEOMETRY_VERIFY_SHAPES for variant in GEOMETRY_CONFIGS},
 }
 
 
@@ -650,6 +654,8 @@ def variant_builder_source(source, step, variant):
         return share_a_consumers(source, variant)
     if step == 10 and variant in CURRENT_L2_VARIANTS:
         return current_l2_group(source, variant)
+    if step == 10 and variant in GEOMETRY_CONFIGS:
+        return geometry_builder_source(source, variant)
     if step == 10 and variant != "baseline" and "    NARROW_N =" in source:
         raise ValueError("Step 10 has adopted workload-based narrow N and TMEM buffering; "
                          "validate with benchmark.py --steps 10 and tests/test_step10.py. "
@@ -1058,6 +1064,7 @@ def main(argv=None):
                     torch=torch.__version__, cuda=torch.version.cuda,
                     probe_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                     probe_step45_sha256=hashlib.sha256(Path(__file__).with_name("probe_step45.py").read_bytes()).hexdigest(),
+                    probe_step10_geometry_sha256=hashlib.sha256(Path(__file__).with_name("probe_step10_geometry.py").read_bytes()).hexdigest(),
                     profile_persistent_sha256=hashlib.sha256(Path(__file__).with_name("profile_persistent.py").read_bytes()).hexdigest(),
                     steps=list(selected), size=args.size, variants=selected,
                     verification_shapes={v: VERIFICATION_SHAPES[v] for variants in selected.values()

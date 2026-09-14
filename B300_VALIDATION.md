@@ -1,5 +1,30 @@
 # B300 验证记录与性能诊断
 
+## 下一轮：网格与 N64 tile 对照已准备，尚无 B300 结果
+
+用户要求继续性能优化后，新增独立实验 `probe_step10_geometry.py` 和入口
+`bash run_step10_geometry.sh`。直接对照链为 baseline → `tmem_max_clusters`
+→ `tmem_n64` → `tmem_n64_depth5`，八轮位置与两两先后均平衡。
+正式 `gemm_kernels.py` SHA256 仍为
+`727a44403b6c1ea0a0499c8212e5796d0fa2b31944929e9ecd50d60be4b961f2`，
+没有采用新候选、改变阈值或计时器。最新 GPU 全量记录仍是 61 passed / 1 failed。
+
+4096 的生产网格为 256 个任务 / 64 个 cluster。先单独比较 N128 / 74 clusters，
+再比较 512 个任务的 N64 / 74 clusters，最后比较新 N64 下的四级/五级。
+N64 保留两个 consumer 共享 B，单级 TMA 字节为 73728，四级/五级动态 SMEM
+分别为 164864 / 201728 B；由于任务翻倍，总 TMA 请求字节约增至 1.8 倍，
+MMA/调度次数也增加，不能仅凭资源占用推导收益。配置、边界和判断标准见
+[RUNNING.md](RUNNING.md#step-10-网格与-n64-tile-对照待-b300-实测)。
+
+本机 TVM 0.26 的新候选源码生成检查 **35 passed，60.16 s**：覆盖 SM100a/
+SM103a、TMA/MMA 描述符及字节数、三角色调度的完整输出覆盖、四/五级输入环、
+两个 consumer 的双 CTA TMEM 槽位复用，以及五种不受影响路径的 CUDA/描述符
+一致性。TMEM 模型按实际 MMA 宽度检查所有列的读写归属。相关回归另有
+**267 passed，167.15 s**，共享 A 对公共 TMEM 模型的回归 **29 passed，31.65 s**，
+合计 **331 个不同用例通过**。脚本六种成功/失败路径模拟及 `bash -n` 已通过。
+本机没有 NVIDIA GPU，以上不证明 NVRTC/cubin
+构建、数值或性能通过；这些由 B300 probe 验证，新候选尚未采用。
+
 ## 最新五级复核：Fm3CcJ 交替顺序下 8/8 更快，仍有两个超线样本
 
 [原始八轮样本](results_b300/step10_depth5_balanced.Fm3CcJ/step10_4096/samples.json)、
