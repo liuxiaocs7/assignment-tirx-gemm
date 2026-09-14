@@ -16,34 +16,25 @@
 | 5 | 两级预取流水线 | 教程 Step 5 |
 | 6 | 常驻 CTA、L2 友好调度、跨 tile 保留 phase | 教程 Step 6 |
 | 7 | TMA / MMA / 写回分工 | 教程 Step 7 |
-| 8 | 将 Step 7 流水线扩为四级 | 教程在后续 cluster 中使用四级流水线 |
+| 8 | K64 四级流水线、分块写回、等待提示与 TMEM 基址缓存 | 教程在后续 cluster 中使用四级流水线 |
 | 9 | 双 CTA 协作，cluster 输出 256×256 | 教程 Step 8 |
 | 10 | 两个 MMA consumer 共享 B，按输出量选择 512×128/256 及 TMEM 单/双缓冲 | 教程 Step 9 |
 
-本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
-覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线。
-`step10_bfirst.A0Iwp0` 正式全量 **57 passed，74.54 s**，但用户随后在 `1e37e76`
-复测得到 **56 passed / 1 failed，74.17 s**。唯一失败仍是 Step 10 / 4096：
-0.139284 ms，高于 0.139100 ms 门槛约 0.132%；此前通过时为 0.139047 ms，
-余量仅 0.038%。所有数值校验通过，一次全过尚不足以证明稳定达标。
-正式 4096 的 CUDA/cubin/编译参数与 B-first probe 一致；两个提交之间生产源码未变。
-同目录独立 Step 10 benchmark 的 20 个样本虽全过，4096 最慢样本余量仅 0.076%。
-此前 `step10_mma_unroll4.iR07fS` 已消除展开差异：`mma_unroll4` 的 cubin/SASS
-与 baseline 完全相同；同为四级展开的 batch 将主循环 R2UR 从 63 降为 22，
-却没有加速（对直接对照的同轮加速比 0.998207×）。当轮两项均未采用。
-`step10_hardware.Mosdpx` 已成功采集计数器，20 pass 后数值验证通过。工具因不兼容
-ncu 2025.3 的宽 CSV 和单位行而误报失败，现已修复，并从原文件离线恢复 795 个指标。
-TC 活跃周期占 SM 活跃期 91.85%、总时段 75.69%，L2/DRAM 吞吐为 22.61%/10.73%；
-支持优先查整体利用率空档，尚不能确定具体瓶颈或证明性能稳定。
-最新 `step10_tmem_sizes.I9nGIJ` 已完成四尺寸七轮对照。1024/2048 的窄 N 单缓冲
-明显提速；4096 双缓冲在两次运行中累计 14/14 轮快于 baseline，最新最慢样本余量
-约 0.933%；8192 双缓冲慢约 3.9%，保留宽 N。现已采用按输出工作量选择的正式
-Step 10，生成 CUDA 与各尺寸所选实测版本一致；新正式版本仍待 GPU 全量验收。
+**当前已验收版本为 `d283549`。** 用户反馈累计五轮全量测试通过；对话中已提供
+两轮完整的 **57 passed** 日志（76.33 / 76.43 s），另有正式 Step 10 **6 passed**
+及四尺寸七轮 benchmark 的中位数全部 PASS。结果目录名为
+`results_b300/step10_tmem_adopt.OQ0WHS`；本地没有该目录，当前正式成绩依据用户
+贴出的日志记录，未额外核对其原始样本和二进制。
 
-`k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
-各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
-Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未提供足够额外收益。
-详见 [最新验证和对照记录](B300_VALIDATION.md)。
+Step 10 / 4096 的单独 pytest 为 0.138047 ms，两轮全量为 0.137666 / 0.137785 ms，
+均低于 0.139100 ms 门槛。相比旧 B-first 版本的偶发失败已有改善，可保留为通过
+基线；余量仍约 1%，进一步优化可关注这里。
+逐轮证据与历史实验见 [B300_VALIDATION.md](B300_VALIDATION.md)，
+每步的优化原理、实测取舍和后续建议见 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)。
+
+本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
+覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线；本机没有 NVIDIA GPU，
+这些检查与服务器的正式 GPU 验收分开记录。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
 （覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调、角色插桩及硬件采集入口，
@@ -53,46 +44,69 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：已采用实测选择，验证正式 Step 10
+### 当前通过的配置与后续复现
 
-先同步本轮 **修改 `gemm_kernels.py` 的提交**，仅 `0f23484` 文档提交还没有新内核。
-新的内核 SHA256：`5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c`。
+正式内核提交为 `d2835492913d94532bcd160ea79891a8f0e9d836`，SHA256 为
+`5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c`。
+以下为采用后的正式 benchmark 汇总，不是此前候选 probe 成绩：
 
-| 尺寸 | 正式选择 | 本轮对应 probe 中位数 ms |
-|---|---|---:|
-| 1024 | N128 / EPI32 / TMEM 单缓冲 | 0.018566 |
-| 2048 | N128 / EPI32 / TMEM 单缓冲 | 0.027029 |
-| 4096 | N128 / EPI32 / TMEM 双缓冲 | 0.137422 |
-| 8192 | N256 / EPI64 / TMEM 单缓冲 | 0.868543 |
+| 尺寸 | 正式选择 | 七轮中位数 ms | 门槛 ms | 结果 |
+|---|---|---:|---:|---|
+| 1024 | N128 / EPI32 / TMEM 单缓冲 | 0.018547 | 0.032500 | PASS |
+| 2048 | N128 / EPI32 / TMEM 单缓冲 | 0.027124 | 0.045500 | PASS |
+| 4096 | N128 / EPI32 / TMEM 双缓冲 | 0.137610 | 0.139100 | PASS |
+| 8192 | N256 / EPI64 / TMEM 单缓冲 | 0.868908 | 0.946400 | PASS |
 
 选择在编译时完成：输出面积不超过 4096² 时用窄 N，窄 tile 数超过最大 cluster
 数时才启用双槽；其余用宽 N。接口对齐要求、两 consumer 结构、四级 K64、计时器
-和原评分门槛均不变。4096 最慢样本 0.137803 ms，距 0.139100 ms 仅约 0.933%，
-需要正式运行检查稳定性。局部或全量的性能失败都保留日志，不筛选通过结果。
+和原评分门槛均不变。该规则的性能证据覆盖以上四方阵，不能外推任意矩形和 K。
 
-在 B300 上顺序运行以下命令；重复两次全量是为了检查此前的偶发性能失败：
+下面的命令供**未来内核改动后验收，或需要独立复现时使用**；本次文档更新不要求
+再跑。保证 Slurm 分配的剩余时间覆盖编译、benchmark 和全量测试（已展示的每轮
+全量约 76 s），各 GPU 任务顺序执行。每次命令记录源码指纹、作业 ID、日志及退出码；
+`pipefail` 防止 `tee` 掩盖测试失败。保留所有轮次，包括失败结果。
 
 ```bash
 cd ~/assignment-tirx-gemm
+bash <<'SH'
+set -uo pipefail
 mkdir -p results_b300
-set -o pipefail
-tirx_run=$(mktemp -d results_b300/step10_tmem_adopt.XXXXXX)
-git log -1 --oneline
-sha256sum gemm_kernels.py
+tirx_run=$(mktemp -d results_b300/step10_validate.XXXXXX) || exit 1
+tirx_failed=0
 
-uv run python -m pytest tests/test_step10.py -vs --tb=short \
-  2>&1 | tee "$tirx_run/pytest_step10.log"
+run_logged() {
+  local tirx_label=$1
+  shift
+  {
+    git rev-parse HEAD
+    git status --short
+    sha256sum gemm_kernels.py
+    printf 'SLURM_JOB_ID=%s\n' "${SLURM_JOB_ID:-unset}"
+  } > "$tirx_run/${tirx_label}_metadata.txt"
+  "$@" 2>&1 | tee "$tirx_run/$tirx_label.log"
+  local tirx_exit=$?
+  printf '%s\n' "$tirx_exit" > "$tirx_run/${tirx_label}_exitcode.txt"
+  if [ "$tirx_exit" -ne 0 ]; then
+    tirx_failed=1
+  fi
+  return "$tirx_exit"
+}
 
-uv run python -u benchmark.py --steps 10 --trials 7 \
-  --csv "$tirx_run/step10.csv" --diagnostics-dir "$tirx_run/compiler_step10" \
-  2>&1 | tee "$tirx_run/benchmark_step10.log"
+run_logged pytest_step10 uv run python -m pytest tests/test_step10.py -vs --tb=short
+run_logged benchmark_step10 uv run python -u benchmark.py --steps 10 --trials 7 \
+  --csv "$tirx_run/step10.csv" --diagnostics-dir "$tirx_run/compiler_step10"
 
 for tirx_trial in 1 2; do
-  uv run python -m pytest tests/ -vs --tb=short \
-    2>&1 | tee "$tirx_run/pytest_all_$tirx_trial.log"
+  run_logged "pytest_all_$tirx_trial" uv run python -m pytest tests/ -vs --tb=short
 done
 printf '结果目录：%s\n' "$tirx_run"
+exit "$tirx_failed"
+SH
 ```
+
+汇总 PASS 只表示各尺寸的中位数达标；判断每轮及最慢成绩需读取保存的原始样本。
+退出码文件表示包含 `tee` 的管道状态；整个脚本在任一命令失败时返回非零。
+作业被外部取消时可能来不及写退出码，需连同 Slurm 状态判断。
 
 benchmark 保存正式 CUDA/cubin、编译参数和七轮原始样本，可核对采用后是否仍与
 实测候选一致。这里是正式评分路径，不再使用 `--variants n128_tmem_double_buffer`。
@@ -214,7 +228,8 @@ CUDA 13.0 通常需要 **580 系列或更新的 NVIDIA 驱动**；如果平台�
 CUDA compatibility 环境，以平台说明为准。Toolkit 中需要 `nvcc` / `ptxas`。
 B100 也属于 SM100，但本仓库性能门槛取自 B200，不能保证 B100 达到同样分数。
 B300（SM103）的测试入口使用实际 SM 数和 `sm_103a` 编译目标；B200 使用 `sm_100a`。
-性能门槛仍使用 B200 参考值，B300 和新版 TVM 的实际性能需要上机测量。
+性能门槛仍使用 B200 参考值；本文顶部记录当前 B300 / TVM 0.26 的实测结果，
+其他设备或软件版本仍需单独测量。
 A100、H100、RTX 4090/5090 和 Mac GPU 不适用这些 SM100 内核。
 
 ```bash
@@ -264,7 +279,7 @@ PY
 ```
 
 pytest 和 `benchmark.py` 会按实际 GPU 调整常驻 CTA 数量；直接使用
-`hgemm_v6`–`hgemm_v10` 时默认 `SM_COUNT=148`（B200）。
+`hgemm_v6`–`hgemm_v10` 时默认 `SM_COUNT=148`，换设备时需在构建前设置该值。
 Step 7–10 的网格还会按输出 tile 数量限制 CTA / cluster 数，避免小矩阵启动空闲任务。
 
 ## 4. 按步骤验收
@@ -375,14 +390,15 @@ nvidia-smi > results/gpu.txt
 uv pip freeze > results/packages.txt
 ```
 
-持续偏慢时，先采集原有编译过程的资源信息；下例只测当前仍有失败的步骤：
+后续若出现性能退化，先采集原有编译过程的资源信息；下例以 Step 10 为例，
+其他步骤按实际问题修改 `--steps`：
 
 ```bash
 mkdir -p results
 set -o pipefail
 tirx_run=$(mktemp -d results/b300_diag.XXXXXX)
 nvidia-smi > "$tirx_run/gpu_before.txt"
-uv run python -u benchmark.py --steps 4,5,6,7,8,10 --trials 3 \
+uv run python -u benchmark.py --steps 10 --trials 3 \
   --diagnostics-dir "$tirx_run/compiler" --csv "$tirx_run/focus.csv" \
   2>&1 | tee "$tirx_run/benchmark.log"
 nvidia-smi > "$tirx_run/gpu_after.txt"
@@ -437,7 +453,7 @@ sanitizer 会扰动耗时，即使无内存/同步报告，也可能触发 pytes
 - 编译失败：保留完整堆栈、失败 step/shape、`pip freeze`、`nvcc --version`。
 - 小尺寸通过、大尺寸卡住：检查跨 tile phase、TMA/MMA 迭代次数、consumer barrier 槽位。
 - 部分行错误：检查 TMEM fence、warpgroup 的 128 线程参与、TMA store 完成等待；Step 10 的两个写回组分别使用 barrier 10 和 11。
-- 仅性能失败：检查 GPU 占用、功耗/时钟、是否 B200、是否开启同步调试或 sanitizer，再重复测量。
+- 仅性能失败：检查 GPU 占用、功耗/时钟、设备型号、是否开启同步调试或 sanitizer，再重复测量。
 
 ## 7. 可选：Modal 云端测试
 

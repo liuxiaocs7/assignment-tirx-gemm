@@ -1,40 +1,26 @@
 # Assignment: Blackwell GEMM Kernel Optimization
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` are implemented using
-Apache TVM **0.26.0** on SM100/SM103. All steps pass local TIR lowering and CUDA
-source generation checks. B-first Step 10 passed the full B300 suite once:
-**57 passed** in `step10_bfirst.A0Iwp0` (74.54 s). A subsequent user-reported
-run at `1e37e76` returned **56 passed / 1 performance failure** (74.17 s).
-Only Step 10 / 4096 fails: 0.139284 ms versus the 0.139100 ms limit.
-The earlier passing value was 0.139047 ms, with just 0.038% margin.
-All numerical checks pass. The formal 4096 CUDA/cubin and compiler options
-match the B-first probe exactly; the production source is unchanged between
-these commits. A single passing run has not established stable performance.
-The earlier `step10_mma_unroll4.iR07fS` resolves the unrolling comparison:
-`mma_unroll4` has byte-identical cubin/SASS to baseline. At the same four-stage
-unroll, batched emission reduces main-loop R2UR from 63 to 22, but its paired
-speedup against the direct control is 0.998207x. Neither candidate was adopted.
-`step10_hardware.Mosdpx` successfully collected one verified launch in 20 NCU
-passes. Its wide CSV and units row exposed a parser bug, now fixed using the
-actual report as a regression fixture. Offline analysis recovered 795 metrics:
-TC active cycles are 91.85% of SM-active time and 75.69% of elapsed time; L2/DRAM
-throughput is 22.61%/10.73%. These support investigating utilization gaps, but
-do not establish a specific cause or a stable performance pass. No GPU rerun
-is needed to recover this report. That parser fix did not change production or timing.
-`step10_tmem_sizes.I9nGIJ` now measures all four Step 10 sizes. Narrow N128/EPI32
-single buffering cuts median time from 0.027389 to 0.018566 ms at 1024 and from
-0.043305 to 0.027029 ms at 2048. At 4096, double buffering wins all seven paired
-trials again (14/14 across two runs); its worst time is 0.137803 ms, with 0.933%
-margin. At 8192 it regresses from 0.868543 to 0.902522 ms, so wide N256 is retained.
-Production now selects narrow N for output area up to 4096², using two TMEM slots
-only when narrow tiles require persistent reuse; larger outputs retain the wide
-path. Generated CUDA and host tensor maps match the selected measured variants.
-This adoption still needs the formal B300 pytest/benchmark commands in RUNNING.md;
-the latest completed full GPU suite predates it and remains 56 passed / 1 failed.
-All **557 local tool/source-generation checks pass** (299.28 s); they do not
-replace GPU correctness and timing validation of the adopted implementation.
-See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
-for measured results and compiler diagnostics.
+Apache TVM **0.26.0** for SM100/SM103. Production commit **`d283549` has passed
+formal B300 validation**: the supplied logs show Step 10 **6 passed**, two full
+runs of **57 passed**, and PASS medians for all four Step 10 benchmark sizes
+(seven trials). The user reports five full passing runs in total; two complete
+logs are available in the conversation. These formal results are transcribed
+from user-provided logs, rather than locally inspected raw artifacts.
+
+Step 10 now uses N128/EPI32 for output area up to 4096², with two TMEM slots per
+consumer only when narrow tiles require persistent reuse; larger outputs retain
+N256/EPI64. Formal benchmark medians at 1024/2048/4096/8192 are
+**0.018547 / 0.027124 / 0.137610 / 0.868908 ms**. The previously marginal 4096
+case passes, though its demonstrated formal timing margin remains about 1%.
+The original correctness tolerances, grading thresholds and CUDA-event timer
+are unchanged. The latest local tool/source-generation regression was
+**557 passed**; those checks are separate from GPU validation.
+
+See [RUNNING.md](RUNNING.md) for reproducible commands,
+[OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10
+optimization guide and remaining improvements, and
+[B300_VALIDATION.md](B300_VALIDATION.md) for evidence and experiment history.
 
 In this assignment, you will progressively build a high-performance FP16 GEMM kernel for NVIDIA Blackwell (SM100) GPUs using TVM/TIRX. Starting from a minimal single-tile kernel, you will incrementally add optimizations — K-loop accumulation, spatial tiling, TMA async loads, software pipelining, persistent kernels, warp specialization, deeper pipelines, multi-CTA clusters, and multi-consumer parallelism — until you arrive at a fully optimized kernel that matches the structure of production-grade implementations.
 
@@ -474,13 +460,16 @@ Each stage has its own mbarrier and phase counter. The pattern is:
 **What you will learn:**
 - Persistent kernel pattern: fixed number of CTAs that loop over tiles
 - `ClusterPersistentScheduler2D` for L2-cache-friendly tile ordering
-- Why persistent kernels improve performance
+- When persistent kernels can improve performance and what they cost
 
 **Background:**
 
-In steps 3-5, each CTA computes exactly one output tile, and the GPU launches `(M/128) * (N/128)` CTAs. For large matrices, this can mean thousands of CTAs, and the launch overhead + cold L2 cache hurt performance.
+In steps 3-5, each CTA computes one output tile within a single kernel launch.
+Large matrices require many CTAs, each repeating initialization and teardown.
+Persistence can amortize that work and control tile ordering, at the cost of
+extra scheduling and synchronization inside each CTA.
 
-A persistent kernel launches exactly `SM_COUNT` CTAs (one per SM). Each CTA loops over multiple tiles using a tile scheduler:
+This persistent kernel launches `SM_COUNT` CTAs. Each CTA loops over tiles using a tile scheduler:
 
 ```python
 tile_scheduler = ClusterPersistentScheduler2D(
@@ -492,13 +481,18 @@ while tile_scheduler.valid():
     tile_scheduler.next_tile()
 ```
 
-The scheduler orders tiles in an L2-cache-friendly pattern (processing nearby tiles together), which significantly improves memory bandwidth utilization.
+The scheduler processes nearby tiles together to encourage L2 reuse. The benefit
+is workload-dependent: the current Step 6 is slower than Step 5 at 4096, so
+persistence should not be assumed to improve every shape.
 
 **Implementation hints:**
 - `bx = T.cta_id([SM_COUNT])` — single-dimensional grid.
 - `m_st = T.meta_var(tile_scheduler.m_idx * BLK_M)`.
 - `n_st = T.meta_var(tile_scheduler.n_idx * BLK_N)`.
-- The K-loop and pipeline logic remain the same as step 5.
+- Keep per-buffer TMA and MMA phases across output tiles; do not reset them at each tile.
+- The measured implementation uses K128 when K is divisible by 128, otherwise K64,
+  with two input stages. See the [optimization guide](OPTIMIZATION_GUIDE.md) for
+  its measured benefit and differences from Step 5.
 
 **Test:** `pytest tests/test_step06.py -xvs`
 
@@ -583,15 +577,22 @@ Getting this wrong causes either deadlock (producer waits for consumer who waits
 
 Step 7 uses `PIPE_DEPTH=2` (double buffering). With only 2 stages, the TMA producer can be at most 1 stage ahead of the MMA consumer. If the TMA latency is longer than the MMA compute time, the MMA warp stalls waiting for data.
 
-With `PIPE_DEPTH=4`, the TMA producer can be up to 3 stages ahead, providing more buffering to absorb latency variations. The cost is more shared memory (4x the A/B buffers instead of 2x) and more barrier instances.
+With `PIPE_DEPTH=4`, the TMA producer can be up to 3 stages ahead, providing more
+buffering to absorb latency variations. At a fixed K width, four input stages
+use twice the input shared memory of two stages, plus more barrier instances.
 
-**Changes from step 7:**
+**Conceptual changes from step 7 at a fixed K width:**
 - `PIPE_DEPTH = 4` (was 2)
 - `TMABar(pool, 4, ...)`, `TCGen05Bar(pool, 4, ...)`
 - `Asmem = pool.alloc((4, BLK_M, BLK_K), ...)`
 - `PipelineState(4)`, `PipelineState(4)`
 
-Everything else — the warp specialization structure, barrier flow, and epilogue — remains identical.
+The role structure, barrier flow and EPI64 writeback are retained. In the current
+measured implementation, Step 7 uses K128 with a K64 fallback, while Step 8 uses
+K64 with four stages. Step 8 also uses a 64 ns TMA-ready wait hint and caches the
+immutable TMEM base after initialization synchronization. Current Step 7/8
+results therefore do not isolate pipeline depth alone; see the
+[optimization guide](OPTIMIZATION_GUIDE.md) for resource costs and measurements.
 
 **Test:** `pytest tests/test_step08.py -xvs`
 
@@ -646,7 +647,8 @@ Although only CTA-0's elected thread issues the MMA instruction, **both CTAs' Te
 
 **New concepts:**
 - **Cluster CTA ID**: `cbx, cby = T.cta_id_in_cluster([CTA_GROUP, 1])` — position within the cluster.
-- **Kernel CTA ID**: `bx = T.cta_id([SM_COUNT])` — which SM.
+- **Kernel CTA ID**: `bx = T.cta_id([CLUSTER_COUNT * CTA_GROUP])` — the CTA's
+  grid index, not a physical SM ID.
 - **Remote barrier view**: `tma2mma_cta0 = tma2mma.remote_view(0)` — access CTA-0's barrier from any CTA.
 - **MMA only on CTA-0**: `if cbx == 0:` — only CTA-0's warp 0 issues MMA commands.
 - **Multicast arrive**: `mma2tma.arrive(stage, cta_group=2, cta_mask=3)` — signal both CTAs.
@@ -660,7 +662,9 @@ With `cta_group=2`, `Tx.gemm_async` outputs `MMA_N = BLK_N * CTA_GROUP = 256` co
 - `CTA_GROUP = 2`, `MMA_N = BLK_N * CTA_GROUP`
 - `m_st` and `n_st` account for cluster position (cbx)
 - `ld2mma.init(128 * CTA_GROUP)` — both CTAs' writeback WGs arrive
-- Tile scheduler: `num_m_tiles=M//256`, `num_n_tiles=N//256`, `num_clusters=SM_COUNT//2`, `tile_scheduler.init(bx // CTA_GROUP)`
+- Tile scheduler: `num_m_tiles=M//256`, `num_n_tiles=N//256`,
+  `num_clusters=CLUSTER_COUNT`, `tile_scheduler.init(bx // CTA_GROUP)`, where
+  `CLUSTER_COUNT = min(SM_COUNT//2, (M//256)*(N//256))`
 - `tcgen05.alloc` and `tcgen05.dealloc` must use `cta_group=2`
 - TMA arrive byte count must include both CTAs: `CTA_GROUP * (BLK_M * BLK_K + BLK_N * BLK_K) * DTYPE_SIZE`
 
@@ -677,11 +681,12 @@ With `cta_group=2`, `Tx.gemm_async` outputs `MMA_N = BLK_N * CTA_GROUP = 256` co
 
 **Background:**
 
-The final optimization adds a second MMA consumer. With `NUM_CONSUMER=2` and `WG_NUMBER=3`:
+The final optimization adds a second MMA consumer. The wide N256, single-buffer
+path below uses `NUM_CONSUMER=2` and `WG_NUMBER=3`:
 
 - **WG2**: Producer warpgroup
-  - warp 0: MMA consumer 0 — computes `A[0:128, :] x B` -> TMEM columns `[0:256]`
-  - warp 1: MMA consumer 1 — computes `A[128:256, :] x B` -> TMEM columns `[256:512]`
+  - warp 0: MMA consumer 0 — computes A block 0 × shared B -> TMEM columns `[0:256]`
+  - warp 1: MMA consumer 1 — computes A block 1 × shared B -> TMEM columns `[256:512]`
   - warp 3: TMA producer — loads 2x A blocks + 1x B block per stage
 - **WG0**: Writeback for consumer 0 (reads TMEM `[0:256]`)
 - **WG1**: Writeback for consumer 1 (reads TMEM `[256:512]`)
@@ -699,7 +704,8 @@ This doubles the compute density per CTA: each CTA now processes a 256x256 outpu
 - `mma2ld = TCGen05Bar(pool, NUM_CONSUMER, ...)` and `ld2mma = MBarrier(pool, NUM_CONSUMER, ...)` — one shared object each with `depth=NUM_CONSUMER` (2 slots), **not** separate objects per consumer. Use `warp_id` / `wg_id` as the slot index (not `PipelineState.stage`): `mma2ld.arrive(warp_id, ...)`, `mma2ld.wait(wg_id, ...)`
 - `mma2ld.init(1)` — each slot expects 1 arrival (one MMA warp)
 - `ld2mma.init(128 * CTA_GROUP)` — each slot expects 256 arrivals (all writeback WG threads across both CTAs)
-- Writeback **must** use chunked EPI_N (e.g., 64 or smaller) — reading all 256 TMEM columns at once exceeds register capacity
+- TMEM readback uses `TMEM_LD_N=32` to limit live FP32 registers. Separately,
+  `EPI_N=64` controls the FP16 SMEM/TMA output chunk; these are distinct widths.
 - Tile scheduler: `num_m_tiles=M // 256 // NUM_CONSUMER` — cluster tile is now 512x256
 - TMA arrive bytes: `CTA_GROUP * (NUM_CONSUMER * BLK_M * BLK_K + BLK_N * BLK_K) * DTYPE_SIZE` — 2 A blocks + 1 B block per CTA
 - Writeback uses `warpgroup_sync(wg_id + 10)` — each WG needs its own barrier ID. Using the same ID (e.g., `warpgroup_sync(10)`) for both WG0 and WG1 mixes their threads on a single barrier, causing partial writes and deadlocks at large sizes. This is something you should watch out for carefully.
