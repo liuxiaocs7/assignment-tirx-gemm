@@ -1,0 +1,112 @@
+--- baseline.py
++++ tmem_share_a_depth5.py
+@@ -13,7 +13,6 @@
+     NUM_CONSUMER = 2
+     MMA_M, MMA_N = 256, (128 if NARROW_N else 256)
+     K_TILES = K // BLK_K
+-    PIPE_DEPTH = 4
+     EPI_N = 32 if NARROW_N else 64
+     TMEM_LD_N = 32  # Four/eight loads per narrow/wide consumer.
+     WG_NUMBER = 3
+@@ -24,11 +23,15 @@
+     # A single wave has no next tile to overlap. For persistent narrow tiles,
+     # use both 128-column slots per consumer within the same 512-column TMEM.
+     TMEM_BUFFERS = 2 if NARROW_N and TOTAL_TILES > MAX_CLUSTERS else 1
++    SHARE_A = TMEM_BUFFERS == 2
++    A_CONSUMERS = 1 if SHARE_A else NUM_CONSUMER
++    B_CONSUMERS = NUM_CONSUMER if SHARE_A else 1
++    PIPE_DEPTH = 5 if SHARE_A else 4
+     TMEM_SLOT_STRIDE = NUM_CONSUMER if TMEM_BUFFERS == 2 else 0
+     TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS
+     CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER
+-    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
+-    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
++    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, A_CONSUMERS, BLK_M, BLK_K))
++    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, B_CONSUMERS, BLK_N, BLK_K))
+     D_SWIZZLE = SwizzleMode.SWIZZLE_64B_ATOM if NARROW_N else SwizzleMode.SWIZZLE_128B_ATOM
+     D_layout = mma_shared_layout(d_type, D_SWIZZLE, (NUM_CONSUMER, BLK_M, EPI_N))
+ 
+@@ -52,8 +55,8 @@
+         mma2ld = TCGen05Bar(pool, TMEM_BUFFERS * NUM_CONSUMER)
+         ld2mma = MBarrier(pool, TMEM_BUFFERS * NUM_CONSUMER)
+         pool.move_base_to(1024)
+-        Asmem = pool.alloc((PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K), a_type, layout=A_layout)
+-        Bsmem = pool.alloc((PIPE_DEPTH, BLK_N, BLK_K), b_type, layout=B_layout)
++        Asmem = pool.alloc((PIPE_DEPTH, A_CONSUMERS, BLK_M, BLK_K), a_type, layout=A_layout)
++        Bsmem = pool.alloc((PIPE_DEPTH, B_CONSUMERS, BLK_N, BLK_K), b_type, layout=B_layout)
+         Dsmem = pool.alloc((NUM_CONSUMER, BLK_M, EPI_N), d_type, layout=D_layout)
+         pool.commit()
+ 
+@@ -75,12 +78,12 @@
+             layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
+ 
+         tile_scheduler = ClusterPersistentScheduler2D(
+-            "ts", num_m_tiles=M // (MMA_M * NUM_CONSUMER), num_n_tiles=N // MMA_N,
++            "ts", num_m_tiles=M // (MMA_M * A_CONSUMERS), num_n_tiles=N // (MMA_N * B_CONSUMERS),
+             l2_group_size=8, num_clusters=CLUSTER_COUNT)
+         tile_scheduler.init(bx // CTA_GROUP)
+-        m_st = T.meta_var(tile_scheduler.m_idx * MMA_M * NUM_CONSUMER + cbx * BLK_M)
+-        n_st = T.meta_var(tile_scheduler.n_idx * MMA_N + cbx * BLK_N)
+-        n_out = T.meta_var(tile_scheduler.n_idx * MMA_N)
++        m_st = T.meta_var(tile_scheduler.m_idx * MMA_M * A_CONSUMERS + cbx * BLK_M)
++        n_st = T.meta_var(tile_scheduler.n_idx * MMA_N * B_CONSUMERS + cbx * BLK_N)
++        n_out = T.meta_var(tile_scheduler.n_idx * MMA_N * B_CONSUMERS)
+         tma2mma_cta0 = tma2mma.remote_view(0)
+         tma_phase = PipelineState(PIPE_DEPTH)
+         mma_phase = PipelineState(PIPE_DEPTH)
+@@ -93,11 +96,13 @@
+ 
+         @T.inline
+         def tma_load(k_st):
+-            Tx.copy_async(Bsmem[tma_phase.stage, :, :],
+-                          B[n_st:n_st + BLK_N, k_st:k_st + BLK_K],
+-                          dispatch="tma_auto", cta_group=CTA_GROUP,
+-                          mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
+-            for consumer in T.unroll(NUM_CONSUMER):
++            for consumer in T.unroll(B_CONSUMERS):
++                n_consumer = T.meta_var(n_st + consumer * MMA_N)
++                Tx.copy_async(Bsmem[tma_phase.stage, consumer, :, :],
++                              B[n_consumer:n_consumer + BLK_N, k_st:k_st + BLK_K],
++                              dispatch="tma_auto", cta_group=CTA_GROUP,
++                              mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
++            for consumer in T.unroll(A_CONSUMERS):
+                 m_consumer = T.meta_var(m_st + consumer * MMA_M)
+                 Tx.copy_async(Asmem[tma_phase.stage, consumer, :, :],
+                               A[m_consumer:m_consumer + BLK_M, k_st:k_st + BLK_K],
+@@ -114,7 +119,7 @@
+                             # Both CTAs complete bytes against CTA 0's barrier.
+                             if cbx == 0:
+                                 tma2mma_cta0.arrive(tma_phase.stage,
+-                                    CTA_GROUP * (NUM_CONSUMER * BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
++                                    CTA_GROUP * (A_CONSUMERS * BLK_M * BLK_K + B_CONSUMERS * BLK_N * BLK_K) * F16_SIZE)
+                             tma_phase.advance()
+                         tile_scheduler.next_tile()
+             elif warp_id < NUM_CONSUMER:
+@@ -128,7 +133,7 @@
+                                 tma2mma.wait(mma_phase.stage, mma_phase.phase)
+                                 T.ptx.tcgen05.fence.after_thread_sync()
+                                 Tx.gemm_async(tmem[:, (ld_phase.stage * TMEM_SLOT_STRIDE + warp_id) * MMA_N:(ld_phase.stage * TMEM_SLOT_STRIDE + warp_id + 1) * MMA_N],
+-                                    Asmem[mma_phase.stage, warp_id, :, :], Bsmem[mma_phase.stage, :, :],
++                                    Asmem[mma_phase.stage, 0 if SHARE_A else warp_id, :, :], Bsmem[mma_phase.stage, warp_id if SHARE_A else 0, :, :],
+                                     accum=(k != 0), dispatch="tcgen05", cta_group=CTA_GROUP)
+                                 mma2tma.arrive(mma_phase.stage, cta_group=CTA_GROUP, cta_mask=3)
+                                 mma_phase.advance()
+@@ -137,7 +142,8 @@
+                                 ld_phase.advance()
+                             tile_scheduler.next_tile()
+         elif wg_id < NUM_CONSUMER:
+-            m_out = T.meta_var(m_st + wg_id * MMA_M)
++            m_out = T.meta_var(m_st + (0 if SHARE_A else wg_id) * MMA_M)
++            n_consumer_out = T.meta_var(n_out + (wg_id if SHARE_A else 0) * MMA_N)
+             Dreg = T.alloc_local((TMEM_LD_N,), acc_type)
+             Dreg_f16 = T.alloc_local((MMA_N,), d_type)
+             Dreg_wg = Dreg.view(128, TMEM_LD_N,
+@@ -164,7 +170,7 @@
+                     T.cuda.warpgroup_sync(wg_id + 10)
+                     if warp_id == 0:
+                         if T.filter(lane_id, T.ptx.elect_sync()):
+-                            Tx.copy_async(D[m_out:m_out + BLK_M, n_out + col:n_out + col + EPI_N],
++                            Tx.copy_async(D[m_out:m_out + BLK_M, n_consumer_out + col:n_consumer_out + col + EPI_N],
+                                           Dsmem[wg_id, :, :], dispatch="tma_auto")
+                             T.ptx.cp_async.bulk.commit_group()
+                             T.ptx.cp_async.bulk.wait_group(0)

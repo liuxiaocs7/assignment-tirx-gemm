@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "tmem_share_a_depth6",
+  "sources": [
+    {
+      "before_sha256": "1f8999644d66791a8a45f4cb938c86da96d4cb441760fd03493f137cb0b67683",
+      "compiled_sha256": "1f8999644d66791a8a45f4cb938c86da96d4cb441760fd03493f137cb0b67683"
+    }
+  ]
+}

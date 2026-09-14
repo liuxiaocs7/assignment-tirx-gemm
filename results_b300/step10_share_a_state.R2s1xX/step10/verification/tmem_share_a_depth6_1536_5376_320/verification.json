@@ -1,0 +1,12 @@
+{
+  "step": 10,
+  "variant": "tmem_share_a_depth6",
+  "shape": [
+    1536,
+    5376,
+    320
+  ],
+  "launches": 2,
+  "verified": true,
+  "timed": false
+}

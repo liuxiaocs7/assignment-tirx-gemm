@@ -1,0 +1,27 @@
+timestamp, gpu_uuid, pid, process_name, used_gpu_memory [MiB]
+2026/09/14 06:24:02.075, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 802
+2026/09/14 06:24:03.076, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 964
+2026/09/14 06:24:04.076, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1126
+2026/09/14 06:24:05.076, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1158
+2026/09/14 06:24:06.077, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1190
+2026/09/14 06:24:07.077, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1190
+2026/09/14 06:24:08.077, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1222
+2026/09/14 06:24:09.078, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1248
+2026/09/14 06:24:10.078, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:11.078, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:12.078, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:13.078, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:14.079, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:15.079, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1250
+2026/09/14 06:24:16.079, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:17.079, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:18.079, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:19.080, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:20.080, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:21.080, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:22.080, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:23.080, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:24.081, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:25.081, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:26.081, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, /home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3, 1252
+2026/09/14 06:24:27.081, GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1, 2625254, [No data], 1250
