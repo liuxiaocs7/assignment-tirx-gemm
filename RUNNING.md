@@ -37,7 +37,10 @@
 最新 `step10_share_a.r7r3iv` 四个版本的数值校验及 28 个计时样本全部通过，
 但同一 baseline 二进制比上次快约 19.8%，本轮又从约 0.094 升至 0.115 ms。
 共享 A 五级对原五级的配对收益仅约 0.21%，六级无明确额外收益，暂不采用。
-下一步记录 GPU 身份和运行状态再比较。完整证据见
+随后 `step10_share_a_state.X3xsC4` 也全部达标，慢段观察到 SM 2032→1507 MHz，
+SW Power Capping 计数增加 231.687 ms，热降频计数未增；本次 UUID 与此前角色
+诊断不同。原七轮窗口只有一个状态采样点，下一步延长同一序列至 201 轮。
+完整证据见
 [B300_VALIDATION.md](B300_VALIDATION.md)，状态采集与历史重放命令见下节。
 各步原理与后续优化见 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)。
 
@@ -125,19 +128,21 @@ probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder�
 
 ### 共享 A 结果漂移时的状态采集复测
 
-`step10_share_a.r7r3iv` 已完成下面的四版本实验，数值与计时均通过，但
-baseline 比历史同一二进制快约 19.8%，且单轮序列中存在明显漂移。现在先
-补齐运行状态再复测，不增加新候选，也不把本轮最小值当作优化成绩。
-即使在同一台机器、同一张 GPU 上，时钟、功耗和并发负载也可能变化；先按
-同机处理，用记录判断状态变化，不把“换机器”作为前提。保持当前 Slurm 分配，
-同步包含 [run_step10_state.sh](run_step10_state.sh) 的提交后，在 B300 终端运行：
+`step10_share_a_state.X3xsC4` 已完成七轮状态采集。慢段的 SM 采样降到
+1507 MHz，前后 SW Power Capping 计数增加 231.687 ms，没有热降频计数增长。
+本次与此前角色诊断的物理 GPU UUID 不同，说明同一主机上的 Slurm 分配可能
+使用不同 GPU。此次计时窗口约 131 ms，仅覆盖一个 200 ms 状态采样点；
+不再重复原七轮窗口，改为延长原四版本序列，观察连续运行后的状态与收益。
+保持当前 Slurm 分配，同步包含可选 `--trials` 的
+[run_step10_state.sh](run_step10_state.sh) 后，在 B300 终端运行：
 
 ```bash
-bash run_step10_state.sh
+bash run_step10_state.sh --trials 201
 ```
 
-脚本只运行一次原四版本 probe，沿用 trials=7、warmup=10、repeat=30，无需先
-跑全量 pytest。它不更改实验实现或正式内核，也不设置 GPU 时钟和功耗。
+脚本只运行一次原四版本 probe，将轮数改为 201，保留每轮 warmup=10、repeat=30，
+预计计时阶段持续数秒；默认不带参数时仍为 7 轮。无需先跑全量 pytest。
+它不更改实验实现或正式内核，也不设置 GPU 时钟和功耗。
 `nvidia-smi -q` 保存驱动、UUID、功耗限制和时钟事件等可用字段；每 200 ms
 采集 GPU 状态，每 1 s 采集可见计算进程。CUDA 设备 UUID 用来对应物理 GPU，
 不能仅靠逻辑序号 0
@@ -152,14 +157,16 @@ kernel，
 不要据单个快照直接断言降频。若没有捕获到状态变化但耗时仍漂移，再检查宿主
 发射间隔、缓存和调度等因素。确定可比较条件后，再用下方原命令无监控复测候选。
 
+全部 201 轮保留，不能事后只挑快段或删除超线结果。这是延长观测的诊断，
+不能拿新的长序列中位数替换原始七轮或正式 pytest 的成绩。
 结果目录会自动打印。分析时保留整个目录，至少需要 `step10/samples.json`、
 `step10/run.json`、`step10.log`、`gpu_samples.csv`、`compute_processes.csv`、
 各 `.err`、`gpu_before.txt`、`gpu_after.txt`、`cuda_device.txt`、`session.txt`
 和退出码文件；只看 summary 无法对应耗时与状态。
 
-包装脚本已通过 Bash 语法检查及六种本地模拟：正常完成、probe 失败、tee
-失败、时间戳进程失败、监控查询失败和 CUDA 设备检查失败。核对了退出码、
-原 probe 参数和监控清理；这些模拟未执行 GPU 命令，不属于 GPU 性能验证。
+包装脚本已通过 Bash 语法检查及 14 种本地模拟：默认/201 轮、probe/tee/
+时间戳失败、监控查询失败、CUDA 设备检查失败，以及七种非法参数。核对了
+退出码、轮数传递和监控清理；这些模拟未执行 GPU 命令，不属于 GPU 性能验证。
 
 ### 共享 A 与六级输入缓冲实验
 

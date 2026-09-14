@@ -2,8 +2,11 @@
 # Diagnostic wrapper for the existing four-way probe; no timing/kernel changes.
 set -uo pipefail
 
-if (( $# != 0 )); then
-  printf 'Usage: bash run_step10_state.sh\n' >&2
+tirx_trials=7
+if (( $# == 2 )) && [[ "$1" == --trials && "$2" =~ ^[1-9][0-9]*$ ]]; then
+  tirx_trials=$2
+elif (( $# != 0 )); then
+  printf 'Usage: bash run_step10_state.sh [--trials POSITIVE_INTEGER]\n' >&2
   exit 2
 fi
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
@@ -24,6 +27,7 @@ printf '结果目录：%s\n' "$tirx_run"
   printf 'job=%s step=%s job_gpus=%s step_gpus=%s visible=%s\n' \
     "${SLURM_JOB_ID:-}" "${SLURM_STEP_ID:-}" "${SLURM_JOB_GPUS:-}" \
     "${SLURM_STEP_GPUS:-}" "${CUDA_VISIBLE_DEVICES:-}"
+  printf 'trials=%s warmup=10 repeat=30\n' "$tirx_trials"
 } > "$tirx_run/session.txt" 2>&1
 
 # CUDA logical index 0 need not be nvidia-smi physical index 0 under Slurm.
@@ -65,7 +69,7 @@ nvidia-smi \
 tirx_process_pid=$!
 
 # Log receipt times are coarse context, not kernel start/end timestamps.
-uv run python -u probe_persistent.py --steps 10 --size 4096 --trials 7 \
+uv run python -u probe_persistent.py --steps 10 --size 4096 --trials "$tirx_trials" \
   --variants tmem_share_a_depth6 --output "$tirx_run/step10" 2>&1 \
   | python3 -u -c 'import datetime, sys
 for line in sys.stdin:

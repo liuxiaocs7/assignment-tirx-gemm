@@ -35,8 +35,15 @@ checks and 28 timing samples. However, the byte-identical baseline had about
 19.8% lower median time than in the preceding retest, and its times varied from 0.094261 to
 0.115052 ms within this run. Shared-A depth 5 gained only 1.002075× against the
 original depth 5; depth 6 showed no additional gain. The large timing drift
-prevents a reliable adoption decision. Keep production unchanged and collect
-GPU identity and runtime state during the next comparison; the cause is unproven.
+prevents a reliable adoption decision.
+
+The follow-up `step10_share_a_state.X3xsC4` passed all 28 samples and observed
+2032 MHz before timing, 1507 MHz in the slow interval, and 231.687 ms of additional
+SW Power Capping time across the run. Thermal-slowdown counters did not increase.
+Its GPU UUID differs from the earlier role profile's GPU. Only one 200 ms state
+sample fell inside the roughly 131 ms timing window, so per-sample causes remain
+unresolved. Keep production unchanged; the next diagnostic extends the same
+sequence to 201 trials with the original per-trial warmup/repeat settings.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10
