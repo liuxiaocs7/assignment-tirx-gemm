@@ -21,7 +21,11 @@ The current N128/TMEM profile is now available in `step10_current_profile.3cjntP
 Its baseline passed 7/7 samples, with only **0.345%** margin at the slowest sample.
 Tensor Core activity is 93.27% of SM-active cycles, while accumulator-reuse wait
 is only about 0.175% of the traced MMA role. Explicit input-depth/K128 probes
-are ready for B300 comparison; they have not been adopted or measured yet.
+in `step10_input_ring.9SsKZM` show a small gain from K64/depth 5: paired speedup
+**1.0044×**, 7/7 samples passing, but only **0.180%** margin at the slowest sample.
+The unchanged production baseline passed just 1/7 samples in that run; both
+depth-2 candidates regressed substantially. Depth 5 awaits independent retesting
+and has not been adopted.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10

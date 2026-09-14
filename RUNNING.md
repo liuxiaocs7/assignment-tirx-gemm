@@ -30,8 +30,10 @@
 `results_b300/step10_tmem_adopt.OQ0WHS`。源码指纹一致，首次正式 CUDA/cubin
 与被采用的 probe 完全一致；五次新 benchmark 没有独立编译产物。
 最新 `step10_current_profile.3cjntP` 已完成当前路径角色/NCU 采集；baseline 七轮
-通过，但最慢样本仅余 0.345%。MMA 等累加器复用很少，接下来对照输入深度与
-K 宽度。完整证据见 [B300_VALIDATION.md](B300_VALIDATION.md)，实验命令见下节。
+通过，但最慢样本仅余 0.345%。随后 `step10_input_ring.9SsKZM` 中正式 baseline
+仅 1/7 达标；K64 五级略快且 7/7 通过，但最慢仅余 0.180%，尚未采用。
+下一步只复测五级与 baseline。完整证据见 [B300_VALIDATION.md](B300_VALIDATION.md)，
+实验命令见下节。
 各步原理与后续优化见 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)。
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
@@ -118,31 +120,32 @@ probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder�
 
 ### 当前路径输入环对照实验
 
-`step10_current_profile.3cjntP` 的角色和 NCU 已采集成功。本轮直接测试当前窄 N
-双 TMEM 槽的输入环，无需重复采集同样的 profile。先把包含下列新变体的提交
-同步至服务器，在已分配 B300 的终端运行：
+四版本实验已保存在 `step10_input_ring.9SsKZM`：两级 K64/K128 明显退化，
+K64 五级仅小幅改善。下一轮只比较当前正式 baseline 与五级，在新的进程和
+结果目录中做一次独立七轮复测。**已有 `dd90c57` 就能运行，无需更新实验代码**：
 
 ```bash
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/step10_input_ring.XXXXXX)
+tirx_run=$(mktemp -d results_b300/step10_depth5_recheck.XXXXXX)
 uv run python -u probe_persistent.py --steps 10 --size 4096 --trials 7 \
-  --variants tmem_k128_depth2 tmem_input_depth5 \
+  --variants tmem_input_depth5 \
   --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
 tirx_probe_exit=$?
 printf '%s\n' "$tirx_probe_exit" > "$tirx_run/probe_exitcode.txt"
 printf '结果目录：%s；退出码：%s\n' "$tirx_run" "$tirx_probe_exit"
 ```
 
-工具会自动补齐直接对照，共编译四个版本：正式 `baseline`、K64 两级
-`tmem_input_depth2`、K128 两级 `tmem_k128_depth2`、K64 五级
-`tmem_input_depth5`。保持原 warmup=10、repeat=30，每轮交错顺序。
-每个候选先校验评分形状，再验算 `(4096,3072,K)`、K=64/128/192/256/320/384
-各两次，覆盖部分输入环和第三个输出 tile 对 TMEM 槽零的复用。
+工具自动补齐正式 `baseline`，共两个版本。保持原 warmup=10、repeat=30，
+每轮交错顺序。先校验两者的评分形状，再将五级候选的 `(4096,3072,K)`、
+K=64/128/192/256/320/384 各验算两次，覆盖部分输入环和第三个输出 tile
+对 TMEM 槽零的复用。
 
-三个实验仅改当前窄 N 双槽路径的输入参数；K128 不能整除时回退 K64 两级。
-小网格单槽/大面积宽 N 保留正式配置，评分门槛和计时器不变。候选的 GPU
-正确性、寄存器资源和速度尚待这条命令验证，暂不采用到 `gemm_kernels.py`。
+五级候选仅改当前窄 N 双槽路径的输入深度，小网格单槽/大面积宽 N 保留正式
+配置。首轮短 K 和 4096 数值已通过，REG=112、STACK/LOCAL=0；最慢样本的
+0.251 μs 余量仍偏小，本次复测用于判断收益能否重复。正式内核、门槛和计时器
+不变。若需要重放完整四版本实验，用新的目录并把参数改为
+`--variants tmem_k128_depth2 tmem_input_depth5`。
 
 请保留整个目录，尤其 `summary.csv`、原始样本和编译产物。除了中位数，看
 候选相对 baseline、直接对照的配对收益，以及最大值/门槛内样本数。出现
