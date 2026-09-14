@@ -1,0 +1,101 @@
+{
+  "git_revision": "bcd22145d87a37863f71ff6af1e7c69b7832b5b5",
+  "git_dirty": true,
+  "gemm_kernels_sha256": "3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7",
+  "utils_sha256": "af9cc13549f0726e295a5ae65c91f580c7728d2c795e53e0ffe3547023f38d30",
+  "benchmark_sha256": "37d91ddbec1e74682eec22f7c64abc2b606095d04ec947aa031d889b253ef009",
+  "benchmark_diagnostics_sha256": "5db36328f88d5a5758659814bdec098cf0e5ac20823ac5b713b0ef41d0e06f74",
+  "compiler": "nvrtc",
+  "ptxas_reg_level": "10",
+  "TVM_CUDA_PTXAS_EXTRA_OPTS": "",
+  "TVM_CUDA_NVRTC_EXTRA_OPTS": "",
+  "TVM_CUDA_NVCC_NO_FAST_MATH": "",
+  "TVM_KERNEL_DEBUG": "",
+  "TVM_KERNEL_DUMP": "",
+  "CUDA_LAUNCH_BLOCKING": "",
+  "CUDA_VISIBLE_DEVICES": "0",
+  "target": "{\"kind\":\"cuda\",\"tag\":\"\",\"keys\":[\"cuda\",\"gpu\"],\"max_num_threads\":1024,\"thread_warp_size\":32,\"arch\":\"sm_103a\"}",
+  "gpu": "NVIDIA B300 SXM6 AC",
+  "sm_count": 148,
+  "tvm": "0.26.0",
+  "torch": "2.14.0+cu130",
+  "cuda": "13.0",
+  "probe_sha256": "802346184c3606f8c30272d7d05f01f4b20a2f2eac82d76b5cf107a58fa5c01d",
+  "probe_step45_sha256": "91113ca1d71f0ac5ead31b18b70765fcc73e1c6225d262f7238b2d2d5ed0afc2",
+  "profile_persistent_sha256": "d7f67fa6247d1d3e5fd0c4cc810dcb058130e5c3bd4705995539aa8f5caab650",
+  "steps": [
+    10
+  ],
+  "size": 4096,
+  "variants": {
+    "10": [
+      "baseline",
+      "n_tile_128",
+      "n128_epi32",
+      "n128_epi32_depth5"
+    ]
+  },
+  "verification_shapes": {
+    "n_tile_128": [
+      [
+        4096,
+        3072,
+        64
+      ],
+      [
+        4096,
+        3072,
+        320
+      ],
+      [
+        4096,
+        3072,
+        384
+      ]
+    ],
+    "n128_epi32": [
+      [
+        4096,
+        3072,
+        64
+      ],
+      [
+        4096,
+        3072,
+        320
+      ],
+      [
+        4096,
+        3072,
+        384
+      ]
+    ],
+    "n128_epi32_depth5": [
+      [
+        4096,
+        3072,
+        64
+      ],
+      [
+        4096,
+        3072,
+        320
+      ],
+      [
+        4096,
+        3072,
+        384
+      ]
+    ]
+  },
+  "comparison_controls": {
+    "10": {
+      "n128_epi32": "n_tile_128",
+      "n128_epi32_depth5": "n128_epi32"
+    }
+  },
+  "trials": 5,
+  "warmup": 10,
+  "repeat": 30,
+  "seed": 0
+}

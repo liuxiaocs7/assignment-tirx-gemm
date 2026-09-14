@@ -1,0 +1,12 @@
+{
+  "step": 10,
+  "variant": "n_tile_128",
+  "shape": [
+    4096,
+    3072,
+    320
+  ],
+  "launches": 2,
+  "verified": true,
+  "timed": false
+}

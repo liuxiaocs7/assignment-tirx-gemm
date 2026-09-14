@@ -1,0 +1,12 @@
+{
+  "step": 10,
+  "variant": "n128_epi32_depth5",
+  "shape": [
+    4096,
+    3072,
+    384
+  ],
+  "launches": 2,
+  "verified": true,
+  "timed": false
+}
