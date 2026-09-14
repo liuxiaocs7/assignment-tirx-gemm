@@ -1,6 +1,60 @@
 # B300 验证记录与性能诊断
 
-## 最新长序列：step10_share_a_state.fGOjDy，804/804 达标，五级有小幅持续收益
+## 最新正式验收：step10_final.vM3h3I，57 项测试与 28 个计时样本全部通过
+
+**当前正式版本在本次 B300 分配下验收通过。** `f165b5e` 收录了在
+`6e5f5f45c8f4f29e016e6c448c31d0122bedd8b7` 执行的最终结果：
+[全量 pytest](results_b300/step10_final.vM3h3I/pytest_all.log)、
+[正式 Step 10 benchmark](results_b300/step10_final.vM3h3I/benchmark_step10.log)、
+[七轮原始样本与汇总](results_b300/step10_final.vM3h3I/step10.csv)、
+[版本记录](results_b300/step10_final.vM3h3I/version.txt) 和
+[运行元数据](results_b300/step10_final.vM3h3I/compiler_step10/run.json)。
+全量 pytest 为 **57 passed，76.59 s**，包含 Step 10 四个方阵和两个矩形
+重用用例；[pytest 退出码](results_b300/step10_final.vM3h3I/pytest_exitcode.txt) 与
+[benchmark 退出码](results_b300/step10_final.vM3h3I/benchmark_exitcode.txt) 均为 0。
+
+正式 benchmark 保持 warmup=10、repeat=30、trials=7、seed=0。逐项重算
+CSV 中位数与汇总一致，**四个尺寸各 7/7、合计 28/28 原始样本达标**：
+
+| Step 10 方阵尺寸 | 中位数 ms | 最大值 ms | 门槛 ms | 达标样本 | 最慢样本余量 |
+|---|---:|---:|---:|---:|---:|
+| 1024 | 0.010793 | 0.010955 | 0.032500 | 7/7 | 66.29% |
+| 2048 | 0.016595 | 0.016650 | 0.045500 | 7/7 | 63.41% |
+| 4096 | **0.094018** | **0.094208** | **0.139100** | **7/7** | **32.27%** |
+| 8192 | 0.799646 | 0.818735 | 0.946400 | 7/7 | 13.49% |
+
+余量按 `(门槛 - 最大值) / 门槛` 计算。原来关注的 4096 本轮已有明显余量。
+8192 的七轮范围为 0.652911–0.818735 ms，存在波动，但全部样本仍通过；
+pytest 的 0.649530 ms 与后续 benchmark 中位数不必相同，保留两种原始结果。
+
+运行时间为 2026-09-14 06:46–06:48 UTC，Slurm job **27503 / step 0**，
+CUDA_VISIBLE_DEVICES=0。GPU 为 NVIDIA B300 SXM6 AC、148 SM，前后
+[快照](results_b300/step10_final.vM3h3I/gpu_before.txt) 的 UUID 与
+[结束记录](results_b300/step10_final.vM3h3I/gpu_after.txt) 一致：
+`GPU-dadf9f3b-df58-d3fa-07b0-5fe223423db1`，也与前次 201 轮 probe 相同。
+环境为 TVM 0.26.0、PyTorch 2.14.0+cu130、CUDA 13.0，NVRTC 编译目标
+SM103a、ptxas register-usage-level=10。
+
+正式内核仍是 `d283549` 采用的版本，SHA256 为
+`5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c`。
+元数据记录的内核、utils、benchmark、benchmark_diagnostics 四个源码指纹
+均匹配执行提交与当前工作区。`dirty=True` 对应版本记录中的新结果目录
+`?? results_b300/step10_final.vM3h3I/`，记录中没有已跟踪文件修改。
+四尺寸 CUDA、cubin、NVRTC 参数与版本文件共 **16 份**，与首次正式验收
+`step10_tmem_adopt.OQ0WHS` 逐字节一致；4096 的这四份文件也与前次长序列
+probe 的 baseline 一致。共享 A、五级输入候选均未采用，当前余量不能记为
+这些候选带来的提速。
+
+本次已完成“全量 pytest + 正式 Step 10 benchmark”的验收目标，无需为了
+完成当前验收继续跑候选实验。历史其他运行中的贴线和 SLOW 仍保留，本结论
+限定于已记录的版本、GPU 与运行条件。共享 A 五级可作为未来可选优化，若要
+采用再验证四尺寸及回退路径；六级暂不推进。
+
+本次仅更新验收与优化文档，并核对原始样本、日志、源码和编译产物。没有修改
+正式内核、计时器或评分门槛，也没有重新运行本地工具回归；此前完整回归仍为
+**614 passed**。
+
+## 前次长序列：step10_share_a_state.fGOjDy，804/804 达标，五级有小幅持续收益
 
 `ccd28ab` 补齐在 `01a2248` 执行的 201 轮结果：
 [summary](results_b300/step10_share_a_state.fGOjDy/step10/summary.csv)、
@@ -68,14 +122,15 @@ HW Power Braking 计数仍未增加。这支持持续负载下的功耗限制，
 NVRTC 参数与版本）与前次状态采集共 **100 份逐字节一致**。原始 804 个样本
 重算 summary 一致；本轮未修改正式内核或重新生成其他候选。
 
-### 下一步：结束状态采集，验证五级的采用范围
+### 当时的候选计划：结束状态采集，验证五级的采用范围
 
-本轮已回答延长观测的问题，不再要求重复 201 轮。仅保留共享 A 五级，按
+本轮已回答延长观测的问题，不再要求重复 201 轮。若继续做可选优化，仅保留共享 A 五级，按
 [RUNNING.md](RUNNING.md#共享-a-五级采用前验证) 在同一 GPU 上进行一次无监控
 的四尺寸 probe；自动保留正式 baseline、原五级对照，继续校验矩形短 K。
 1024/2048/8192 走正式 fallback，4096 执行新布局；先确认候选实现与回退路径
 在 GPU 上无退化。若通过且 4096 小收益仍出现，再正式采用并运行全量 pytest
-和正式 benchmark。暂不宣称修复所有 GPU/运行条件下的稳定性。
+和正式 benchmark。该候选计划尚未执行；上文最新验收使用的是原正式内核，
+当前验收不依赖此计划。暂不宣称修复所有 GPU/运行条件下的稳定性。
 
 本次只更新结果与运行文档；已核对产物、summary 和命令，不重复执行与文档
 改动无关的本地工具集。此前完整工具回归仍为 **614 passed**。

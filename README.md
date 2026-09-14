@@ -1,58 +1,28 @@
 # Assignment: Blackwell GEMM Kernel Optimization
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` use Apache TVM
-**0.26.0** for SM100/SM103. Results added in `ea69b2c` confirm **five full pytest
-runs of 57 passed** on production `d283549`. However, Step 10 / 4096 is still
-marginal: **2 of 5 all-step benchmark runs are SLOW**, at 0.139564 and 0.139290 ms
-against the 0.139100 ms limit. Each of those runs used one timing trial. All
-recorded numerical checks pass; repeated pytest success does not establish
-stable performance across all measurements.
+**0.26.0** for SM100/SM103. **The production version passed acceptance on the
+current B300 allocation:** the full pytest suite reports **57 passed**, and the
+official Step 10 benchmark passes all four sizes and **28/28 individual timing
+samples**. Results are in [step10_final.vM3h3I](results_b300/step10_final.vM3h3I/),
+executed at `6e5f5f4` on Slurm job 27503, step 0. Step 10 / 4096 has median
+**0.094018 ms** and maximum **0.094208 ms** against a **0.139100 ms** limit,
+giving **32.27%** margin at the slowest sample. Both command exit codes are 0.
 
 Step 10 uses N128/EPI32 up to output area 4096², with double TMEM buffering when
-persistent reuse is needed; larger outputs retain N256/EPI64. The first formal
-Step 10 benchmark passed all 28 samples across four sizes, but its worst 4096
-sample had only **0.589%** margin. Its CUDA/cubin match the selected probe variants
-exactly. The five newer CSVs have matching kernel and timing-source fingerprints;
-they do not include per-run binaries. The original thresholds and CUDA-event
-measurement remain unchanged. Latest full local tool/source-generation regression:
-**614 passed**; GPU timing stability remains an open optimization item.
+persistent reuse is needed; larger outputs retain N256/EPI64. Production kernels
+remain those adopted at `d283549`: all four sizes' CUDA and cubin files match
+the first formal acceptance run byte for byte. The original thresholds and
+CUDA-event measurement remain unchanged. Latest full local tool/source-generation
+regression: **614 passed**, recorded separately from GPU acceptance.
 
-The current N128/TMEM profile is now available in `step10_current_profile.3cjntP`.
-Its baseline passed 7/7 samples, with only **0.345%** margin at the slowest sample.
-Tensor Core activity is 93.27% of SM-active cycles, while accumulator-reuse wait
-is only about 0.175% of the traced MMA role. Explicit input-depth/K128 probes
-in `step10_input_ring.9SsKZM` show a small gain from K64/depth 5: paired speedup
-**1.0044×**, 7/7 samples passing, but only **0.180%** margin at the slowest sample.
-The unchanged production baseline passed just 1/7 samples in that run; both
-depth-2 candidates regressed substantially. Independent retesting in
-`step10_depth5_recheck.sMMqkr` confirmed a small **1.0029×** paired speedup, but
-depth 5 passed only **4/7** samples (maximum **0.139429 ms**, above the limit).
-Both runs used identical binaries. Depth 5 remains a candidate for a small gain;
-it has not been adopted and does not resolve timing stability.
-
-Shared-A five/six-stage probes in `step10_share_a.r7r3iv` passed all numerical
-checks and 28 timing samples. However, the byte-identical baseline had about
-19.8% lower median time than in the preceding retest, and its times varied from 0.094261 to
-0.115052 ms within this run. Shared-A depth 5 gained only 1.002075× against the
-original depth 5; depth 6 showed no additional gain. The large timing drift
-prevents a reliable adoption decision.
-
-The follow-up `step10_share_a_state.X3xsC4` passed all 28 samples and observed
-2032 MHz before timing, 1507 MHz in the slow interval, and 231.687 ms of additional
-SW Power Capping time across the run. Thermal-slowdown counters did not increase.
-Its GPU UUID differs from the earlier role profile's GPU. Only one 200 ms state
-sample fell inside the roughly 131 ms timing window, so per-sample causes remain
-unresolved.
-
-The 201-trial extension `step10_share_a_state.fGOjDy` passed **804/804** samples
-on the same GPU/job. Shared-A depth 5 beat the original depth 5 in **179/201**
-pairs, with **1.004371×** paired speedup and gains across all four time blocks
-and order patterns. Depth 6 added no benefit. Twenty in-window state samples
-showed sustained lower SM clocks and power readings near the 1100 W limit;
-SW Power Capping time increased by 4.195769 s, with no thermal-counter increase.
-Keep depth 5 as the adoption candidate and validate four sizes without monitoring
-before changing production. The baseline also passed every sample, so its roughly
-16.7% worst-sample margin must not be attributed to the small candidate gain.
+Historical Step 10 / 4096 timing failures remain documented, including two of
+five all-step benchmarks above the limit. The current result establishes
+acceptance for the recorded GPU and conditions, not every allocation. Shared-A
+depth 5 showed a small **1.004371×** gain against its direct control in the
+201-trial diagnostic run; depth 6 added no benefit. Neither candidate has been
+adopted. Further candidate validation is optional and is not required to complete
+the current acceptance.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10
