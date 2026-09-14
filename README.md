@@ -5,8 +5,11 @@ has three targeted Step 10 / 4096 pytest timing failures and only **2/8** formal
 benchmark samples within the unchanged 0.139100 ms limit (median **0.139725 ms**).
 The generated CUDA, cubin and compiler options exactly match earlier, faster
 artifacts. This run uses GPU **778768b4…**; identified faster historical runs use
-**dadf9f3b…**, but a controlled device/job comparison is still needed to establish
-the cause. The five accepted full runs below remain valid; performance stability
+**dadf9f3b…**; this correlation does not establish the cause. The user currently
+has access to only one GPU. Use `uv run python -u probe_step10_runtime.py` for
+an ordinary-launch versus CUDA Graph diagnostic with separate load telemetry;
+it is not an acceptance benchmark and has not yet been run on B300.
+The five accepted full runs below remain valid; performance stability
 in later conditions remains unresolved. This focused reproduction is complete.
 See [RUNNING.md](RUNNING.md) and [the latest evidence](B300_VALIDATION.md).
 

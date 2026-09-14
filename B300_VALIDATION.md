@@ -1,5 +1,32 @@
 # B300 验证记录与性能诊断
 
+## 单卡条件补充与下一项诊断（尚无新 GPU 实验结果）
+
+用户确认当前只能使用一张 GPU；不能把重新申请 Slurm 作业当成换卡实验，也不
+以取得另一张 GPU 作为继续工作的前提。历史记录中的不同 UUID 仍是历史事实，
+但不能推断用户现在可申请到那些设备。
+
+新回传 `step10_diagnose.9pEDv4` 尚未在本仓归档，以下仅依据终端输出：执行
+8080c02，gemm SHA 为 727a4440…，Slurm 27689 / step 0、GPU 778768b4…；
+三次单项 pytest 为 0.140401 / 0.140404 / 0.140261 ms，均在性能断言失败。
+八轮 benchmark 中位数 0.139605 ms，仅 2/8 样本达标，min/max 为
+0.138372 / 0.140626 ms，cuBLAS 中位数 0.130351 ms。仍是同一条件的复现。
+CPU affinity 210–239，实际可用 30 个逻辑 CPU；作业摘要 `CPUs/Task=1` 不足
+以断言 CPU 只有一个。最后的 34°C/P0/199 W/0% 利用率为进程结束后空闲快照。
+
+下一项假设检验限定同一张卡：运行状态/boost、CPU 提交间隙、当前内核执行成本。
+新增独立入口 `uv run python -u probe_step10_runtime.py`；先以 AB/BA 测八轮
+普通提交与 30 个 kernel 的 CUDA Graph，再单独采集约 8 秒持续负载遥测，
+最后停止采样并重复八轮对照。完整口径、判读和命令见 [RUNNING.md](RUNNING.md)。
+编译产物和所有原始样本保留；Graph 输出先用 NaN 污染再 replay 验算，捕获失败
+显式退出。Graph 不能替代原门槛验收，其变化也不能独归于 Python 开销。
+
+本轮仅增加诊断工具与 CPU 工具测试，**没有在 B300 运行新实验**，未改正式
+kernel、计时器、GPU 测试或门槛。过去通过的验收记录保留，当前稳定性仍未解决。
+本地运行 `tool_tests/test_step10_runtime_probe.py`、
+`tool_tests/test_step10_diagnose_runner.py` 与 `tool_tests/test_benchmark_cli.py`：
+**52 passed，4.70 s**；CLI help、Python 编译与 diff 空白检查通过。
+
 ## 最新聚焦诊断：MBawzh 三次单项失败，正式 benchmark 仅 2/8 样本达标
 
 `47f55d7` 已归档 [step10_diagnose.MBawzh](results_b300/step10_diagnose.MBawzh/)。
@@ -67,8 +94,10 @@ HW Power Braking 计数始终为 0。结论是：**三次 pytest 所覆盖区间
 
 ### 下一步：验证影响因素，而非重复同一轮
 
-本轮已完成聚焦复现，不需要仅为了确认失败再跑一遍。下一项有区分力的实验是：
-保持同一版本和原计时参数，在另一张 B300 的正常 Slurm 分配中运行同一诊断，
+本轮已完成聚焦复现，不需要仅为了确认失败再跑一遍。以下是当时提出的跨设备
+方案；用户随后确认仅有一张可用 GPU，当前已改用本文顶部的单卡诊断。只有未来
+确实具备第二张卡时，才保持同一版本和原计时参数，在另一张 B300 的正常 Slurm
+分配中运行同一诊断，
 记录 UUID、作业 CPU 配额/绑定、设备策略；若条件允许，使用 A→B→A 的顺序
 减少时间变化与设备身份混淆。不同节点的结果同时包含宿主差异，不能独归因于 GPU。
 无需手动覆盖 Slurm 的 `CUDA_VISIBLE_DEVICES` 或借用未分配的 GPU。
