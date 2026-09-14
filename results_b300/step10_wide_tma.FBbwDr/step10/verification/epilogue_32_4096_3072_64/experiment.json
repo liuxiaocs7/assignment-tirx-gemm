@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "epilogue_32",
+  "sources": [
+    {
+      "before_sha256": "15d02931e75337fc95895ff47c39abdc16576c044ca021817ecb5db414f1714c",
+      "compiled_sha256": "15d02931e75337fc95895ff47c39abdc16576c044ca021817ecb5db414f1714c"
+    }
+  ]
+}

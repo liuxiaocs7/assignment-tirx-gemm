@@ -1,0 +1,12 @@
+{
+  "step": 10,
+  "variant": "epilogue_32",
+  "shape": [
+    4096,
+    3072,
+    256
+  ],
+  "launches": 2,
+  "verified": true,
+  "timed": false
+}

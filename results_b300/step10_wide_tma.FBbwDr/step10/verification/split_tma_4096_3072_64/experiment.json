@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "split_tma",
+  "sources": [
+    {
+      "before_sha256": "c7ae379e956e24a42d173748d73634264f8e1a2adf676bd3ffe0cfa30c73e4b4",
+      "compiled_sha256": "c7ae379e956e24a42d173748d73634264f8e1a2adf676bd3ffe0cfa30c73e4b4"
+    }
+  ]
+}

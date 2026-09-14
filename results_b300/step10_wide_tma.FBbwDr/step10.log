@@ -1,0 +1,32 @@
+Code: 2ce0615ad85ea7c2fcc90332ea6ffb34df309f7c; gemm_sha256=3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7
+GPU: NVIDIA B300 SXM6 AC; SMs: 148; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Separate builds; each experiment records its direct comparison control. Verify all outputs before interleaved CUDA-event timing.
+Verified step 10 / baseline
+Verified step 10 / epilogue_32
+Verified step 10 / split_tma
+Verified boundary Step 10 / epilogue_32 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / epilogue_32 / (4096, 3072, 256) twice (untimed)
+Verified boundary Step 10 / epilogue_32 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / split_tma / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / split_tma / (4096, 3072, 256) twice (untimed)
+Verified boundary Step 10 / split_tma / (4096, 3072, 320) twice (untimed)
+Trial 1: step 10 / baseline: 0.138831 ms
+Trial 1: step 10 / epilogue_32: 0.139390 ms
+Trial 1: step 10 / split_tma: 0.138817 ms
+Trial 2: step 10 / baseline: 0.138202 ms
+Trial 2: step 10 / split_tma: 0.136179 ms
+Trial 2: step 10 / epilogue_32: 0.136685 ms
+Trial 3: step 10 / split_tma: 0.138179 ms
+Trial 3: step 10 / baseline: 0.137860 ms
+Trial 3: step 10 / epilogue_32: 0.138247 ms
+Trial 4: step 10 / split_tma: 0.137762 ms
+Trial 4: step 10 / epilogue_32: 0.138205 ms
+Trial 4: step 10 / baseline: 0.137965 ms
+Trial 5: step 10 / epilogue_32: 0.138181 ms
+Trial 5: step 10 / split_tma: 0.137643 ms
+Trial 5: step 10 / baseline: 0.138144 ms
+step variant         median_ms    min_ms    max_ms paired_speedup vs_cache control                   vs_control limit_ms status
+  10 baseline         0.138144  0.137860  0.138831          1.000      n/a baseline                       1.000 0.139100 PASS
+  10 epilogue_32      0.138205  0.136685  0.139390          0.998      n/a baseline                       0.998 0.139100 PASS
+  10 split_tma        0.137762  0.136179  0.138817          1.001      n/a baseline                       1.001 0.139100 PASS
+Saved results_b300/step10_wide_tma.FBbwDr/step10/summary.csv; SLOW is a measured result, not a tool error.

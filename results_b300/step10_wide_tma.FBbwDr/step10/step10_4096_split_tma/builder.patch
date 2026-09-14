@@ -1,0 +1,41 @@
+--- baseline.py
++++ split_tma.py
+@@ -85,26 +85,28 @@
+ 
+         @T.inline
+         def tma_load(k_st):
+-            Tx.copy_async(Bsmem[tma_phase.stage, :, :],
+-                          B[n_st:n_st + BLK_N, k_st:k_st + BLK_K],
+-                          dispatch="tma_auto", cta_group=CTA_GROUP,
+-                          mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
+-            for consumer in T.unroll(NUM_CONSUMER):
+-                m_consumer = T.meta_var(m_st + consumer * MMA_M)
+-                Tx.copy_async(Asmem[tma_phase.stage, consumer, :, :],
+-                              A[m_consumer:m_consumer + BLK_M, k_st:k_st + BLK_K],
++            if warp_id == 2:
++                Tx.copy_async(Bsmem[tma_phase.stage, :, :],
++                              B[n_st:n_st + BLK_N, k_st:k_st + BLK_K],
+                               dispatch="tma_auto", cta_group=CTA_GROUP,
+                               mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
++            else:
++                for consumer in T.unroll(NUM_CONSUMER):
++                    m_consumer = T.meta_var(m_st + consumer * MMA_M)
++                    Tx.copy_async(Asmem[tma_phase.stage, consumer, :, :],
++                                  A[m_consumer:m_consumer + BLK_M, k_st:k_st + BLK_K],
++                                  dispatch="tma_auto", cta_group=CTA_GROUP,
++                                  mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
+ 
+         if wg_id == 2:
+-            if warp_id == 3:
++            if warp_id >= 2:
+                 if T.filter(lane_id, T.ptx.elect_sync()):
+                     while tile_scheduler.valid():
+                         for k in range(K_TILES):
+                             mma2tma.wait(tma_phase.stage, tma_phase.phase)
+                             tma_load(k * BLK_K)
+                             # Both CTAs complete bytes against CTA 0's barrier.
+-                            if cbx == 0:
++                            if (cbx == 0) & (warp_id == 3):
+                                 tma2mma_cta0.arrive(tma_phase.stage,
+                                     CTA_GROUP * (NUM_CONSUMER * BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
+                             tma_phase.advance()
