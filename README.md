@@ -16,13 +16,14 @@ The five accepted full runs below remain valid; performance stability
 in later conditions remains unresolved. This focused reproduction is complete.
 See [RUNNING.md](RUNNING.md) and [the latest evidence](B300_VALIDATION.md).
 
-**Latest software experiment:** [output staging](results_b300/step10_epilogue.xVWC2d/)
-is complete. All three candidates lose every pair to production, increasing paired
-latency by 1.12%–2.98%; none is adopted. Baseline meets the limit in only 2/8 samples.
-The next isolated candidate separates B/A0/A1 input-ready notifications while
-retaining shared B, four input stages, both-consumer input release, and the original
-timer. After syncing the changes, run `bash run_step10_ready.sh`. This candidate
-has no B300 measurements yet. See RUNNING.md for scope and verification.
+**Latest software experiment:** [split input readiness](results_b300/step10_ready.FAnkEQ/)
+is complete. The candidate is faster in 5/8 balanced pairs, but median paired
+latency reduction is only **0.049% (0.068 microseconds)**. Baseline/candidate meet
+the original limit in **5/8 and 6/8** samples; both median rows say PASS, but neither
+has consistent headroom. The candidate is not adopted and need not be rerun unchanged.
+All three preceding [output-staging candidates](results_b300/step10_epilogue.xVWC2d/)
+also remain unadopted. Production kernels and grading remain unchanged; the current
+stability objective is unresolved. See RUNNING.md and B300_VALIDATION.md for evidence.
 
 **Implementation status:** `hgemm_v1` through `hgemm_v10` use Apache TVM
 **0.26.0** for SM100/SM103. **The five complete runs at `9e3b989` all pass:

@@ -2,7 +2,8 @@
 
 Each MMA consumer needs B and its own A, not the other consumer's A. Keep
 one shared input-free barrier, so neither A nor B is overwritten until both
-consumers finish. This is an unmeasured candidate, not production dispatch.
+consumers finish. Measured in step10_ready.FAnkEQ: 5/8 pairs faster by a
+median 0.049%, with 2/8 samples over the limit. Not adopted; kept for replay.
 """
 
 from probe_step45 import replace_once

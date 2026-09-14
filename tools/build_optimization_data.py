@@ -58,6 +58,7 @@ EXPERIMENTS = [
     ("s10_shared_a", "step10_share_a_state.fGOjDy/step10", 10, "tmem_input_depth5", "tmem_share_a_depth5", "candidate_not_adopted"),
     *[(f"s10_{v}", "step10_epilogue.xVWC2d/step10_4096", 10, "baseline", f"tmem_{v}", "not_adopted")
       for v in ("epi64", "epi128", "epi32_double")],
+    ("s10_split_ready", "step10_ready.FAnkEQ/step10_4096", 10, "baseline", "tmem_split_ready", "not_adopted"),
 ]
 
 
