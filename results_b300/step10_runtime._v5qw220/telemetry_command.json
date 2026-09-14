@@ -1,0 +1,8 @@
+[
+  "nvidia-smi",
+  "-i",
+  "GPU-778768b4-6c9e-e483-890e-0812760948ae",
+  "--query-gpu=timestamp,uuid,pstate,clocks.current.sm,clocks.current.memory,power.draw,power.limit,temperature.gpu,utilization.gpu,utilization.memory",
+  "--format=csv",
+  "--loop-ms=100"
+]

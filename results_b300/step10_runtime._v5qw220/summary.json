@@ -1,0 +1,22 @@
+{
+  "before_load": {
+    "eager_median_ms": 0.13983306884765626,
+    "eager_min_ms": 0.1395146687825521,
+    "eager_max_ms": 0.14067306518554687,
+    "eager_within_limit": 0,
+    "graph_median_ms": 0.13654239972432453,
+    "paired_eager_over_graph": 1.0255038615787162,
+    "trials": 8,
+    "limit_ms": 0.1391
+  },
+  "after_load": {
+    "eager_median_ms": 0.13988800048828126,
+    "eager_min_ms": 0.13736640612284343,
+    "eager_max_ms": 0.14010027249654133,
+    "eager_within_limit": 2,
+    "graph_median_ms": 0.13680373827616374,
+    "paired_eager_over_graph": 1.0220260447937617,
+    "trials": 8,
+    "limit_ms": 0.1391
+  }
+}

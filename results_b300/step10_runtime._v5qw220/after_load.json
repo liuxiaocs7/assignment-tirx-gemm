@@ -1,0 +1,130 @@
+[
+  {
+    "phase": "after_load",
+    "trial": 1,
+    "position": 1,
+    "mode": "eager",
+    "ms": 0.13984106381734213,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 1,
+    "position": 2,
+    "mode": "graph",
+    "ms": 0.13685760498046876,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 2,
+    "position": 1,
+    "mode": "graph",
+    "ms": 0.13646400769551595,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 2,
+    "position": 2,
+    "mode": "eager",
+    "ms": 0.13977920214335124,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 3,
+    "position": 1,
+    "mode": "eager",
+    "ms": 0.13998826344807944,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 3,
+    "position": 2,
+    "mode": "graph",
+    "ms": 0.1370346705118815,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 4,
+    "position": 1,
+    "mode": "graph",
+    "ms": 0.13701866467793783,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 4,
+    "position": 2,
+    "mode": "eager",
+    "ms": 0.13790399233500164,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 5,
+    "position": 1,
+    "mode": "eager",
+    "ms": 0.13736640612284343,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 5,
+    "position": 2,
+    "mode": "graph",
+    "ms": 0.13569706281026203,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 6,
+    "position": 1,
+    "mode": "graph",
+    "ms": 0.13674987157185872,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 6,
+    "position": 2,
+    "mode": "eager",
+    "ms": 0.13993493715922037,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 7,
+    "position": 1,
+    "mode": "eager",
+    "ms": 0.13994879722595216,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 7,
+    "position": 2,
+    "mode": "graph",
+    "ms": 0.13690239588419598,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 8,
+    "position": 1,
+    "mode": "graph",
+    "ms": 0.13662080764770507,
+    "verified": true
+  },
+  {
+    "phase": "after_load",
+    "trial": 8,
+    "position": 2,
+    "mode": "eager",
+    "ms": 0.14010027249654133,
+    "verified": true
+  }
+]

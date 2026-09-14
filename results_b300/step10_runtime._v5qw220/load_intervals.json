@@ -1,0 +1,34 @@
+[
+  {
+    "mode": "eager",
+    "started": "2026-09-14T20:09:26.794525+00:00",
+    "finished": "2026-09-14T20:09:28.797864+00:00",
+    "wall_seconds": 2.003338548820466,
+    "batches": 477,
+    "kernels_per_batch": 30
+  },
+  {
+    "mode": "graph",
+    "started": "2026-09-14T20:09:28.798483+00:00",
+    "finished": "2026-09-14T20:09:30.800474+00:00",
+    "wall_seconds": 2.002005210146308,
+    "batches": 487,
+    "kernels_per_batch": 30
+  },
+  {
+    "mode": "graph",
+    "started": "2026-09-14T20:09:30.801287+00:00",
+    "finished": "2026-09-14T20:09:32.804183+00:00",
+    "wall_seconds": 2.0029009832069278,
+    "batches": 487,
+    "kernels_per_batch": 30
+  },
+  {
+    "mode": "eager",
+    "started": "2026-09-14T20:09:32.804889+00:00",
+    "finished": "2026-09-14T20:09:34.804967+00:00",
+    "wall_seconds": 2.000089563895017,
+    "batches": 475,
+    "kernels_per_batch": 30
+  }
+]
