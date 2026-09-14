@@ -1,8 +1,8 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
 Step 10 has adopted B-first TMA requests but still crosses the 4096 limit.
-The default isolates narrower N tiles, smaller epilogues, and deeper input
-buffering, with a direct control for each change.
+The default keeps the production N tile and independently tests smaller
+epilogues and separate A/B TMA producer warps.
 Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
@@ -37,11 +37,12 @@ STEP_VARIANTS = {
          "cache_unroll_ring", "cache_mma_no_unroll", "cache_balanced_clusters",
          "balanced_depth3", "balanced_depth3_epi128", "balanced_fused_a",
          "warp_release", "paired_tmem_loads", "epilogue_depth3", "epilogue_double_buffer",
-         "role_registers", "tma_b_first", "n_tile_128", "n128_epi32", "n128_epi32_depth5"),
+         "role_registers", "tma_b_first", "n_tile_128", "n128_epi32", "n128_epi32_depth5",
+         "epilogue_32", "split_tma"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "n_tile_128", "n128_epi32", "n128_epi32_depth5")}
+                         10: ("baseline", "epilogue_32", "split_tma")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -77,6 +78,8 @@ VERIFICATION_SHAPES = {
     # 192 narrow output tiles on 64 clusters force three tiles per cluster.
     **{variant: ((4096, 3072, 64), (4096, 3072, 320), (4096, 3072, 384))
        for variant in NARROW_N_VARIANTS},
+    "epilogue_32": ((4096, 3072, 64), (4096, 3072, 256), (4096, 3072, 320)),
+    "split_tma": ((4096, 3072, 64), (4096, 3072, 256), (4096, 3072, 320)),
 }
 
 
@@ -272,6 +275,34 @@ def load_shared_b_first(source):
     return prefix + start + b_load + a_loads + end + suffix
 
 
+def split_tma_producers(source):
+    """WG2 warp 2 loads B; warp 3 loads A0/A1 and announces total bytes."""
+    start = "        def tma_load(k_st):\n"
+    end = "\n        if wg_id == 2:\n"
+    if source.count(start) != 1 or source.count(end) != 1:
+        raise ValueError("expected one TMA loader and role boundary")
+    prefix, rest = source.split(start)
+    block, suffix = rest.split(end)
+    a_start = "            for consumer in T.unroll(NUM_CONSUMER):\n"
+    if not block.startswith("            Tx.copy_async(Bsmem[") or block.count(a_start) != 1:
+        raise ValueError("split_tma requires the adopted B-first loader")
+    b_load, a_tail = block.split(a_start)
+    if b_load.count("Tx.copy_async(") != 1 or a_tail.count("Tx.copy_async(") != 1:
+        raise ValueError("unexpected A/B TMA requests")
+    indent = lambda text: "".join("    " + line for line in text.splitlines(keepends=True))
+    block = ("            if warp_id == 2:\n" + indent(b_load)
+             + "            else:\n" + indent(a_start + a_tail))
+    source = prefix + start + block + end + suffix
+    source = replace_once(source, "            if warp_id == 3:\n",
+                          "            if warp_id >= 2:\n")
+    # Both producers wait the same empty stage. Only A's elected lane in CTA
+    # zero arrives; all six requests still complete bytes on that full slot.
+    # Thread-local scheduler and phase state advance identically in both warps.
+    source = replace_once(source, "                            if cbx == 0:\n",
+                          "                            if (cbx == 0) & (warp_id == 3):\n")
+    return source
+
+
 @contextmanager
 def check_role_register_budget(variant, directory):
     """Reject insufficient capacity or explicitly ignored hints before launch."""
@@ -381,6 +412,17 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant in ("epilogue_32", "split_tma"):
+        loader = "        def tma_load(k_st):\n            Tx.copy_async(Bsmem["
+        if ("mma_tmem_base: T.let" not in source or "TILES_PER_CLUSTER =" not in source
+                or loader not in source or "    MMA_M, MMA_N = 256, 256\n" not in source):
+            raise ValueError("wide N experiments require the adopted Step 10 B-first baseline")
+        if variant == "split_tma":
+            return split_tma_producers(source)
+        source = replace_once(source, "    EPI_N = 64\n", "    EPI_N = 32\n")
+        return replace_once(source,
+            "    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (NUM_CONSUMER, BLK_M, EPI_N))\n",
+            "    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_64B_ATOM, (NUM_CONSUMER, BLK_M, EPI_N))\n")
     if variant in NARROW_N_VARIANTS:
         loader = "        def tma_load(k_st):\n            Tx.copy_async(Bsmem["
         if ("mma_tmem_base: T.let" not in source or "TILES_PER_CLUSTER =" not in source

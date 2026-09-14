@@ -163,7 +163,6 @@ def test_narrow_n_transform_refuses_reapplication_or_old_control(variant, tmp_pa
 
 def test_narrow_n_comparison_chain_scores_each_change_against_its_control():
     variants = ['baseline', *NARROW_N_VARIANTS]
-    assert select_variants(10) == variants
     assert select_variants(10, ['n128_epi32_depth5']) == variants
     cases = [dict(step=10, size=4096, variant=v, samples_ms=s) for v, s in
              zip(variants, [[10, 20], [8, 16], [4, 8], [5, 10]])]

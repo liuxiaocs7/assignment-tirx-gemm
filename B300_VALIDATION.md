@@ -1,6 +1,74 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：B-first 一次全过，复测仍有性能失败
+## 最新结果：step10_n128.eVKFm2，窄 N 没有取得稳定收益
+
+数据：[summary](results_b300/step10_n128.eVKFm2/step10/summary.csv)、
+[samples](results_b300/step10_n128.eVKFm2/step10/samples.json)、
+[run.json](results_b300/step10_n128.eVKFm2/step10/run.json)。
+版本 `bcd2214`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+七个源码指纹、十三份 builder/编译 CUDA 指纹和九份边界验算记录核对通过。
+三个实验在矩形 K=64/320/384 下均完成两次数值验算，逐轮校验也通过。
+baseline 的 CUDA、cubin 和 NVRTC 参数与正式 B-first 验收产物一致。
+
+| 版本 | 中位数 ms | 最大值 ms | 达标轮次 | 直接对照 | 同轮加速比 | REG / STACK |
+|---|---:|---:|---:|---|---:|---:|
+| baseline | 0.138363 | 0.139395 | 4/5 | baseline | 1.000000× | 167 / 0 |
+| n_tile_128 | 0.140717 | 0.141091 | 0/5 | baseline | 0.983270× | 105 / 0 |
+| n128_epi32 | 0.138884 | 0.139219 | 4/5 | n_tile_128 | 1.014371× | 112 / 0 |
+| n128_epi32_depth5 | 0.138657 | 0.138816 | 5/5 | n128_epi32 | 1.002654× | 112 / 0 |
+
+门槛仍为 **0.139100 ms**。单独缩小 N 五轮都更慢；EPI32 相对窄 N 的 EPI64
+五轮都更快，但相对生产 baseline 只快了一轮。五级版本虽 5/5 达标，中位耗时仍
+高于 baseline，相对 baseline 的同轮加速中位数仅 **0.103%**，最慢样本余量
+**0.204%**。本轮不采用任何候选，不能据五个 PASS 宣称已解决性能稳定性。
+最新完整 GPU 套件仍是 **56 passed / 1 failed**。
+
+窄 N 的寄存器数明显减少，整体却没有加速；四个版本都没有 LDL/STL，不能仅凭
+寄存器数判断瓶颈。SASS 静态计数中，四者都是 16 处 UTCHMMA、12 处 UTMALDG；
+UTMASTG 分别为 4/2/4/4，LDTM 为 8/4/4/4。EPI32 在窄 N 对照下的收益支持
+单独检验原 N256 的小写回分块，但尚不能外推为宽 N 下的性能收益。
+
+### 下一轮：保留 N256，独立检验写回分块与 A/B 加载分工
+
+默认比较以下三个版本，两项实验都直接对照生产 baseline，不叠加：
+
+| 版本 | 改动 | 动态 SMEM 字节 |
+|---|---|---:|
+| baseline | 已采用的 N256、K64、四级输入、EPI64、单个 TMA producer warp | 230400 |
+| epilogue_32 | 仅缩小 EPI_N 至 32，并使用匹配 64 字节行的 D swizzle | 214016 |
+| split_tma | WG2 warp 2 加载 B，warp 3 加载 A0/A1 | 230400 |
+
+`epilogue_32` 保留原输入、两个 MMA consumer、两个写回 warpgroup、256 列寄存器
+暂存和 TMEM 释放点。检验小写回分块的收益能否保留到宽 N；每个写回 warpgroup
+处理一个 tile 时的 TMA store/wait 由四次增加到八次，可能抵消更小分块和 SMEM
+占用的收益。
+
+`split_tma` 检验单个 elected lane 串行准备、发射 B/A0/A1 请求是否限制供数。
+两个 producer warp 都先等待原 `mma2tma` 空槽，再分别发 B 与 A0/A1；各自的线程
+私有调度器和 phase 同步推进。只有 **CTA 0 的 warp 3** 执行一次 `arrive.expect_tx`，
+仍宣告 **98,304 字节**；`tma2mma.init(1)` 不变，两个 CTA 的六个 TMA 请求共同
+完成同一 full barrier。必须等全部输入就绪、两个 consumer 都完成 MMA，才可重用
+该槽，因此快的 producer 无法越过慢的 producer 重用其输入。写回、内存分配和总
+传输量不变；两个 warp 的发射先后不保证 B 优先，额外调度和等待也可能抵消收益。
+
+计时前，每项实验在 `(4096,3072,K)` 的 K=64/256/320 各验算两次，共六个边界
+构建、十二次 launch，覆盖短 ring、完整四级 ring、不完整 ring 和跨 tile 重用。
+之后按原 10 warmup / 30 repeat / 五轮交错 CUDA-event 计时，保存源码、编译资源与
+SASS。完整本地工具/源码生成回归 **434 项通过，234.22 s**。其中 19 项新增检查
+覆盖两个架构、四个评分尺寸、三个矩形边界及单 tile，核对 TMA 描述符、写回覆盖
+范围、实际生成的 barrier 到达归属和 phase。
+这些检查不替代 GPU 编译、数值与计时；**本轮生产内核、评分和 GPU 测试不变**。
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_wide_tma.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：B-first 一次全过，复测仍有性能失败
 
 正式验收数据：[pytest](results_b300/step10_bfirst.A0Iwp0/pytest_all.log)、
 [Step 10 benchmark](results_b300/step10_bfirst.A0Iwp0/step10.csv)、
@@ -14,9 +82,9 @@
 | `step10_bfirst.A0Iwp0` | **57 passed，74.54 s** | 0.139047 | 低 0.053 微秒 / 0.038% |
 | 用户回传 `pytest_1e37e7_1.log` | **56 passed / 1 failed，74.17 s** | 0.139284 | 高 0.184 微秒 / 0.132% |
 
-第二行来自本次用户粘贴的完整终端输出；其所报路径为
-`results_b300/pytest_1e37e7_1.log`，当前本地仓库尚无该文件，不能额外核对该次运行
-的编译产物。仓库 `1e37e76` 相对 `cb26383` 的生产内核、评分代码和 GPU 测试未变。
+第二行的[完整日志](results_b300/pytest_1e37e7_1.log)现已入库，与用户回传的终端
+输出一致；该日志不包含编译产物，不能额外核对该次运行的 cubin。
+仓库 `1e37e76` 相对 `cb26383` 的生产内核、评分代码和 GPU 测试未变。
 两次的所有数值检查都通过，失败只在同一个性能门槛。
 **上次“本次全部通过”属实，但不表示已取得稳定通过的余量。**
 
@@ -32,7 +100,7 @@
 这些结果与极小余量下的跨运行波动相符，不能据此确定波动来自频率、负载或其他具体
 原因。继续原计时和评分规则，优化目标是增大余量，而非重跑挑选通过的一次。
 
-### 下一轮：缩小 N 分块与输入供给
+### 已完成实验：缩小 N 分块与输入供给
 
 按可区分的预测安排三个实验，每一步有直接对照：
 
@@ -63,17 +131,20 @@ EPI32 使用与 64 字节行匹配的 `SWIZZLE_64B_ATOM`；A/B 的 128 字节 sw
 计时前，每个新变体在 `(4096,3072,K)` 的 K=64/320/384 各验算两次，覆盖短于 ring、
 完整五级 ring 和不完整 ring，以及三个输出 tile 的重用。数值验证失败会停止。
 之后四个版本使用原 10 warmup / 30 repeat / 五轮交错 CUDA-event 计时，保存直接
-对照、源码指纹、编译资源与 SASS。新 GPU 结果尚未取得，**生产内核本轮不变**。
-本地完整工具/源码生成回归 **415 项通过，205.25 s**。新增 20 项覆盖两个架构、
+对照、源码指纹、编译资源与 SASS。GPU 结果见本文最新记录，三个实验均未采用。
+该轮本地完整工具/源码生成回归 **415 项通过，205.25 s**。新增 20 项覆盖两个架构、
 评分与边界形状，检查实际 TMA box/stride/swizzle、SMEM 范围、MMA N 描述符、
 consumer TMEM 偏移、写回坐标、barrier/phase、比较链与重复应用拒绝。
 这些检查不替代 B300 上的编译、数值验算和性能测量。
+
+以下为当时的历史命令；现需显式选择窄 N 变体，默认已改为宽 N 的两个独立实验：
 
 ```bash
 mkdir -p results_b300
 set -o pipefail
 tirx_run=$(mktemp -d results_b300/step10_n128.XXXXXX)
 uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --variants n128_epi32_depth5 \
   --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
