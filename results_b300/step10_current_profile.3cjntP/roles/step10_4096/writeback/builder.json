@@ -1,0 +1,28 @@
+{
+  "role": "writeback",
+  "layout": {
+    "ctas": 128,
+    "clusters": 64,
+    "group": 2,
+    "consumers": 2,
+    "total_tiles": 256,
+    "max_tiles": 4,
+    "m_tiles": 8,
+    "n_tiles": 32
+  },
+  "fields": [
+    "start_ns",
+    "end_ns",
+    "wait_ns",
+    "work_ns",
+    "handoff_ns",
+    "epilogue_ns",
+    "start_cycles",
+    "end_cycles",
+    "sm_id",
+    "tile_m",
+    "tile_n"
+  ],
+  "before_sha256": "4d7dfd8b1689aa7ba131f573c3d9495f997969d5c97302c6d437b6d2ac74b8e0",
+  "compiled_sha256": "683f9d1f10ac86f7a384a92246e1b046e9aa32bfefb45e4afef6f329cefbc236"
+}

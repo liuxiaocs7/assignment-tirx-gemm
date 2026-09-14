@@ -1,0 +1,144 @@
+{
+  "git_revision": "cede7ec1eabd1e6a88214036ac5ac7ee038bb995",
+  "git_dirty": true,
+  "gemm_kernels_sha256": "5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c",
+  "utils_sha256": "af9cc13549f0726e295a5ae65c91f580c7728d2c795e53e0ffe3547023f38d30",
+  "benchmark_sha256": "37d91ddbec1e74682eec22f7c64abc2b606095d04ec947aa031d889b253ef009",
+  "benchmark_diagnostics_sha256": "5db36328f88d5a5758659814bdec098cf0e5ac20823ac5b713b0ef41d0e06f74",
+  "compiler": "nvrtc",
+  "ptxas_reg_level": "10",
+  "TVM_CUDA_PTXAS_EXTRA_OPTS": "",
+  "TVM_CUDA_NVRTC_EXTRA_OPTS": "",
+  "TVM_CUDA_NVCC_NO_FAST_MATH": "",
+  "TVM_KERNEL_DEBUG": "",
+  "TVM_KERNEL_DUMP": "",
+  "CUDA_LAUNCH_BLOCKING": "",
+  "CUDA_VISIBLE_DEVICES": "0",
+  "step": 10,
+  "shape": [
+    4096,
+    4096,
+    4096
+  ],
+  "seed": 0,
+  "warmup": 10,
+  "diagnostic_only": true,
+  "profile_hardware_sha256": "d9f62dcd51a4da9f675901ef05f398ea1b992c5db781bb1b9b2dec7802b0944e",
+  "status": "collected",
+  "replay_mode": "kernel",
+  "clock_control": "none",
+  "cache_control": "none",
+  "replay_caveat": "No cache flush: metric values may differ between replay passes. Profiling perturbs execution; no PASS/SLOW scoring.",
+  "commands": [
+    {
+      "argv": [
+        "/usr/local/cuda/bin/ncu",
+        "--version"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/usr/local/cuda/bin/ncu",
+        "--help"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/usr/local/cuda/bin/ncu",
+        "--list-sections"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/usr/local/cuda/bin/ncu",
+        "--profile-from-start",
+        "off",
+        "--launch-count",
+        "1",
+        "--kernel-name-base",
+        "function",
+        "--kernel-name",
+        "kernel_kernel",
+        "--replay-mode",
+        "kernel",
+        "--clock-control",
+        "none",
+        "--cache-control",
+        "none",
+        "--pipeline-boost-state",
+        "dynamic",
+        "--section",
+        "SpeedOfLight",
+        "--section",
+        "ComputeWorkloadAnalysis",
+        "--section",
+        "MemoryWorkloadAnalysis",
+        "--section",
+        "SchedulerStats",
+        "--section",
+        "WarpStateStats",
+        "--section",
+        "LaunchStats",
+        "--section",
+        "Occupancy",
+        "--export",
+        "/home/lcpu/27058528/assignment-tirx-gemm/results_b300/step10_current_profile.3cjntP/hardware/step10_4096",
+        "/home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3",
+        "-u",
+        "/home/lcpu/27058528/assignment-tirx-gemm/profile_hardware.py",
+        "--_worker",
+        "--output",
+        "/home/lcpu/27058528/assignment-tirx-gemm/results_b300/step10_current_profile.3cjntP/hardware"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/usr/local/cuda/bin/ncu",
+        "--import",
+        "/home/lcpu/27058528/assignment-tirx-gemm/results_b300/step10_current_profile.3cjntP/hardware/step10_4096.ncu-rep",
+        "--page",
+        "raw",
+        "--csv",
+        "--print-kernel-base",
+        "function"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/usr/local/cuda/bin/ncu",
+        "--import",
+        "/home/lcpu/27058528/assignment-tirx-gemm/results_b300/step10_current_profile.3cjntP/hardware/step10_4096.ncu-rep",
+        "--page",
+        "details",
+        "--print-details",
+        "all"
+      ],
+      "returncode": 0
+    }
+  ],
+  "ncu": "/usr/local/cuda/bin/ncu",
+  "ncu_version": "NVIDIA (R) Nsight Compute Command Line Profiler\nCopyright (c) 2018-2025 NVIDIA Corporation\nVersion 2025.3.1.0 (build 36398880) (public-release)",
+  "sections": [
+    "SpeedOfLight",
+    "ComputeWorkloadAnalysis",
+    "MemoryWorkloadAnalysis",
+    "SchedulerStats",
+    "WarpStateStats",
+    "LaunchStats",
+    "Occupancy"
+  ],
+  "missing_sections": [],
+  "pipeline_boost_state": "dynamic",
+  "report": "step10_4096.ncu-rep",
+  "report_check": {
+    "kernel": "kernel_kernel",
+    "launches": 1,
+    "numeric_counter_rows": 371
+  },
+  "report_format": "wide"
+}

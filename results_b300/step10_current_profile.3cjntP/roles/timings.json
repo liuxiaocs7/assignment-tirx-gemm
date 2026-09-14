@@ -1,0 +1,198 @@
+[
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 1,
+    "role": "baseline",
+    "elapsed_ms": 0.13811306953430175
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 1,
+    "role": "tma",
+    "elapsed_ms": 0.1388352076212565
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 1,
+    "role": "mma",
+    "elapsed_ms": 0.1379253387451172
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 1,
+    "role": "writeback",
+    "elapsed_ms": 0.1364138603210449
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 2,
+    "role": "baseline",
+    "elapsed_ms": 0.13809706370035807
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 2,
+    "role": "writeback",
+    "elapsed_ms": 0.1384383996327718
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 2,
+    "role": "mma",
+    "elapsed_ms": 0.13773333231608073
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 2,
+    "role": "tma",
+    "elapsed_ms": 0.1376479943593343
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 3,
+    "role": "mma",
+    "elapsed_ms": 0.13884587287902833
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 3,
+    "role": "writeback",
+    "elapsed_ms": 0.13929279645284018
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 3,
+    "role": "baseline",
+    "elapsed_ms": 0.13843092918395997
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 3,
+    "role": "tma",
+    "elapsed_ms": 0.13823466300964354
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 4,
+    "role": "mma",
+    "elapsed_ms": 0.1387455940246582
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 4,
+    "role": "tma",
+    "elapsed_ms": 0.13896427154541016
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 4,
+    "role": "baseline",
+    "elapsed_ms": 0.13861974080403647
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 4,
+    "role": "writeback",
+    "elapsed_ms": 0.13908054033915201
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 5,
+    "role": "baseline",
+    "elapsed_ms": 0.1385621388753255
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 5,
+    "role": "tma",
+    "elapsed_ms": 0.13837439219156902
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 5,
+    "role": "mma",
+    "elapsed_ms": 0.1382197380065918
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 5,
+    "role": "writeback",
+    "elapsed_ms": 0.13818666140238445
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 6,
+    "role": "baseline",
+    "elapsed_ms": 0.13717652956644694
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 6,
+    "role": "writeback",
+    "elapsed_ms": 0.1380575974782308
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 6,
+    "role": "mma",
+    "elapsed_ms": 0.1381674607594808
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 6,
+    "role": "tma",
+    "elapsed_ms": 0.13741332689921062
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 7,
+    "role": "mma",
+    "elapsed_ms": 0.13756799697875977
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 7,
+    "role": "writeback",
+    "elapsed_ms": 0.13795733451843262
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 7,
+    "role": "baseline",
+    "elapsed_ms": 0.13743146260579428
+  },
+  {
+    "step": 10,
+    "size": 4096,
+    "trial": 7,
+    "role": "tma",
+    "elapsed_ms": 0.13738452593485515
+  }
+]
