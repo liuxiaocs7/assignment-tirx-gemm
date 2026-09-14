@@ -1,0 +1,12 @@
+{
+  "step": 9,
+  "variant": "cluster_cache_tmem_base",
+  "shape": [
+    4096,
+    3072,
+    256
+  ],
+  "launches": 2,
+  "verified": true,
+  "timed": false
+}

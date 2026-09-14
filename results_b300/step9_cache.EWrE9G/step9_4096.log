@@ -1,0 +1,29 @@
+Code: 3a9d486a7c4a6718d54ecb261f486487515265d3; gemm_sha256=1a06fa5715eda5567a5635eb285480ef8c0f2dc67e85da65cf38e6fc57052f85
+GPU: NVIDIA B300 SXM6 AC; SMs: 148; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Separate builds; each experiment records its direct comparison control. Verify all outputs before interleaved CUDA-event timing.
+Verified step 9 / baseline
+Verified step 9 / cluster_cache_tmem_base
+Verified boundary Step 9 / cluster_cache_tmem_base / (256, 256, 64) twice (untimed)
+Verified boundary Step 9 / cluster_cache_tmem_base / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 9 / cluster_cache_tmem_base / (4096, 3072, 192) twice (untimed)
+Verified boundary Step 9 / cluster_cache_tmem_base / (4096, 3072, 256) twice (untimed)
+Verified boundary Step 9 / cluster_cache_tmem_base / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 9 / cluster_cache_tmem_base / (2304, 2304, 320) twice (untimed)
+Trial 1: step 9 / baseline: 0.145334 ms
+Trial 1: step 9 / cluster_cache_tmem_base: 0.142174 ms
+Trial 2: step 9 / cluster_cache_tmem_base: 0.143025 ms
+Trial 2: step 9 / baseline: 0.144997 ms
+Trial 3: step 9 / baseline: 0.143950 ms
+Trial 3: step 9 / cluster_cache_tmem_base: 0.142462 ms
+Trial 4: step 9 / cluster_cache_tmem_base: 0.142542 ms
+Trial 4: step 9 / baseline: 0.144317 ms
+Trial 5: step 9 / baseline: 0.144002 ms
+Trial 5: step 9 / cluster_cache_tmem_base: 0.142080 ms
+Trial 6: step 9 / cluster_cache_tmem_base: 0.142182 ms
+Trial 6: step 9 / baseline: 0.143907 ms
+Trial 7: step 9 / baseline: 0.144269 ms
+Trial 7: step 9 / cluster_cache_tmem_base: 0.142785 ms
+step variant         median_ms    min_ms    max_ms paired_speedup vs_cache control                   vs_control limit_ms status
+   9 baseline         0.144269  0.143907  0.145334          1.000      n/a baseline                       1.000 0.150800 PASS
+   9 cluster_cache_tmem_base  0.142462  0.142080  0.143025          1.012      n/a baseline                       1.012 0.150800 PASS
+Saved results_b300/step9_cache.EWrE9G/step9_4096/summary.csv; SLOW is a measured result, not a tool error.

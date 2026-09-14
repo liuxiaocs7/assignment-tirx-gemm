@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "tmem_l2_group4",
+  "sources": [
+    {
+      "before_sha256": "982b793538cb1019bab4192d50eb328e41374b7a1a517ffaf40cc2ca0ac9882a",
+      "compiled_sha256": "982b793538cb1019bab4192d50eb328e41374b7a1a517ffaf40cc2ca0ac9882a"
+    }
+  ]
+}

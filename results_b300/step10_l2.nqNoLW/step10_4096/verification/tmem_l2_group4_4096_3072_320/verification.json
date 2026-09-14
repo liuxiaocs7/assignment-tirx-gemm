@@ -1,0 +1,12 @@
+{
+  "step": 10,
+  "variant": "tmem_l2_group4",
+  "shape": [
+    4096,
+    3072,
+    320
+  ],
+  "launches": 2,
+  "verified": true,
+  "timed": false
+}

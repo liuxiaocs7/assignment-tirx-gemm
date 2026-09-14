@@ -1,0 +1,11 @@
+--- baseline.py
++++ tmem_l2_group2.py
+@@ -78,7 +78,7 @@
+ 
+         tile_scheduler = ClusterPersistentScheduler2D(
+             "ts", num_m_tiles=M // (MMA_M * NUM_CONSUMER), num_n_tiles=N // MMA_N,
+-            l2_group_size=8, num_clusters=CLUSTER_COUNT)
++            l2_group_size=2 if TMEM_BUFFERS == 2 else 8, num_clusters=CLUSTER_COUNT)
+         tile_scheduler.init(bx // CTA_GROUP)
+         m_st = T.meta_var(tile_scheduler.m_idx * MMA_M * NUM_CONSUMER + cbx * BLK_M)
+         n_st = T.meta_var(tile_scheduler.n_idx * MMA_N + cbx * BLK_N)
