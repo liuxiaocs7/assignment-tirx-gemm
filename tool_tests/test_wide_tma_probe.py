@@ -133,7 +133,7 @@ def test_wide_n_probe_refuses_reapplication_and_wrong_baseline(variant, tmp_path
 
 def test_wide_n_experiments_use_independent_controls():
     variants = ['baseline', 'epilogue_32', 'split_tma']
-    assert select_variants(10) == variants
+    assert select_variants(10, variants) == variants
     assert select_variants(10, ['split_tma']) == ['baseline', 'split_tma']
     cases = [dict(step=10, size=4096, variant=v, samples_ms=s) for v, s in
              zip(variants, [[10, 20], [8, 16], [5, 10]])]

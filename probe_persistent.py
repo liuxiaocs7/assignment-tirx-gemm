@@ -1,8 +1,8 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
 Step 10 has adopted B-first TMA requests but still crosses the 4096 limit.
-The default keeps the production N tile and independently tests smaller
-epilogues and separate A/B TMA producer warps.
+The default tests descriptor reuse across each four-instruction MMA stage,
+then isolates the effect of disabling compiler unrolling of that K loop.
 Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
@@ -16,6 +16,7 @@ import csv
 import difflib
 import hashlib
 import inspect
+import json
 import re
 import statistics
 from pathlib import Path
@@ -38,11 +39,11 @@ STEP_VARIANTS = {
          "balanced_depth3", "balanced_depth3_epi128", "balanced_fused_a",
          "warp_release", "paired_tmem_loads", "epilogue_depth3", "epilogue_double_buffer",
          "role_registers", "tma_b_first", "n_tile_128", "n128_epi32", "n128_epi32_depth5",
-         "epilogue_32", "split_tma"),
+         "epilogue_32", "split_tma", "mma_batch", "mma_batch_no_unroll"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "epilogue_32", "split_tma")}
+                         10: ("baseline", "mma_batch", "mma_batch_no_unroll")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -59,7 +60,8 @@ EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
                        "balanced_fused_a": "cache_balanced_clusters",
                        "epilogue_double_buffer": "epilogue_depth3",
                        "n128_epi32": "n_tile_128",
-                       "n128_epi32_depth5": "n128_epi32"}
+                       "n128_epi32_depth5": "n128_epi32",
+                       "mma_batch_no_unroll": "mma_batch"}
 NARROW_N_VARIANTS = ("n_tile_128", "n128_epi32", "n128_epi32_depth5")
 DEPTH3_VARIANTS = ("balanced_depth3", "balanced_depth3_epi128")
 # K=1/3/5 stages covers shorter-than-ring, odd complete ring, and partial
@@ -80,6 +82,8 @@ VERIFICATION_SHAPES = {
        for variant in NARROW_N_VARIANTS},
     "epilogue_32": ((4096, 3072, 64), (4096, 3072, 256), (4096, 3072, 320)),
     "split_tma": ((4096, 3072, 64), (4096, 3072, 256), (4096, 3072, 320)),
+    "mma_batch": ((4096, 3072, 64), (4096, 3072, 256), (4096, 3072, 320)),
+    "mma_batch_no_unroll": ((4096, 3072, 64), (4096, 3072, 256), (4096, 3072, 320)),
 }
 
 
@@ -412,6 +416,15 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant in ("mma_batch", "mma_batch_no_unroll"):
+        for required in ("mma_tmem_base: T.let", "TILES_PER_CLUSTER =",
+                         "    BLK_M, BLK_N, BLK_K = 128, 128, 64\n",
+                         "    MMA_M, MMA_N = 256, 256\n",
+                         "    PIPE_DEPTH = 4\n", "    EPI_N = 64\n",
+                         "        def tma_load(k_st):\n            Tx.copy_async(Bsmem["):
+            if required not in source:
+                raise ValueError("MMA batch experiments require the adopted Step 10 K64 baseline")
+        return source  # Only CUDA emission changes; TIR and the builder stay identical.
     if variant in ("epilogue_32", "split_tma"):
         loader = "        def tma_load(k_st):\n            Tx.copy_async(Bsmem["
         if ("mma_tmem_base: T.let" not in source or "TILES_PER_CLUSTER =" not in source
@@ -564,10 +577,98 @@ def build_variant(step, shape, variant, directory):
     return builder(*shape)
 
 
+def batch_mma_stage(source):
+    """Reuse two SMEM descriptors in one PTX block, retaining four K16 MMAs."""
+    helper_name = "tvm_probe_mma_batch_k64"
+    marker = 'extern "C" __global__'
+    if helper_name in source:
+        raise ValueError("MMA batch experiment is already applied")
+    if marker not in source:
+        raise ValueError("CUDA kernel declaration was not found")
+    header, body = source.split(marker, 1)
+    op = "ptx_tcgen05_mma_cta_2_kind_f16_SS"
+    original_helper = re.search(rf"^__forceinline__ __device__ void {op}\([^\n]+\) \{{\n.*?^\}}\n",
+                                header, re.M | re.S)
+    expected_ptx = ('{\n.reg .pred p;\nsetp.ne.b32 p, %4, 0;\n'
+                    'tcgen05.mma.cta_group::2.kind::f16 [%0], %1, %2, %3, '
+                    '{%5, %6, %7, %8, %9, %10, %11, %12}, p;\n}\n')
+    if (original_helper is None or 'asm volatile(' not in original_helper[0]
+            or ''.join(json.loads(s) for s in re.findall(r'"(?:[^"\\]|\\.)*"',
+                       original_helper[0].split('\n        :', 1)[0])) != expected_ptx):
+        raise ValueError("unexpected original MMA PTX helper")
+    calls = list(re.finditer(rf"^( +){op}\((.*)\);$", body, re.M))
+    if len(calls) != 4:
+        raise ValueError("MMA batch requires exactly four K16 instructions")
+    # These generated arguments contain nested parentheses but no comma
+    # operators or quoted strings. Split only at the top call level.
+    def args(text):
+        result, depth, start = [], 0, 0
+        for i, char in enumerate(text):
+            depth += (char == '(') - (char == ')')
+            if char == ',' and depth == 0:
+                result.append(text[start:i].strip())
+                start = i + 1
+            if depth < 0:
+                raise ValueError("unbalanced MMA arguments")
+        if depth:
+            raise ValueError("unbalanced MMA arguments")
+        return result + [text[start:].strip()]
+    operands = [args(c[2]) for c in calls]
+    first = operands[0]
+    if (len(first) != 13 or first[3] != "(uint)272629776"
+            or first[4] not in ("(0 < k_1)", "(bool)0") or first[5:] != ["0"] * 8):
+        raise ValueError("unexpected MMA descriptor, accumulation, or masks")
+    offsets = ("((mma_phase_stage_ptr[0] * 2048) + ((warp_id_in_cta & 3) * 1024))",
+               "(mma_phase_stage_ptr[0] * 1024)")
+    for i, actual in enumerate(operands):
+        expected = first.copy()
+        expected[4] = first[4] if i == 0 else "(bool)1"
+        for axis, offset in enumerate(offsets):
+            if i:
+                offset = f"({offset} + {2 * i})"
+            expected[axis + 1] = f"tvm_builtin_smem_desc_add_16B_offset(desc{'AB'[axis]}_ptr[0], {offset})"
+        if actual != expected:
+            raise ValueError("MMA batch requires unchanged operands and offsets 0/2/4/6")
+    between = body[calls[0].start():calls[-1].end()]
+    if between != "\n".join(c[0] for c in calls):
+        raise ValueError("MMA batch cannot move intervening instructions")
+    # Match TVM's descriptor helper: add to the low 32 bits without carrying
+    # into the upper descriptor fields. A/B advance by 32 bytes per K16.
+    ptx = ["{", ".reg .b64 a, b;", ".reg .b32 alo, ahi, blo, bhi, z;",
+           ".reg .pred p;", "mov.b64 {alo, ahi}, %1;", "mov.b64 {blo, bhi}, %2;",
+           "mov.b64 a, %1;", "mov.b64 b, %2;", "mov.u32 z, 0;",
+           "setp.ne.b32 p, %4, 0;"]
+    for i in range(4):
+        if i:
+            ptx.extend(["add.u32 alo, alo, 2;", "add.u32 blo, blo, 2;",
+                        "mov.b64 a, {alo, ahi};", "mov.b64 b, {blo, bhi};"])
+        ptx.append("tcgen05.mma.cta_group::2.kind::f16 [%0], a, b, %3, {z, z, z, z, z, z, z, z}, p;")
+        if i == 0:
+            ptx.append("setp.ne.b32 p, 1, 0;")
+    ptx.append("}")
+    helper = (f"__forceinline__ __device__ void {helper_name}(uint32_t d, uint64_t a, uint64_t b, "
+              "uint32_t desc, uint32_t accum) {\n    asm volatile(\n"
+              + "".join(f'        "{line}\\n"\n' for line in ptx)
+              + '        :\n        : "r"(d), "l"(a), "l"(b), "r"(desc), "r"(accum)\n    );\n}\n\n')
+    replacement = calls[0][1] + helper_name + "(" + ", ".join(first[:5]) + ");"
+    body = body[:calls[0].start()] + replacement + body[calls[-1].end():]
+    return header + helper + marker + body
+
+
 def variant_source(source, step, variant):
-    """Apply isolated CUDA wait hints or the cache-control MMA loop pragma."""
+    """Apply isolated CUDA wait, MMA emission, or loop-pragma experiments."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant in ("mma_batch", "mma_batch_no_unroll"):
+        source = batch_mma_stage(source)
+        if variant == "mma_batch":
+            return source
+        # With K=64, TVM removes the one-iteration loop entirely.
+        if not re.search(r"for \(int k_1 =", source):
+            if not re.search(r"tvm_probe_mma_batch_k64\([^\n]+, \(bool\)0\);", source):
+                raise ValueError("missing MMA K loop without a single-stage fallback")
+            return source
+        return variant_source(source, step, "cache_mma_no_unroll")
     if variant == "cache_mma_no_unroll":
         # The measured cache-only cubin unrolled the MMA K loop four times.
         # Isolate that compiler choice; leave the producer loop and every

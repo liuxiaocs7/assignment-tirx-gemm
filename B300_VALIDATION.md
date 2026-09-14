@@ -1,6 +1,77 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step10_n128.eVKFm2，窄 N 没有取得稳定收益
+## 最新结果：step10_wide_tma.FBbwDr，写回与加载分工仍无足够收益
+
+数据：[summary](results_b300/step10_wide_tma.FBbwDr/step10/summary.csv)、
+[samples](results_b300/step10_wide_tma.FBbwDr/step10/samples.json)、
+[run.json](results_b300/step10_wide_tma.FBbwDr/step10/run.json)。
+版本 `2ce0615`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+七个源码指纹、九份 builder/编译 CUDA 指纹及六份边界验算记录核对通过。
+两个实验在矩形 K=64/256/320 下各完成两次验算，逐轮校验也通过。
+baseline 的 CUDA、cubin 和 NVRTC 参数与正式 B-first 验收产物完全一致。
+
+| 版本 | 中位数 ms | 最大值 ms | 达标轮次 | 快于 baseline 的轮次 | 同轮加速比 | REG / STACK |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline | 0.138144 | 0.138831 | 5/5 | — | 1.000000× | 167 / 0 |
+| epilogue_32 | 0.138205 | 0.139390 | 4/5 | 1/5 | 0.998264× | 168 / 8 |
+| split_tma | 0.137762 | 0.138817 | 5/5 | 4/5 | 1.001471× | 167 / 0 |
+
+`epilogue_32` 中位数稍慢，且仍有样本超过 **0.139100 ms** 门槛；窄 N 下的
+EPI32 收益未能在原 N256 上重现。SASS 中 UTMASTG 从四处增至八处，新增
+**三处 LDL、三处 STL 和 8 字节栈帧**。这些是实际额外开销，但本轮不能分离
+写回次数和栈访问各自对性能的影响。
+
+`split_tma` 五轮有四轮更快，但同轮加速中位数只有 **0.147%**。最慢样本余量
+**0.203%**，baseline 同轮余量也是 **0.193%**，两者最慢值仅差 **0.014 微秒**。
+它没有 LDL/STL，资源数与 baseline 相同；二者均有 16 处 UTCHMMA、12 处
+UTMALDG、四处 UTMASTG、八处 LDTM。本轮没有足够证据把拆分 producer 作为
+稳定性修复，两项均不采用。最新完整 GPU 套件仍是 **56 passed / 1 failed**。
+
+### 下一轮：MMA 描述符复用与编译器展开
+
+本轮 baseline SASS 的 MMA 循环在每组四条 UTCHMMA 周围仍有反复的 R2UR、
+描述符准备及 uniform 寄存器搬运。此前等待提示、写回、输入深度和 producer 分工
+没有取得足够余量。按以下可区分的预测安排对照：
+
+1. 若四个独立 inline-PTX 调用的描述符准备限制 MMA 发射，将同一 K64 stage 的
+   四条 K16 MMA 放入一个 PTX 块，复用 A/B 描述符并在块内递增，应减少搬运并提速。
+2. 若编译器对 K 循环的展开增加了描述符活跃值和寄存器搬运，关闭展开应在上述
+   改动上继续受益。历史 `cache_mma_no_unroll` 没有明显收益，本轮只检验它与
+   新发射块的关系，不将历史实验重新算作新发现。
+3. 若实际指令减少仍未加速，则本轮不支持描述符准备是主要限制，应继续区分
+   异步数据供给与硬件执行等待。若 SASS 不变，则该源码改动未影响实际发射。
+
+默认比较 `baseline`、`mma_batch`、`mma_batch_no_unroll`。`mma_batch` 直接对照
+baseline；`mma_batch_no_unroll` 直接对照 `mma_batch`，只增加 MMA K 循环的
+`#pragma unroll 1`。K=64 时 TVM 已移除单次循环，两项实验生成相同代码。
+
+两个实验的 builder/TIR 均保持生产版本；工具只替换 CUDA 中连续的四次 MMA 调用，
+不移动其前后的 wait、fence、commit、phase 或写回。新块保留 **四条** K16 MMA，
+保留 M256/N256、相同 TMEM 目标、八个零 mask 和累加顺序：每个输出 tile 的
+第一次 MMA 清零，之后全部累加。A/B descriptor 的低 32 位依次加 2（32 字节），
+高 32 位保持不变，与原 `smem_desc_add_16B_offset` 一致。不能把它误读为
+减少数学运算或把四条硬件 MMA 变成一条。
+
+输入四级 K64、230,400 字节动态 SMEM、两个 consumer、两个写回 warpgroup、
+B 优先加载和调度网格不变。GPU 计时前，两项实验分别对矩形 K=64/256/320 各验算
+两次，随后使用原 10 warmup / 30 repeat / 五轮交错 CUDA-event 计时。工具保存
+实际编译 CUDA、cubin、SASS 和资源数，下一轮需核对 R2UR、UTCHMMA 与栈访问。
+完整本地工具/源码生成回归 **458 项通过，232.84 s**。其中 24 项新增检查
+覆盖两个架构、四个评分尺寸、三个矩形边界和单 tile；
+包含对实际生成 PTX 的整数/谓词解释，核对 descriptor 高低位、mask 和累加行为。
+本机无 NVIDIA GPU，尚未完成这两个候选的 NVRTC 编译和数值/性能验证。
+**本轮生产内核、评分、容差、GPU 测试和计时规则不变。**
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_mma_batch.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：step10_n128.eVKFm2，窄 N 没有取得稳定收益
 
 数据：[summary](results_b300/step10_n128.eVKFm2/step10/summary.csv)、
 [samples](results_b300/step10_n128.eVKFm2/step10/samples.json)、
@@ -28,9 +99,9 @@ baseline 的 CUDA、cubin 和 NVRTC 参数与正式 B-first 验收产物一致�
 UTMASTG 分别为 4/2/4/4，LDTM 为 8/4/4/4。EPI32 在窄 N 对照下的收益支持
 单独检验原 N256 的小写回分块，但尚不能外推为宽 N 下的性能收益。
 
-### 下一轮：保留 N256，独立检验写回分块与 A/B 加载分工
+### 已完成实验：保留 N256，独立检验写回分块与 A/B 加载分工
 
-默认比较以下三个版本，两项实验都直接对照生产 baseline，不叠加：
+当时默认比较以下三个版本，两项实验都直接对照生产 baseline，不叠加：
 
 | 版本 | 改动 | 动态 SMEM 字节 |
 |---|---|---:|
@@ -57,13 +128,14 @@ UTMASTG 分别为 4/2/4/4，LDTM 为 8/4/4/4。EPI32 在窄 N 对照下的收益
 SASS。完整本地工具/源码生成回归 **434 项通过，234.22 s**。其中 19 项新增检查
 覆盖两个架构、四个评分尺寸、三个矩形边界及单 tile，核对 TMA 描述符、写回覆盖
 范围、实际生成的 barrier 到达归属和 phase。
-这些检查不替代 GPU 编译、数值与计时；**本轮生产内核、评分和 GPU 测试不变**。
+GPU 结果见本文最新记录，两项均未采用。以下为该轮的历史命令，现需显式选变体：
 
 ```bash
 mkdir -p results_b300
 set -o pipefail
 tirx_run=$(mktemp -d results_b300/step10_wide_tma.XXXXXX)
 uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --variants epilogue_32 split_tma \
   --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```

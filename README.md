@@ -10,13 +10,13 @@ The earlier passing value was 0.139047 ms, with just 0.038% margin.
 All numerical checks pass. The formal 4096 CUDA/cubin and compiler options
 match the B-first probe exactly; the production source is unchanged between
 these commits. A single passing run has not established stable performance.
-The narrow-N probes in `step10_n128.eVKFm2` did not establish a production
-improvement: EPI32 helped the narrow-N control, but the five-stage variant's
-paired gain over baseline was only 0.103%, with 0.204% worst-sample margin.
-No candidate was adopted. The next diagnostics retain N256 and independently
-test EPI32 output chunks and separate A/B TMA producer warps. Production
-remains unchanged until measured evidence supports another adoption.
-All **434 local tool/source-generation checks pass** (234.22 s); they do not
+The latest `step10_wide_tma.FBbwDr` probes did not establish a stability fix:
+EPI32 introduced stack accesses and was slower in four of five paired trials;
+split A/B producers gained only 0.147% with 0.203% worst-sample margin.
+Neither was adopted. The next diagnostics retain the production builder and
+test descriptor reuse across four K16 MMA instructions, then isolate compiler
+unrolling of that loop. Production remains unchanged pending GPU evidence.
+All **458 local tool/source-generation checks pass** (232.84 s); they do not
 replace GPU correctness and timing validation of the adopted implementation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.

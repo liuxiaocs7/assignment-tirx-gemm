@@ -28,9 +28,9 @@
 余量仅 0.038%。所有数值校验通过，一次全过尚不足以证明稳定达标。
 正式 4096 的 CUDA/cubin/编译参数与 B-first probe 一致；两个提交之间生产源码未变。
 同目录独立 Step 10 benchmark 的 20 个样本虽全过，4096 最慢样本余量仅 0.076%。
-`step10_n128.eVKFm2` 的窄 N 实验没有取得可靠的整体收益：EPI32 改善窄 N 对照，
-五级版本却只比 baseline 快约 0.103%（同轮加速中位数），最慢样本余量仅 0.204%。
-三个实验均未采用；生产保持已采用的 B 优先加载，继续检验宽 N 下的写回与加载分工。
+最新 `step10_wide_tma.FBbwDr` 中，宽 N 的 EPI32 引入了栈访问，五轮中四轮慢于
+baseline；拆分 A/B producer 的同轮加速中位数仅 0.147%，最慢样本余量 0.203%。
+两项均未采用；生产保持已采用的 B 优先加载，继续检验 MMA 描述符准备的开销。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
@@ -38,13 +38,13 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 详见 [最新验证和对照记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **434 项本地通过，234.22 s**；
+（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **458 项本地通过，232.84 s**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：Step 10 宽 N 的写回分块与双 warp 加载实验
+### 当前进度：Step 10 MMA 描述符复用与循环展开实验
 
 同步本轮工具提交后，运行以下一个 probe；当前生产内核没有新增未实测的改动。
 
@@ -52,18 +52,19 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/step10_wide_tma.XXXXXX)
+tirx_run=$(mktemp -d results_b300/step10_mma_batch.XXXXXX)
 uv run python -u probe_persistent.py --steps 10 --size 4096 \
   --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-默认比较 `baseline`、`epilogue_32`、`split_tma`，两项实验各自直接对照 baseline：
-前者保留 N256 并将输出 chunk 从 64 缩至 32；后者由 WG2 warp 2 加载 B、warp 3
-加载 A0/A1，仍只有 CTA 0 warp 3 宣告总字节数。所有版本保留四级输入和两个
-consumer；每个变体在计时前先对矩形 K=64/256/320 各验算两次，再交错计时五轮。
-分别检验小写回分块与并行发射请求是否有收益，也保留 store/wait 增多和额外 warp
-调度的代价。窄 N 的历史比较链仍可通过 `--variants n128_epi32_depth5` 显式运行。
+默认比较 `baseline`、`mma_batch`、`mma_batch_no_unroll`。`mma_batch` 把同一级
+的四条 K16 MMA 放入一个 PTX 块，复用并递增 A/B 描述符，直接对照 baseline；
+`mma_batch_no_unroll` 再单独关闭 MMA 的 K 循环展开，直接对照 `mma_batch`。
+原 builder/TIR、数学运算、同步、输入和写回保持不变；不是减少硬件 MMA 次数。
+每个变体在计时前先对矩形 K=64/256/320 各验算两次，再交错计时五轮，并保存 SASS
+以检查描述符搬运是否减少。K=64 时没有循环，两项实验相同。历史实验仍可显式运行，
+例如 `--variants epilogue_32 split_tma` 或 `--variants n128_epi32_depth5`。
 本地源码检查不能证明性能收益，必须等 B300 数值与计时结果。
 详见 [最新复测与实验依据](B300_VALIDATION.md)。
 
