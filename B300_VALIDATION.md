@@ -1,6 +1,81 @@
 # B300 验证记录与性能诊断
 
-## 最新复测：ea69b2c，pytest 五轮全过，Step 10／4096 benchmark 仍有 2/5 超线
+## 最新诊断：step10_current_profile.3cjntP，采集成功，余量问题仍未解决
+
+`d9c1aa6` 补齐了在 `cede7ec` 上运行的当前 N128 / TMEM 双槽报告：
+[角色元数据](results_b300/step10_current_profile.3cjntP/roles/run.json)、
+[原始计时](results_b300/step10_current_profile.3cjntP/roles/timings.json)、
+[逐 tile trace](results_b300/step10_current_profile.3cjntP/roles/trace.csv)、
+[阶段汇总](results_b300/step10_current_profile.3cjntP/roles/stages.csv)、
+[NCU 元数据](results_b300/step10_current_profile.3cjntP/hardware/run.json)、
+[硬件指标](results_b300/step10_current_profile.3cjntP/hardware/metrics.csv) 和
+[NCU 详情](results_b300/step10_current_profile.3cjntP/hardware/details.txt)。
+NCU 的采集、导出、解析均成功，worker 在 profile 后再次验算输出。
+
+源码指纹与 `cede7ec` 一致；角色 baseline 和 NCU 的 CUDA/cubin、NVRTC 参数及
+版本文件，都与首次正式验收的 4096 产物逐字节一致。当前正式内核仍为
+`d283549`，SHA256 为 `5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c`。
+离线核对了 21 份逐轮 trace，14,336 条记录均通过坐标、时间顺序和活动槽检查；
+重建的 32 行阶段汇总与保存文件一致，NCU raw 重新解析也与 metrics 一致。
+
+### 评分与诊断分开看
+
+未经插桩的 baseline 七轮 **7/7 达标**，中位数 **0.138113 ms**，最大值
+**0.138620 ms**；最慢样本离 0.139100 ms 仅 **0.480 μs / 0.345%**。
+这次通过不能覆盖前次五轮全步骤 benchmark 中的两个 SLOW。三个插桩版本与
+baseline 的同轮耗时比约 1.000–1.003，属于测量扰动，不能作为优化收益。
+
+| 当前路径观测 | 结果 | 能支持的判断 |
+|---|---:|---|
+| MMA 等输入 / 等累加器复用 | 71.66% / **0.175%** | TMEM 交接等待很小，暂不优先增加累加器缓冲 |
+| TMA 等输入槽释放 / 发射 | 81.44% / 9.50% | producer 自己也在等待 MMA 消费完成，不能只归因于显存搬运慢 |
+| 写回等 MMA / 读回 / epilogue | 86.19% / 1.09% / 12.27% | 大部分时间在等结果，不支持把读回发射当主要瓶颈 |
+| TC 活跃周期占 SM 活跃期 / 全时段 | **93.27% / 75.21%** | 活跃期利用率高，全程仍有利用率损失；不是精确的启动/尾部耗时分解 |
+| L2 / DRAM 峰值吞吐占比 | **36.13% / 9.85%** | 本报告没有显示全局带宽饱和；不能排除延迟或局部资源限制 |
+| L2 命中率 | 86.19% | 与多数数据由缓存服务一致 |
+| 寄存器 / 栈 / LOCAL；动态 SMEM | 112 / 0 / 0；181248 B | NCU 的寄存器和 SMEM occupancy limit 均为 1 block/SM |
+
+角色百分比按全部 trace 的阶段时长合计后除以角色总时长，不等同于逐行百分比
+的简单平均。TMA/MMA 的 work 是发射时间；角色并行，百分比不能相加。
+MMA handoff 中位数仅 64 ns、最大 96 ns，接近计时粒度与插桩开销。
+
+256 个输出 tile 分给 64 个 cluster，每个四 tile；首 tile 起点偏差仅约
+0.096–0.288 μs，没有明显证据支持直接回到 74 个 cluster。NCU 用 20 次 replay，
+未固定 cache/clock；其中 152.608 μs 的 duration 不参加评分。14 份轮前后快照
+均记录 SM 1095 MHz，但离散快照不能证明内核执行中频率恒定或排除降频。
+
+### 下一轮：保留双 TMEM 槽，独立比较输入深度和 K 宽度
+
+当前数据支持优先检查输入环与 MMA 的耦合等待，尚未证明某个 barrier 是根因。
+已在 `probe_persistent.py` 准备以下独立候选，**未改正式内核，尚无新候选 GPU 成绩**：
+
+| 变体 | 输入配置 | 直接对照 | 4096 动态 SMEM | 实验要回答的问题 |
+|---|---|---|---:|---|
+| `baseline` | K64 / 深度 4 | — | 181248 B | 当前正式路径 |
+| `tmem_input_depth2` | K64 / 深度 2 | baseline | 99328 B | 减少在途输入是否反而改善执行，还是暴露更多延迟 |
+| `tmem_k128_depth2` | K128 / 深度 2 | tmem_input_depth2 | 181248 B | 每 tile 同步迭代从 64 减为 32 是否获益 |
+| `tmem_input_depth5` | K64 / 深度 5 | baseline | 222208 B | 增加预取容量能否减少气泡 |
+
+K128/深度 2 与 baseline 的输入容量相同，但 K128 同时改变每级布局、TMA
+事务粒度和同步频率，不能将收益简单归于某一因素。K128 在 K 不能被 128 整除时
+回退 K64/深度 2。三个候选仅作用于正式规则选出的窄 N 双槽工作量，小网格单槽
+和大面积宽 N 均保留当前代码。
+
+本地检查覆盖 SM100a/SM103a 的 K64/128/192/256/320/384、4096 方阵、两级/五级
+输入环及跨 tile 双槽复用。特别核对 K128 的三维 TMA 映射与 MMA 的共享内存
+描述符地址一致，且小尺寸/宽 N 的 CUDA 与宿主 TMA 描述符逐字一致。
+GPU probe 会先验算每个候选的评分形状，再将六个矩形短 K 边界各验算两次，
+全部通过后交错计时。
+源码生成与协议检查不能代替 GPU 数值和性能验证。
+
+新增输入环检查 **28 passed**；完整本地工具/源码生成回归
+**585 passed，338.64 s**。新运行命令已检查 bash/zsh 语法和管道失败退出码保存，
+正式内核、计时器、数值容差及评分测试均未改变。
+
+运行命令见 [RUNNING.md](RUNNING.md#当前路径输入环对照实验)。只有独立复测收益
+明确、最慢样本有更大余量且受影响形状验证通过后才采用；≤0.135 ms 仍只是实验目标。
+
+## 前次复测：ea69b2c，pytest 五轮全过，Step 10／4096 benchmark 仍有 2/5 超线
 
 `ea69b2ce68052ade16eb7ba7f5f7370d98988c26` 只补充结果文件，内核仍是
 `d283549` 的窄 N / TMEM 双缓冲实现。已逐文件读取五轮 pytest、五份全步骤
@@ -50,7 +125,7 @@ barrier 是瓶颈。
 通过读取真实 CSV 复核了门槛判断，没有 B300，未在本机重新运行 GPU 内核或
 复现硬件状态。本轮不据离线分析修改同步协议或宣称性能已修复。
 
-### 下一步怎样缩小范围
+### 当时的诊断计划（当前报告已回传，见本文开头）
 
 1. 对当前生产 **N128 / 双 TMEM 槽**采集一次角色诊断，观察四个 persistent
    tile 的输入等待、累加器交接和写回；已有 `profile_persistent.py` 支持当前

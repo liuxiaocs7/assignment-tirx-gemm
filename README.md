@@ -15,7 +15,13 @@ sample had only **0.589%** margin. Its CUDA/cubin match the selected probe varia
 exactly. The five newer CSVs have matching kernel and timing-source fingerprints;
 they do not include per-run binaries. The original thresholds and CUDA-event
 measurement remain unchanged. Latest full local tool/source-generation regression:
-**557 passed**; GPU timing stability remains an open optimization item.
+**585 passed**; GPU timing stability remains an open optimization item.
+
+The current N128/TMEM profile is now available in `step10_current_profile.3cjntP`.
+Its baseline passed 7/7 samples, with only **0.345%** margin at the slowest sample.
+Tensor Core activity is 93.27% of SM-active cycles, while accumulator-reuse wait
+is only about 0.175% of the traced MMA role. Explicit input-depth/K128 probes
+are ready for B300 comparison; they have not been adopted or measured yet.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10

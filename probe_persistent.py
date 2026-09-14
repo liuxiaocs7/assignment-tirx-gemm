@@ -3,6 +3,8 @@
 Step 10 has adopted measured narrow-N/TMEM choices by output workload.
 The default validates the production baseline. Historical wide-N probes must
 be replayed at their recorded commits, before the workload dispatch adoption.
+Explicit tmem_input_* / tmem_k128_depth2 probes vary the input ring only for
+the current double-buffered narrow path, retaining single-slot/wide fallbacks.
 Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
@@ -40,7 +42,8 @@ STEP_VARIANTS = {
          "warp_release", "paired_tmem_loads", "epilogue_depth3", "epilogue_double_buffer",
          "role_registers", "tma_b_first", "n_tile_128", "n128_epi32", "n128_epi32_depth5",
          "epilogue_32", "split_tma", "mma_batch", "mma_batch_no_unroll",
-         "mma_unroll4", "mma_batch_unroll4", "n128_tmem_double_buffer"),
+         "mma_unroll4", "mma_batch_unroll4", "n128_tmem_double_buffer",
+         "tmem_input_depth2", "tmem_k128_depth2", "tmem_input_depth5"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
@@ -64,7 +67,11 @@ EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
                        "n128_epi32_depth5": "n128_epi32",
                        "mma_batch_no_unroll": "mma_batch",
                        "mma_batch_unroll4": "mma_unroll4",
-                       "n128_tmem_double_buffer": "n128_epi32"}
+                       "n128_tmem_double_buffer": "n128_epi32",
+                       "tmem_input_depth2": "baseline",
+                       "tmem_k128_depth2": "tmem_input_depth2",
+                       "tmem_input_depth5": "baseline"}
+CURRENT_INPUT_VARIANTS = ("tmem_input_depth2", "tmem_k128_depth2", "tmem_input_depth5")
 NARROW_N_VARIANTS = ("n_tile_128", "n128_epi32", "n128_epi32_depth5")
 DEPTH3_VARIANTS = ("balanced_depth3", "balanced_depth3_epi128")
 # K=1/3/5 stages covers shorter-than-ring, odd complete ring, and partial
@@ -93,6 +100,11 @@ VERIFICATION_SHAPES = {
     # reused after slot 1. K=64/192/256/320 crosses different input-ring phases.
     "n128_tmem_double_buffer": ((4096, 3072, 64), (4096, 3072, 192),
                                  (4096, 3072, 256), (4096, 3072, 320)),
+    # Three output tiles per cluster reuse TMEM slot zero after slot one.
+    # K64/192/320 retain the K64 fallback; K128/256/384 exercise K128 and
+    # odd/even two-stage rings. K320/384 also cross the five-stage ring.
+    **{variant: tuple((4096, 3072, k) for k in (64, 128, 192, 256, 320, 384))
+       for variant in CURRENT_INPUT_VARIANTS},
 }
 
 
@@ -465,10 +477,42 @@ def specialize_role(source, role):
     return prefix + replacement + block + end + suffix
 
 
+def current_input_ring(source, variant):
+    """Isolate input depth/K width on the adopted narrow, two-TMEM-slot path."""
+    required = (
+        "    NARROW_N = M * N <= 4096 * 4096\n",
+        "    BLK_M, BLK_N, BLK_K = 128, (64 if NARROW_N else 128), 64\n",
+        "    MMA_M, MMA_N = 256, (128 if NARROW_N else 256)\n",
+        "    PIPE_DEPTH = 4\n",
+        "    K_TILES = K // BLK_K\n",
+        "    EPI_N = 32 if NARROW_N else 64\n",
+        "    TMEM_BUFFERS = 2 if NARROW_N and TOTAL_TILES > MAX_CLUSTERS else 1\n",
+        "    TMEM_SLOT_STRIDE = NUM_CONSUMER if TMEM_BUFFERS == 2 else 0\n",
+        "        mma_tmem_base: T.let = tmem_addr[0]\n",
+        "        def tma_load(k_st):\n            Tx.copy_async(Bsmem[",
+    )
+    if variant not in CURRENT_INPUT_VARIANTS or any(source.count(s) != 1 for s in required):
+        raise ValueError("current input probes require the adopted Step 10 narrow/TMEM baseline")
+    # Derive the experiment from the production slot decision. Other workloads
+    # retain the measured K64/depth4 path, including large N256 matrices.
+    source = replace_once(source, "    PIPE_DEPTH = 4\n", "")
+    depth = 5 if variant == "tmem_input_depth5" else 2
+    config = f"    PIPE_DEPTH = {depth} if TMEM_BUFFERS == 2 else 4\n"
+    if variant == "tmem_k128_depth2":
+        source = replace_once(source, required[1],
+                              "    BLK_M, BLK_N = 128, (64 if NARROW_N else 128)\n")
+        source = replace_once(source, "    K_TILES = K // BLK_K\n", "")
+        config += ("    BLK_K = 128 if TMEM_BUFFERS == 2 and K % 128 == 0 else 64\n"
+                   "    K_TILES = K // BLK_K\n")
+    return replace_once(source, required[7], config + required[7])
+
+
 def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if step == 10 and variant in CURRENT_INPUT_VARIANTS:
+        return current_input_ring(source, variant)
     if step == 10 and variant != "baseline" and "    NARROW_N =" in source:
         raise ValueError("Step 10 has adopted workload-based narrow N and TMEM buffering; "
                          "validate with benchmark.py --steps 10 and tests/test_step10.py. "

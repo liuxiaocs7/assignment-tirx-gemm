@@ -29,7 +29,9 @@
 本次已实际读取五份 CSV、五轮 pytest 和首次验收目录
 `results_b300/step10_tmem_adopt.OQ0WHS`。源码指纹一致，首次正式 CUDA/cubin
 与被采用的 probe 完全一致；五次新 benchmark 没有独立编译产物。
-完整证据见 [B300_VALIDATION.md](B300_VALIDATION.md)，下一步诊断命令见下节。
+最新 `step10_current_profile.3cjntP` 已完成当前路径角色/NCU 采集；baseline 七轮
+通过，但最慢样本仅余 0.345%。MMA 等累加器复用很少，接下来对照输入深度与
+K 宽度。完整证据见 [B300_VALIDATION.md](B300_VALIDATION.md)，实验命令见下节。
 各步原理与后续优化见 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)。
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
@@ -38,7 +40,7 @@
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
 （覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调、角色插桩及硬件采集入口，
-共 **557 项本地通过，299.28 s**；
+共 **585 项本地通过，338.64 s**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
@@ -62,7 +64,7 @@
 数时才启用双槽；其余用宽 N。接口对齐要求、两 consumer 结构、四级 K64、计时器
 和原评分门槛均不变。该规则的性能证据覆盖以上四方阵，不能外推任意矩形和 K。
 
-下面命令用于未来内核改动后验收或独立复现；当前优先执行下一节的针对性诊断。
+下面命令用于未来内核改动后验收或独立复现；当前优先执行下节的输入环对照。
 保证 Slurm 分配的剩余时间覆盖编译、benchmark 和全量测试（已展示的每轮
 全量约 76 s），各 GPU 任务顺序执行。每次命令记录源码指纹、作业 ID、日志及退出码；
 `pipefail` 防止 `tee` 掩盖测试失败。保留所有轮次，包括失败结果。
@@ -114,11 +116,44 @@ benchmark 保存正式 CUDA/cubin、编译参数和七轮原始样本，可核�
 probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder，会明确拒绝重复
 应用。要重放四尺寸历史实验需使用其记录的 `0f23484`，不能把新旧 baseline 混用。
 
+### 当前路径输入环对照实验
+
+`step10_current_profile.3cjntP` 的角色和 NCU 已采集成功。本轮直接测试当前窄 N
+双 TMEM 槽的输入环，无需重复采集同样的 profile。先把包含下列新变体的提交
+同步至服务器，在已分配 B300 的终端运行：
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_input_ring.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 --trials 7 \
+  --variants tmem_k128_depth2 tmem_input_depth5 \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+tirx_probe_exit=$?
+printf '%s\n' "$tirx_probe_exit" > "$tirx_run/probe_exitcode.txt"
+printf '结果目录：%s；退出码：%s\n' "$tirx_run" "$tirx_probe_exit"
+```
+
+工具会自动补齐直接对照，共编译四个版本：正式 `baseline`、K64 两级
+`tmem_input_depth2`、K128 两级 `tmem_k128_depth2`、K64 五级
+`tmem_input_depth5`。保持原 warmup=10、repeat=30，每轮交错顺序。
+每个候选先校验评分形状，再验算 `(4096,3072,K)`、K=64/128/192/256/320/384
+各两次，覆盖部分输入环和第三个输出 tile 对 TMEM 槽零的复用。
+
+三个实验仅改当前窄 N 双槽路径的输入参数；K128 不能整除时回退 K64 两级。
+小网格单槽/大面积宽 N 保留正式配置，评分门槛和计时器不变。候选的 GPU
+正确性、寄存器资源和速度尚待这条命令验证，暂不采用到 `gemm_kernels.py`。
+
+请保留整个目录，尤其 `summary.csv`、原始样本和编译产物。除了中位数，看
+候选相对 baseline、直接对照的配对收益，以及最大值/门槛内样本数。出现
+`SLOW` 是有效测量，不能丢弃；CUDA/编译错误则需要先处理再继续。明确有益后
+再做独立复测和受影响形状验证，最后走上面的正式验收流程。
+
 ### Step 10／4096 不稳定时：采集当前路径
 
-`ea69b2c` 的五轮全量已足以确认测试通过，也已有 benchmark 超线证据。下一步
-先分析当前 N128 双槽实现的等待分布；旧 N256 单槽报告不能直接解释新内核。
-以下两个命令可直接用于 `ea69b2c` 的代码，无需新候选或更改评分设置。
+以下流程已在 `cede7ec` 执行并回传 `step10_current_profile.3cjntP`，保留供之后
+内核变化时重采。旧 N256 单槽报告不能直接解释新内核；两条命令采集当前
+生产 builder，无需更改评分设置。
 
 在已分配 B300 的终端顺序运行，确保 Slurm 余时足够。角色工具会验算 baseline
 与三个独立插桩副本，保存每轮原始 timing、逐 tile trace、编译产物和轮前后 GPU
