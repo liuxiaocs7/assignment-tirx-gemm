@@ -1,0 +1,26 @@
+--- baseline.py
++++ tmem_k128_depth2.py
+@@ -8,12 +8,10 @@
+     # B300 measurements favor narrow tiles up to 256 cluster output tiles.
+     # Larger outputs retain N256 to avoid the measured 8192 regression.
+     NARROW_N = M * N <= 4096 * 4096
+-    BLK_M, BLK_N, BLK_K = 128, (64 if NARROW_N else 128), 64
++    BLK_M, BLK_N = 128, (64 if NARROW_N else 128)
+     CTA_GROUP = 2
+     NUM_CONSUMER = 2
+     MMA_M, MMA_N = 256, (128 if NARROW_N else 256)
+-    K_TILES = K // BLK_K
+-    PIPE_DEPTH = 4
+     EPI_N = 32 if NARROW_N else 64
+     TMEM_LD_N = 32  # Four/eight loads per narrow/wide consumer.
+     WG_NUMBER = 3
+@@ -24,6 +22,9 @@
+     # A single wave has no next tile to overlap. For persistent narrow tiles,
+     # use both 128-column slots per consumer within the same 512-column TMEM.
+     TMEM_BUFFERS = 2 if NARROW_N and TOTAL_TILES > MAX_CLUSTERS else 1
++    PIPE_DEPTH = 2 if TMEM_BUFFERS == 2 else 4
++    BLK_K = 128 if TMEM_BUFFERS == 2 and K % 128 == 0 else 64
++    K_TILES = K // BLK_K
+     TMEM_SLOT_STRIDE = NUM_CONSUMER if TMEM_BUFFERS == 2 else 0
+     TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS
+     CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER

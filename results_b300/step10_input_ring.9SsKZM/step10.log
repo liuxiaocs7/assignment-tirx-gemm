@@ -1,0 +1,59 @@
+Code: dd90c57fddbd38ec0a39e1f73ffbb4cd90fb78de; gemm_sha256=5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c
+GPU: NVIDIA B300 SXM6 AC; SMs: 148; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Separate builds; each experiment records its direct comparison control. Verify all outputs before interleaved CUDA-event timing.
+Verified step 10 / baseline
+Verified step 10 / tmem_input_depth2
+Verified step 10 / tmem_k128_depth2
+Verified step 10 / tmem_input_depth5
+Verified boundary Step 10 / tmem_input_depth2 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth2 / (4096, 3072, 128) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth2 / (4096, 3072, 192) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth2 / (4096, 3072, 256) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth2 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth2 / (4096, 3072, 384) twice (untimed)
+Verified boundary Step 10 / tmem_k128_depth2 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / tmem_k128_depth2 / (4096, 3072, 128) twice (untimed)
+Verified boundary Step 10 / tmem_k128_depth2 / (4096, 3072, 192) twice (untimed)
+Verified boundary Step 10 / tmem_k128_depth2 / (4096, 3072, 256) twice (untimed)
+Verified boundary Step 10 / tmem_k128_depth2 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / tmem_k128_depth2 / (4096, 3072, 384) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 128) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 192) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 256) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / tmem_input_depth5 / (4096, 3072, 384) twice (untimed)
+Trial 1: step 10 / baseline: 0.139392 ms
+Trial 1: step 10 / tmem_input_depth2: 0.224629 ms
+Trial 1: step 10 / tmem_k128_depth2: 0.167441 ms
+Trial 1: step 10 / tmem_input_depth5: 0.136524 ms
+Trial 2: step 10 / baseline: 0.136754 ms
+Trial 2: step 10 / tmem_input_depth5: 0.136752 ms
+Trial 2: step 10 / tmem_k128_depth2: 0.166379 ms
+Trial 2: step 10 / tmem_input_depth2: 0.224105 ms
+Trial 3: step 10 / tmem_k128_depth2: 0.166694 ms
+Trial 3: step 10 / tmem_input_depth5: 0.138711 ms
+Trial 3: step 10 / baseline: 0.139322 ms
+Trial 3: step 10 / tmem_input_depth2: 0.223807 ms
+Trial 4: step 10 / tmem_k128_depth2: 0.166521 ms
+Trial 4: step 10 / tmem_input_depth2: 0.223686 ms
+Trial 4: step 10 / baseline: 0.139379 ms
+Trial 4: step 10 / tmem_input_depth5: 0.138660 ms
+Trial 5: step 10 / baseline: 0.139132 ms
+Trial 5: step 10 / tmem_input_depth2: 0.224755 ms
+Trial 5: step 10 / tmem_k128_depth2: 0.166755 ms
+Trial 5: step 10 / tmem_input_depth5: 0.138812 ms
+Trial 6: step 10 / baseline: 0.139215 ms
+Trial 6: step 10 / tmem_input_depth5: 0.138849 ms
+Trial 6: step 10 / tmem_k128_depth2: 0.166929 ms
+Trial 6: step 10 / tmem_input_depth2: 0.224553 ms
+Trial 7: step 10 / tmem_k128_depth2: 0.166780 ms
+Trial 7: step 10 / tmem_input_depth5: 0.138575 ms
+Trial 7: step 10 / baseline: 0.139238 ms
+Trial 7: step 10 / tmem_input_depth2: 0.224055 ms
+step variant         median_ms    min_ms    max_ms paired_speedup vs_cache control                   vs_control limit_ms status
+  10 baseline         0.139238  0.136754  0.139392          1.000      n/a baseline                       1.000 0.139100 SLOW
+  10 tmem_input_depth2  0.224105  0.223686  0.224755          0.621      n/a baseline                       0.621 0.139100 SLOW
+  10 tmem_k128_depth2  0.166755  0.166379  0.167441          0.834      n/a tmem_input_depth2              1.343 0.139100 SLOW
+  10 tmem_input_depth5  0.138660  0.136524  0.138849          1.004      n/a baseline                       1.004 0.139100 PASS
+Saved results_b300/step10_input_ring.9SsKZM/step10/summary.csv; SLOW is a measured result, not a tool error.

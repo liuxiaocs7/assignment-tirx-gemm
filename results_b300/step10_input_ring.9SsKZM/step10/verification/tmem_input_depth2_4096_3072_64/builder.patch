@@ -1,0 +1,18 @@
+--- baseline.py
++++ tmem_input_depth2.py
+@@ -13,7 +13,6 @@
+     NUM_CONSUMER = 2
+     MMA_M, MMA_N = 256, (128 if NARROW_N else 256)
+     K_TILES = K // BLK_K
+-    PIPE_DEPTH = 4
+     EPI_N = 32 if NARROW_N else 64
+     TMEM_LD_N = 32  # Four/eight loads per narrow/wide consumer.
+     WG_NUMBER = 3
+@@ -24,6 +23,7 @@
+     # A single wave has no next tile to overlap. For persistent narrow tiles,
+     # use both 128-column slots per consumer within the same 512-column TMEM.
+     TMEM_BUFFERS = 2 if NARROW_N and TOTAL_TILES > MAX_CLUSTERS else 1
++    PIPE_DEPTH = 2 if TMEM_BUFFERS == 2 else 4
+     TMEM_SLOT_STRIDE = NUM_CONSUMER if TMEM_BUFFERS == 2 else 0
+     TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS
+     CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER

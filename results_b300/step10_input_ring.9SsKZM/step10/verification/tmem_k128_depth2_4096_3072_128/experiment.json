@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "tmem_k128_depth2",
+  "sources": [
+    {
+      "before_sha256": "49d8fed9d320701eb77a0fc87f5a271e25ec473545ce30cf751410b0f7cfd9c7",
+      "compiled_sha256": "49d8fed9d320701eb77a0fc87f5a271e25ec473545ce30cf751410b0f7cfd9c7"
+    }
+  ]
+}

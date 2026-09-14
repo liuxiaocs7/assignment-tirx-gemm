@@ -1,0 +1,12 @@
+{
+  "step": 10,
+  "variant": "tmem_k128_depth2",
+  "shape": [
+    4096,
+    3072,
+    384
+  ],
+  "launches": 2,
+  "verified": true,
+  "timed": false
+}
