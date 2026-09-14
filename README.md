@@ -1,21 +1,21 @@
 # Assignment: Blackwell GEMM Kernel Optimization
 
-**Implementation status:** `hgemm_v1` through `hgemm_v10` are implemented using
-Apache TVM **0.26.0** for SM100/SM103. Production commit **`d283549` has passed
-formal B300 validation**: the supplied logs show Step 10 **6 passed**, two full
-runs of **57 passed**, and PASS medians for all four Step 10 benchmark sizes
-(seven trials). The user reports five full passing runs in total; two complete
-logs are available in the conversation. These formal results are transcribed
-from user-provided logs, rather than locally inspected raw artifacts.
+**Implementation status:** `hgemm_v1` through `hgemm_v10` use Apache TVM
+**0.26.0** for SM100/SM103. Results added in `ea69b2c` confirm **five full pytest
+runs of 57 passed** on production `d283549`. However, Step 10 / 4096 is still
+marginal: **2 of 5 all-step benchmark runs are SLOW**, at 0.139564 and 0.139290 ms
+against the 0.139100 ms limit. Each of those runs used one timing trial. All
+recorded numerical checks pass; repeated pytest success does not establish
+stable performance across all measurements.
 
-Step 10 now uses N128/EPI32 for output area up to 4096², with two TMEM slots per
-consumer only when narrow tiles require persistent reuse; larger outputs retain
-N256/EPI64. Formal benchmark medians at 1024/2048/4096/8192 are
-**0.018547 / 0.027124 / 0.137610 / 0.868908 ms**. The previously marginal 4096
-case passes, though its demonstrated formal timing margin remains about 1%.
-The original correctness tolerances, grading thresholds and CUDA-event timer
-are unchanged. The latest local tool/source-generation regression was
-**557 passed**; those checks are separate from GPU validation.
+Step 10 uses N128/EPI32 up to output area 4096², with double TMEM buffering when
+persistent reuse is needed; larger outputs retain N256/EPI64. The first formal
+Step 10 benchmark passed all 28 samples across four sizes, but its worst 4096
+sample had only **0.589%** margin. Its CUDA/cubin match the selected probe variants
+exactly. The five newer CSVs have matching kernel and timing-source fingerprints;
+they do not include per-run binaries. The original thresholds and CUDA-event
+measurement remain unchanged. Latest full local tool/source-generation regression:
+**557 passed**; GPU timing stability remains an open optimization item.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10

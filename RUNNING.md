@@ -20,17 +20,17 @@
 | 9 | 双 CTA 协作，cluster 输出 256×256 | 教程 Step 8 |
 | 10 | 两个 MMA consumer 共享 B，按输出量选择 512×128/256 及 TMEM 单/双缓冲 | 教程 Step 9 |
 
-**当前已验收版本为 `d283549`。** 用户反馈累计五轮全量测试通过；对话中已提供
-两轮完整的 **57 passed** 日志（76.33 / 76.43 s），另有正式 Step 10 **6 passed**
-及四尺寸七轮 benchmark 的中位数全部 PASS。结果目录名为
-`results_b300/step10_tmem_adopt.OQ0WHS`；本地没有该目录，当前正式成绩依据用户
-贴出的日志记录，未额外核对其原始样本和二进制。
+**当前 `d283549` 的五轮全量 pytest 均为 57 passed，但 Step 10／4096 仍存在
+性能超线。** `ea69b2c` 补齐的五份全步骤 benchmark 中，第 3 / 5 轮分别为
+0.139564 / 0.139290 ms，高于 0.139100 ms 门槛；每次使用 `trials=1`。
+其余形状均通过，数值检查全部通过。当前应保留为正确性和对照基线，继续扩大
+性能余量，不能将“pytest 五轮全过”解释成所有测量都稳定达标。
 
-Step 10 / 4096 的单独 pytest 为 0.138047 ms，两轮全量为 0.137666 / 0.137785 ms，
-均低于 0.139100 ms 门槛。相比旧 B-first 版本的偶发失败已有改善，可保留为通过
-基线；余量仍约 1%，进一步优化可关注这里。
-逐轮证据与历史实验见 [B300_VALIDATION.md](B300_VALIDATION.md)，
-每步的优化原理、实测取舍和后续建议见 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)。
+本次已实际读取五份 CSV、五轮 pytest 和首次验收目录
+`results_b300/step10_tmem_adopt.OQ0WHS`。源码指纹一致，首次正式 CUDA/cubin
+与被采用的 probe 完全一致；五次新 benchmark 没有独立编译产物。
+完整证据见 [B300_VALIDATION.md](B300_VALIDATION.md)，下一步诊断命令见下节。
+各步原理与后续优化见 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)。
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
 覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线；本机没有 NVIDIA GPU，
@@ -44,11 +44,12 @@ Step 10 / 4096 的单独 pytest 为 0.138047 ms，两轮全量为 0.137666 / 0.1
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前通过的配置与后续复现
+### 当前采用的配置与首次验收成绩
 
 正式内核提交为 `d2835492913d94532bcd160ea79891a8f0e9d836`，SHA256 为
 `5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c`。
-以下为采用后的正式 benchmark 汇总，不是此前候选 probe 成绩：
+以下是首次 Step 10 独立 benchmark 汇总；后续五轮全步骤结果见上文，
+不能用此表覆盖后续 SLOW：
 
 | 尺寸 | 正式选择 | 七轮中位数 ms | 门槛 ms | 结果 |
 |---|---|---:|---:|---|
@@ -61,8 +62,8 @@ Step 10 / 4096 的单独 pytest 为 0.138047 ms，两轮全量为 0.137666 / 0.1
 数时才启用双槽；其余用宽 N。接口对齐要求、两 consumer 结构、四级 K64、计时器
 和原评分门槛均不变。该规则的性能证据覆盖以上四方阵，不能外推任意矩形和 K。
 
-下面的命令供**未来内核改动后验收，或需要独立复现时使用**；本次文档更新不要求
-再跑。保证 Slurm 分配的剩余时间覆盖编译、benchmark 和全量测试（已展示的每轮
+下面命令用于未来内核改动后验收或独立复现；当前优先执行下一节的针对性诊断。
+保证 Slurm 分配的剩余时间覆盖编译、benchmark 和全量测试（已展示的每轮
 全量约 76 s），各 GPU 任务顺序执行。每次命令记录源码指纹、作业 ID、日志及退出码；
 `pipefail` 防止 `tee` 掩盖测试失败。保留所有轮次，包括失败结果。
 
@@ -112,6 +113,60 @@ benchmark 保存正式 CUDA/cubin、编译参数和七轮原始样本，可核�
 实测候选一致。这里是正式评分路径，不再使用 `--variants n128_tmem_double_buffer`。
 probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder，会明确拒绝重复
 应用。要重放四尺寸历史实验需使用其记录的 `0f23484`，不能把新旧 baseline 混用。
+
+### Step 10／4096 不稳定时：采集当前路径
+
+`ea69b2c` 的五轮全量已足以确认测试通过，也已有 benchmark 超线证据。下一步
+先分析当前 N128 双槽实现的等待分布；旧 N256 单槽报告不能直接解释新内核。
+以下两个命令可直接用于 `ea69b2c` 的代码，无需新候选或更改评分设置。
+
+在已分配 B300 的终端顺序运行，确保 Slurm 余时足够。角色工具会验算 baseline
+与三个独立插桩副本，保存每轮原始 timing、逐 tile trace、编译产物和轮前后 GPU
+快照；这些快照不等同于精确覆盖每个 kernel 的时钟遥测。
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_current_profile.XXXXXX)
+uv run python -u profile_persistent.py --steps 10 --size 4096 --trials 7 \
+  --output "$tirx_run/roles" 2>&1 | tee "$tirx_run/roles.log"
+tirx_roles_exit=$?
+printf '%s\n' "$tirx_roles_exit" > "$tirx_run/roles_exitcode.txt"
+printf '角色诊断目录：%s；退出码：%s\n' "$tirx_run" "$tirx_roles_exit"
+```
+
+重点看 MMA 的 `handoff`（等待累加器可复用）、`wait`（输入就绪），以及 writeback
+的 `work`（读回）和 `epilogue`；TMA/MMA `work` 是发射时间，不是异步硬件执行
+时长。不同角色并行，不能把百分比相加，也不能把插桩副本的耗时当作优化成绩。
+只对未经插桩的 baseline 统计门槛内样本数；采集成功不等于 baseline 全部达标。
+
+随后在同一 shell 中采集当前生产内核 NCU（原生报告与角色 trace 分开保存）：
+
+```bash
+uv run python -u profile_hardware.py \
+  --output "$tirx_run/hardware" 2>&1 | tee "$tirx_run/hardware.log"
+tirx_hardware_exit=$?
+printf '%s\n' "$tirx_hardware_exit" > "$tirx_run/hardware_exitcode.txt"
+printf '完整结果目录：%s；退出码：%s\n' "$tirx_run" "$tirx_hardware_exit"
+```
+
+如果角色工具出现 CUDA 数值或运行错误，先检查日志再运行后续诊断；每个工具
+使用独立进程。NVRTC/ncu 失败会保留已有文件，不能用空报告作结论。
+本机能复核源码生成和导出解析，无法代替服务器执行这些 GPU 命令。
+
+若后续要单独重现“全步骤 benchmark 的运行上下文”，沿用原命令保存失败现场：
+
+```bash
+uv run python -u benchmark.py --steps all --trials 1 \
+  --csv "$tirx_run/all_steps.csv" --diagnostics-dir "$tirx_run/compiler_all" \
+  2>&1 | tee "$tirx_run/all_steps.log"
+tirx_benchmark_exit=$?
+printf '%s\n' "$tirx_benchmark_exit" > "$tirx_run/all_steps_exitcode.txt"
+```
+
+这条命令已有真实 SLOW，不需要为了“证明失败”反复跑到出现相同结果。新增
+`--diagnostics-dir` 用于补齐当次二进制；计时前移除编译 hook，保留原 timer。
+独立单尺寸 benchmark 可帮助比较上下文，但在它通过时不能推翻全步骤的 SLOW。
 
 ### b033434：离线恢复已有硬件报告
 
