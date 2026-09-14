@@ -1,0 +1,52 @@
+--- baseline.py
++++ epilogue_double_buffer.py
+@@ -10,7 +10,7 @@
+     NUM_CONSUMER = 2
+     MMA_M, MMA_N = 256, 256
+     K_TILES = K // BLK_K
+-    PIPE_DEPTH = 4
++    PIPE_DEPTH = 3
+     EPI_N = 64
+     TMEM_LD_N = 32  # Eight loads per consumer, with separate FP16 row buffers.
+     WG_NUMBER = 3
+@@ -22,7 +22,7 @@
+     CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER
+     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
+     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
+-    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (NUM_CONSUMER, BLK_M, EPI_N))
++    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (NUM_CONSUMER, 2, BLK_M, EPI_N))
+ 
+     @T.prim_func
+     def kernel(
+@@ -46,7 +46,7 @@
+         pool.move_base_to(1024)
+         Asmem = pool.alloc((PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K), a_type, layout=A_layout)
+         Bsmem = pool.alloc((PIPE_DEPTH, BLK_N, BLK_K), b_type, layout=B_layout)
+-        Dsmem = pool.alloc((NUM_CONSUMER, BLK_M, EPI_N), d_type, layout=D_layout)
++        Dsmem = pool.alloc((NUM_CONSUMER, 2, BLK_M, EPI_N), d_type, layout=D_layout)
+         pool.commit()
+ 
+         # These helpers elect CTA thread zero internally; keep them at CTA scope.
+@@ -145,15 +145,18 @@
+                 ld2mma.arrive(wg_id, remote=0)
+                 for i in T.unroll(MMA_N // EPI_N):
+                     col = T.meta_var(i * EPI_N)
+-                    Tx.copy(Dsmem[wg_id, warp_id * 32 + lane_id, :], Dreg_f16[col:col + EPI_N])
++                    Tx.copy(Dsmem[wg_id, i % 2, warp_id * 32 + lane_id, :], Dreg_f16[col:col + EPI_N])
+                     T.ptx.fence.proxy_async("shared::cta")
+                     T.cuda.warpgroup_sync(wg_id + 10)
+                     if warp_id == 0:
+-                        if T.filter(lane_id, T.ptx.elect_sync()):
++                        if T.filter(lane_id, lane_id == 0):
+                             Tx.copy_async(D[m_out:m_out + BLK_M, n_out + col:n_out + col + EPI_N],
+-                                          Dsmem[wg_id, :, :], dispatch="tma_auto")
++                                          Dsmem[wg_id, i % 2, :, :], dispatch="tma_auto")
+                             T.ptx.cp_async.bulk.commit_group()
+-                            T.ptx.cp_async.bulk.wait_group(0)
++                            if i == MMA_N // EPI_N - 1:
++                                T.ptx.cp_async.bulk.wait_group(0)
++                            elif i > 0:
++                                T.ptx.cp_async.bulk.wait_group(1)
+                     T.cuda.warpgroup_sync(wg_id + 10)
+                 tile_scheduler.next_tile()
+ 

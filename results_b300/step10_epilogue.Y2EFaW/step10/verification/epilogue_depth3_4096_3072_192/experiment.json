@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "epilogue_depth3",
+  "sources": [
+    {
+      "before_sha256": "28025a9f6b7269713387f8edbdc4096e480795c878100395e55945f1e1dfda2e",
+      "compiled_sha256": "28025a9f6b7269713387f8edbdc4096e480795c878100395e55945f1e1dfda2e"
+    }
+  ]
+}

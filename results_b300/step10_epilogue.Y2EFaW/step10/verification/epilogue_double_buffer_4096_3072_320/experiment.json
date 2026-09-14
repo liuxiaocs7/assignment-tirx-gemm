@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "epilogue_double_buffer",
+  "sources": [
+    {
+      "before_sha256": "ad88e186b2b75b3850ad75fcf19ee7a27bdcc4e96a334ebfddbbf4b7b132997d",
+      "compiled_sha256": "ad88e186b2b75b3850ad75fcf19ee7a27bdcc4e96a334ebfddbbf4b7b132997d"
+    }
+  ]
+}
