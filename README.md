@@ -14,10 +14,14 @@ The latest `step10_mma_unroll4.iR07fS` resolves the unrolling comparison:
 `mma_unroll4` has byte-identical cubin/SASS to baseline. At the same four-stage
 unroll, batched emission reduces main-loop R2UR from 63 to 22, but its paired
 speedup against the direct control is 0.998207x. Neither candidate was adopted.
-The next step is `profile_hardware.py`: collect Nsight Compute counters for one
-verified, warmed production Step 10 / 4096 launch. Reports are diagnostic only;
-no profiler duration is scored. Production and CUDA-event timing are unchanged.
-All **494 local tool/source-generation checks pass** (258.27 s); they do not
+`step10_hardware.Mosdpx` successfully collected one verified launch in 20 NCU
+passes. Its wide CSV and units row exposed a parser bug, now fixed using the
+actual report as a regression fixture. Offline analysis recovered 795 metrics:
+TC active cycles are 91.85% of SM-active time and 75.69% of elapsed time; L2/DRAM
+throughput is 22.61%/10.73%. These support investigating utilization gaps, but
+do not establish a specific cause or a stable performance pass. No GPU rerun
+is needed to recover this report. Production and CUDA-event timing are unchanged.
+All **510 local tool/source-generation checks pass** (259.58 s); they do not
 replace GPU correctness and timing validation of the adopted implementation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.

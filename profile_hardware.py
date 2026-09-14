@@ -3,6 +3,7 @@
 This is a diagnostic run, not a performance test. Compilation, verification
 and ten warmups precede a single cudaProfilerStart/Stop-delimited GEMM launch.
 NCU kernel replay can perturb execution even with clock/cache control disabled.
+Use --analyze DIRECTORY to recover an existing raw.csv without NCU or a GPU.
 """
 
 import argparse
@@ -10,6 +11,7 @@ import csv
 import hashlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -122,23 +124,110 @@ def worker(directory):
     print("Verified profiled output. Profiler durations are not grading measurements.", flush=True)
 
 
-def check_raw_report(raw):
-    """Fail on an empty report, a wrong kernel, or unavailable hardware metrics."""
-    lines = raw.splitlines()
-    start = next((i for i, line in enumerate(lines)
-                  if line.startswith(('"ID",', 'ID,'))), None)
+def numeric_value(value):
+    try:
+        return math.isfinite(float(value.replace(",", "")))
+    except ValueError:
+        return False
+
+
+def parse_raw_report(raw):
+    """Normalize NCU wide raw tables and long metric tables, preserving units.
+
+    NCU 2025.3 --page raw emits header, units, then one row per launch. The
+    units row has empty launch fields; it is not a second kernel invocation.
+    Long tables instead repeat launch identity for each Metric Name/Value row.
+    """
+    table = list(csv.reader(io.StringIO(raw.lstrip("\ufeff"))))
+    identity = ("ID", "Process ID", "Kernel Name")
+    start = next((i for i, row in enumerate(table)
+                  if row and row[0] == "ID" and set(identity).issubset(row)), None)
     if start is None:
         raise RuntimeError("NCU raw export has no kernel metrics header")
-    rows = list(csv.DictReader(io.StringIO("\n".join(lines[start:]))))
-    launches = {(row.get("Process ID"), row.get("ID"), row.get("Kernel Name")) for row in rows}
-    if len(launches) != 1 or next(iter(launches))[2] != "kernel_kernel":
+    header = table[start]
+    if len(header) != len(set(header)):
+        raise RuntimeError("NCU raw export has duplicate column names")
+    rows = [row for row in table[start + 1:] if any(row)]
+    if any(len(row) != len(header) for row in rows):
+        raise RuntimeError("NCU raw export has a malformed row width")
+    rows = [dict(zip(header, row)) for row in rows]
+    long_form = {"Metric Name", "Metric Value"}.issubset(header)
+    units = {}
+    if not long_form:
+        if not rows or any(rows[0][key] for key in identity):
+            raise RuntimeError("NCU wide raw export is missing its units row")
+        units = rows.pop(0)
+    if any(not row["ID"].isdigit() or not row["Process ID"].isdigit() for row in rows):
+        raise RuntimeError("NCU raw export has an invalid launch identity")
+    launches = {tuple(row[key] for key in (*identity, "Host Name", "Context", "Stream", "Device")
+                      if key in header) for row in rows}
+    if len(launches) != 1 or rows[0]["Kernel Name"] != "kernel_kernel":
         raise RuntimeError("expected exactly one kernel_kernel result in NCU raw export")
-    counters = [row for row in rows
-                if re.match(r"(?:sm|smsp|dram|lts|tpc|tc)__", row.get("Metric Name", ""))
-                and re.fullmatch(r"[-+0-9.,eE]+", row.get("Metric Value", ""))]
+    metrics = {}
+    if long_form:
+        launch = {key: rows[0][key] for key in header
+                  if key not in {"Section Name", "Metric Name", "Metric Value", "Metric Unit"}}
+        for row in rows:
+            name = row["Metric Name"]
+            metric = dict(value=row["Metric Value"], unit=row.get("Metric Unit", ""))
+            if not name or (name in metrics and metrics[name] != metric):
+                raise RuntimeError("NCU long export has an empty or conflicting metric")
+            metrics[name] = metric
+    else:
+        first_metric = next((i for i, name in enumerate(header) if "__" in name), None)
+        if first_metric is None or len(rows) != 1:
+            raise RuntimeError("expected one wide launch row with hardware metric columns")
+        launch = {key: rows[0][key] for key in header[:first_metric]}
+        metrics = {key: dict(value=rows[0][key], unit=units[key]) for key in header[first_metric:]}
+    counters = [name for name, metric in metrics.items()
+                if re.match(r"(?:sm|smsp|dram|lts|tpc|tc)__", name) and numeric_value(metric["value"])]
     if not counters:
         raise RuntimeError("NCU report has no numeric hardware counters; inspect ncu.log/raw.stderr.txt")
-    return dict(kernel="kernel_kernel", launches=1, numeric_counter_rows=len(counters))
+    return dict(format="long" if long_form else "wide", launch=launch, metrics=metrics,
+                check=dict(kernel="kernel_kernel", launches=1, numeric_counter_rows=len(counters)))
+
+
+def check_raw_report(raw):
+    return parse_raw_report(raw)["check"]
+
+
+def write_metrics(directory, parsed):
+    """Keep exact exported values/units, including unavailable metrics."""
+    with (directory / "metrics.csv").open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["metric", "value", "unit"])
+        writer.writerows((name, metric["value"], metric["unit"])
+                         for name, metric in parsed["metrics"].items())
+
+
+def analyze(source, directory):
+    """Recover CSV analysis in a fresh directory; never rewrite collection evidence."""
+    directory.mkdir(parents=True, exist_ok=False)
+    info = dict(status="analyzing", diagnostic_only=True, source_directory=str(source),
+                analyzer=metadata())
+    try:
+        collected = json.loads((source / "run.json").read_text())
+        child = json.loads((source / "worker.json").read_text())
+        if child.get("status") != "verified_after_profile":
+            raise RuntimeError("recorded worker did not finish output verification")
+        for key in ("gemm_kernels_sha256", "utils_sha256", "benchmark_diagnostics_sha256", "profile_hardware_sha256"):
+            if not collected.get(key) or child.get(key) != collected[key]:
+                raise RuntimeError(f"recorded collection/worker source mismatch: {key}")
+        raw = source / "raw.csv"
+        parsed = parse_raw_report(raw.read_text())
+        write_metrics(directory, parsed)
+        info.update(status="analyzed", collected=collected, worker=child,
+                    raw_sha256=hashlib.sha256(raw.read_bytes()).hexdigest(),
+                    report_format=parsed["format"], report_check=parsed["check"], launch=parsed["launch"])
+        print(f"Recovered {len(parsed['metrics'])} metrics from one kernel_kernel launch ({parsed['format']} CSV).\n"
+              f"Saved {directory / 'metrics.csv'}. No GPU work or performance verdict.", flush=True)
+        code = 0
+    except (OSError, RuntimeError, ValueError, KeyError) as error:
+        info.update(status="failed", error=str(error))
+        print(f"Offline analysis failed: {error}", file=sys.stderr)
+        code = 1
+    write_json(directory / "analysis.json", info)
+    return code
 
 
 def collect(directory, requested_ncu=None):
@@ -201,7 +290,9 @@ def collect(directory, requested_ncu=None):
         info["report"] = report.name
         raw = run([ncu, "--import", str(report), "--page", "raw", "--csv",
                    "--print-kernel-base", "function"], "raw.csv")
-        info["report_check"] = check_raw_report(raw)
+        parsed = parse_raw_report(raw)
+        info.update(report_check=parsed["check"], report_format=parsed["format"])
+        write_metrics(directory, parsed)
         detail_flag = "--print-details" if "--print-details" in help_text else "--details-all"
         detail_args = [detail_flag, "all"] if detail_flag == "--print-details" else [detail_flag]
         run([ncu, "--import", str(report), "--page", "details", *detail_args], "details.txt")
@@ -220,14 +311,19 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="fresh directory; must not exist")
     parser.add_argument("--ncu", help="Nsight Compute executable; default: PATH, then CUDA_PATH/bin/ncu")
+    parser.add_argument("--analyze", type=Path, help="existing collection directory with raw.csv; no GPU/NCU needed")
     parser.add_argument("--_worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.analyze and (args._worker or args.ncu):
+        parser.error("--analyze cannot be combined with --ncu or --_worker")
     directory = args.output.resolve()
     if args._worker:
         worker(directory)
         return 0
     if directory.exists():
         parser.error("--output must be a fresh directory")
+    if args.analyze:
+        return analyze(args.analyze.resolve(), directory)
     return collect(directory, args.ncu)
 
 

@@ -1,6 +1,74 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step10_mma_unroll4.iR07fS，固定展开后没有性能收益
+## 最新结果：step10_hardware.Mosdpx，采集成功，CSV 解析错误已修复
+
+原始数据：[raw.csv](results_b300/step10_hardware.Mosdpx/profile/raw.csv)、
+[worker.json](results_b300/step10_hardware.Mosdpx/profile/worker.json)、
+[run.json](results_b300/step10_hardware.Mosdpx/profile/run.json)、
+[ncu.log](results_b300/step10_hardware.Mosdpx/profile/ncu.log)。
+恢复结果：[metrics.csv](results_b300/step10_hardware.Mosdpx/analysis/metrics.csv)、
+[analysis.json](results_b300/step10_hardware.Mosdpx/analysis/analysis.json)。
+采集版本 `880a361`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0，
+Nsight Compute **2025.3.1.0**。五个源码指纹均匹配记录的提交；正式内核 CUDA、
+cubin 和 NVRTC 参数与 B-first 验收产物逐字节一致。
+
+### 错误发生在导出后的解析，已有采集结果有效
+
+ncu 对 `kernel_kernel` 完成 **20 passes**，退出码为 0，worker 在采集后验算通过，
+`.ncu-rep` 和 `raw.csv` 已保存。原 parser 误把 raw CSV 当作“每行一个 metric”的
+长表。实际文件是 **806 列、3 行**：表头、单位行、单次内核结果。单位行的 ID、
+Process ID、Kernel Name 均为空，被误算为第二个内核；因此触发错误的数量断言。
+此前进程模拟测试只构造长表，遗漏了实际 NCU raw 页面格式。
+
+用该真实文件新增回归测试，先复现相同 RuntimeError，再修改 parser：识别宽表
+单位行并分离 launch 信息和指标，同时保留长表支持。异常行宽、无 ID 的数据行、
+错误内核、多次 launch、空报告和无数字硬件指标仍拒绝通过，不是简单删掉断言。
+解析保留原值及单位，如 `144.800000 us`、`230.400000 Kbyte/block`，不能因为
+`--csv` 文档提及 base units 就假定这份导出没有单位缩放。
+
+已在本机离线恢复 **795 个指标**，其中 371 个符合检查用 SM/SMSP/DRAM/LTS 等
+硬件前缀并有有限数值。`--analyze` 只读取原 collection/worker/CSV，校验原验算
+状态和父子源码指纹，在新目录保存结果。原失败日志和原生报告保持不变，
+无需重新跑 GPU。ncu 的 rules/details 页面尚未导出，离线步骤不伪造该页面。
+
+新增 16 项回归覆盖真实宽表、单位保留、缺少单位行、多次 launch、畸形行、长表
+兼容、完整宽表导出流程，以及无 Torch/TVM/ncu 的离线恢复和原证据不被修改。
+采集工具定向检查 **33 passed**；完整本地工具/源码生成回归 **510 passed，259.58 s**。
+
+### 计数器支持的结论与限制
+
+以下均来自本次 profile，不是 CUDA-event 成绩：
+
+| 指标 | 值 | 含义 |
+|---|---:|---|
+| TC pipeline active cycles / SM active | 91.850102% | SM 活跃时 TC 长时间忙碌；不等同于达到该比例的峰值 FLOP/s |
+| TC pipeline active cycles / elapsed | 75.687654% | 按整体执行时段计，利用率明显低于活跃期 |
+| L2 throughput / peak elapsed | 22.610307% | 未显示 L2 带宽接近饱和 |
+| DRAM throughput / peak elapsed | 10.734518% | 未显示 DRAM 带宽接近饱和，不能排除访存延迟问题 |
+| L2 sector hit rate | 72.256016% | 需结合未清缓存、多 pass 的条件解读 |
+| Active / eligible warps per scheduler | 2.998267 / 0.037752 | 发射候选很少，但异步 MMA 和角色等待不能直接按普通指令核解释 |
+| Issue active / peak active | 3.342205% | 不代表 TC 只有 3% 忙碌，TC 活跃指标见上 |
+| Grid / CTA / cluster | 128 CTA / 384 threads / 2 CTA | 当前为 64 个 cluster，GPU 共有 148 SM |
+| Registers / dynamic shared memory | 167/thread / 230400 bytes/CTA | 与编译产物一致，寄存器和 SMEM 均限制每 SM 一个 CTA |
+
+这些数据支持优先检查计算之外的整体空档，与“削减 MMA 发射指令却不提速”的
+前轮结果相符。当前 128 个输出任务由 64 个 cluster 各做两次，避免了 74 cluster
+网格的尾部不均衡；128 CTA 最多同时覆盖 128 个 SM，其余至少 20 个不能同时参与，
+这是这项既有选择的一部分，不能只看 SM 数就把已经测过较慢的 74 cluster 调度
+换回来。后续调度或 tile 交接假设还需直接对照。
+
+WarpStateStats 的 `long_scoreboard` 为 **55.787340**、`barrier` 为 **19.038570**，
+对应字段是 `smsp__average_warps_issue_stalled_*_per_issue_active.ratio`，
+不是百分比，也没有按角色或 PC 分解。不能把这些数值直接说成 “56% 时间在读
+显存” 或某个 barrier 是根因。定位具体等待点需源码/PC 相关采样；本次原始表
+尚不提供这种归因。
+
+profiling 时长 **144.8 us**，GPC 平均时钟约 **1.040150 GHz**；本次明确关闭
+clock/cache control，ncu 已提示多 pass 指标可能不一致。不能拿它与原门槛
+139.1 us 直接评分，或单凭它宣称热降频。正式全量结果仍为 **56 passed / 1 failed**，
+本轮只修复诊断工具，生产内核、计时器和 GPU 验收标准均未改变。
+
+## 前轮结果：step10_mma_unroll4.iR07fS，固定展开后没有性能收益
 
 数据：[summary](results_b300/step10_mma_unroll4.iR07fS/step10/summary.csv)、
 [samples](results_b300/step10_mma_unroll4.iR07fS/step10/samples.json)、
@@ -34,7 +102,7 @@ batch 减少寄存器搬运和指令数，却没有加速，当前证据不支�
 展开方向微调。所有版本的输入、数学运算和写回相同，生产文件 SHA256 仍为
 `3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7`。
 
-### 下一步：正式内核的 Nsight Compute 计数器
+### 已完成采集：正式内核的 Nsight Compute 计数器
 
 按以下预测区分下一步方向：
 
@@ -60,12 +128,13 @@ boost；这不消除 profiler 扰动。缓存不刷新的多 pass 指标可能�
 [Kernel Replay 与 pipeline 定义](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html)。
 
 缺少工具、计数器权限、空报告或 worker 验算失败会返回非零，并保留日志。
-本机无 NVIDIA GPU，尚未采到真实计数器；工具进程和区间测试不能替代 B300 验证。
+当时本机无 NVIDIA GPU，仅完成工具进程和区间测试；B300 采集结果及 parser
+格式缺陷见本文最新记录。
 新增 17 项检查覆盖正式 builder 调用、采集前后验证与输出清空、区间内单次调用、
 异常时关闭 profiler、新旧 ncu 报告导出、权限失败、缺少工具、空报告和源码变化。
 完整本地工具/源码生成回归 **494 passed，258.27 s**；生产内核、计时器和 GPU
 用例均未修改。
-下轮只需运行：
+以下是该轮的历史采集命令，本次无需重复：
 
 ```bash
 mkdir -p results_b300

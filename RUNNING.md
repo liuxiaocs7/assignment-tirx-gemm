@@ -31,7 +31,10 @@
 最新 `step10_mma_unroll4.iR07fS` 已消除展开差异：`mma_unroll4` 的 cubin/SASS
 与 baseline 完全相同；同为四级展开的 batch 将主循环 R2UR 从 63 降为 22，
 却没有加速（对直接对照的同轮加速比 0.998207×）。两项均不采用，生产代码未变。
-下一步采正式内核的 Nsight Compute 硬件计数器，区分计算、供数与调度瓶颈。
+`step10_hardware.Mosdpx` 已成功采集计数器，20 pass 后数值验证通过。工具因不兼容
+ncu 2025.3 的宽 CSV 和单位行而误报失败，现已修复，并从原文件离线恢复 795 个指标。
+TC 活跃周期占 SM 活跃期 91.85%、总时段 75.69%，L2/DRAM 吞吐为 22.61%/10.73%；
+支持优先查整体利用率空档，尚不能确定具体瓶颈或证明性能稳定。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
@@ -40,15 +43,41 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
 （覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调、角色插桩及硬件采集入口，
-共 **494 项本地通过，258.27 s**；
+共 **510 项本地通过，259.58 s**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：采集正式 Step 10 的硬件计数器
+### 当前进度：硬件报告已恢复，无需重新采集
 
-同步本轮工具提交后运行以下命令。需要支持 B300 的 Nsight Compute `ncu`；
+`results_b300/step10_hardware.Mosdpx/analysis/metrics.csv` 已恢复全部 795 个指标及
+其原始单位。原 `profile/` 和失败的 `run.json` 均未覆盖；修复后的采集入口可直接
+处理这种宽表，也继续支持长表。新版在采集后额外保存便于阅读的 `metrics.csv`。
+如果要在服务器上自行恢复已有 CSV，可运行以下离线命令，无需 ncu、Torch 或 GPU：
+
+```bash
+tirx_run=$(mktemp -d results_b300/step10_hardware_recover.XXXXXX)
+uv run python -u profile_hardware.py \
+  --analyze results_b300/step10_hardware.Mosdpx/profile \
+  --output "$tirx_run/analysis"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+离线模式会检查原 worker 的验算完成状态、原父子进程源码指纹是否一致、内核数量
+及数值指标，并保存 `analysis.json` 和 `metrics.csv` 到新目录。它不重跑内核、
+不重新导出原生报告，也不将原 `run.json` 中的失败状态改为成功。
+若需要 ncu 自带的 rules/details 页面，可从已有报告导出，不用 GPU：
+
+```bash
+/usr/local/cuda/bin/ncu \
+  --import results_b300/step10_hardware.Mosdpx/profile/step10_4096.ncu-rep \
+  --page details --print-details all > "$tirx_run/details.txt"
+```
+
+### 硬件采集命令（仅需新报告时使用）
+
+需要新报告时运行以下命令。需要支持 B300 的 Nsight Compute `ncu`；
 沿用当前 Slurm GPU 分配和 Python 环境，无需改编译选项。
 
 ```bash
@@ -68,7 +97,7 @@ printf '结果目录：%s\n' "$tirx_run"
 profiler 区间外；过滤器限定 `kernel_kernel`，原始报告也会检查只有一个内核结果。
 
 `profile/` 保存 `run.json`、`worker.json`、编译 CUDA/cubin/资源/SASS、`ncu.log`、
-`raw.csv`、`details.txt` 及 `.ncu-rep` 或 `.nsight-cuprof` 报告。采集项包括
+`raw.csv`、`metrics.csv`、`details.txt` 及 `.ncu-rep` 或 `.nsight-cuprof` 报告。采集项包括
 SpeedOfLight、Compute/MemoryWorkloadAnalysis、SchedulerStats、WarpStateStats、
 LaunchStats、Occupancy；缺少的 section 会明确记录。使用 kernel replay，显式设置
 `--clock-control none --cache-control none`；版本支持时设置动态 Tensor Core boost。
