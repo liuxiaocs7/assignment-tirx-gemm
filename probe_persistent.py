@@ -7,6 +7,8 @@ Explicit tmem_input_* / tmem_k128_depth2 probes vary the input ring only for
 the current double-buffered narrow path, retaining single-slot/wide fallbacks.
 Explicit tmem_share_a_depth* probes place the two consumers along N to reuse A,
 then compare five/six input stages on that layout.
+Step 9's cluster_cache_tmem_base snapshots the allocation after cluster sync,
+leaving the single-consumer pipeline, layouts and scheduling unchanged.
 Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
@@ -34,6 +36,7 @@ STEP_VARIANTS = {
     6: ("baseline", "k_tile_128", "mma_wait_64ns", "final_fence"),
     7: ("baseline", "k_tile_128", "mma_wait_64ns", "epilogue_128"),
     8: ("baseline", "tma_wait_64ns", "epilogue_128", "cache_tmem_base", "reuse_wait_64ns"),
+    9: ("baseline", "cluster_cache_tmem_base"),
     10: ("baseline", "mma_wait_64ns", "tmem_load_16", "tmem_load_64",
          "l2_group_4", "balanced_clusters", "tma_wait_64ns",
          "specialize_mma", "specialize_writeback", "unroll_ring",
@@ -50,6 +53,7 @@ STEP_VARIANTS = {
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
+                         9: ("baseline",),
                          10: ("baseline",)}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
@@ -62,6 +66,7 @@ CACHE_EXPERIMENTS = {
 # Every new comparison names its direct control; selecting a leaf includes
 # the whole chain so each added change remains separable.
 EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
+                       "cluster_cache_tmem_base": "baseline",
                        "balanced_depth3": "cache_balanced_clusters",
                        "balanced_depth3_epi128": "balanced_depth3",
                        "balanced_fused_a": "cache_balanced_clusters",
@@ -84,6 +89,11 @@ DEPTH3_VARIANTS = ("balanced_depth3", "balanced_depth3_epi128")
 # ring; 96 cluster tiles force reuse of both consumers on the balanced grid.
 DEPTH3_VERIFY_SHAPES = ((4096, 3072, 64), (4096, 3072, 192), (4096, 3072, 320))
 VERIFICATION_SHAPES = {
+    # Single tile, cross-tile reuse with short/full/partial rings, and a
+    # 9x9 grid that crosses both a partial L2 group and the 74-cluster limit.
+    "cluster_cache_tmem_base": ((256, 256, 64), (4096, 3072, 64),
+                                (4096, 3072, 192), (4096, 3072, 256),
+                                (4096, 3072, 320), (2304, 2304, 320)),
     **{variant: DEPTH3_VERIFY_SHAPES for variant in DEPTH3_VARIANTS},
     "balanced_fused_a": ((4096, 3072, 64), (4096, 3072, 320)),
     "warp_release": ((4096, 3072, 64), (4096, 3072, 320)),
@@ -589,6 +599,17 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant == "cluster_cache_tmem_base":
+        if "mma_tmem_base: T.let" not in source:
+            required = ("    CTA_GROUP = 2\n", "    PIPE_DEPTH = 4\n",
+                        "        T.cuda.cta_sync()\n        T.cuda.cluster_sync()\n"
+                        "        tmem = T.decl_buffer(")
+            if any(source.count(part) != 1 for part in required):
+                raise ValueError("Step 9 TMEM cache requires the four-stage cluster baseline "
+                                 "with the allocation published before the snapshot")
+        # Reuse the measured cache transform; the unique Step 9 name keeps
+        # boundary shapes and controls distinct from historical Step 8/10.
+        variant = "cache_tmem_base"
     if step == 10 and variant in CURRENT_INPUT_VARIANTS:
         return current_input_ring(source, variant)
     if step == 10 and variant in SHARE_A_VARIANTS:
@@ -989,8 +1010,9 @@ def main(argv=None):
         parser.error("a Blackwell GPU and CUDA-enabled PyTorch are required")
     target = blackwell_target()
     device = torch.cuda.get_device_properties(torch.cuda.current_device())
-    if 10 in selected and device.multi_processor_count % 2:
-        parser.error("Step 10 requires an even SM count for its two-CTA clusters")
+    cluster_steps = sorted(set(selected) & {9, 10})
+    if cluster_steps and device.multi_processor_count % 2:
+        parser.error(f"Step {cluster_steps[0]} requires an even SM count for its two-CTA clusters")
     gemm_kernels.SM_COUNT = device.multi_processor_count
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)

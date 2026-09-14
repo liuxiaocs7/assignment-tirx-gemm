@@ -54,6 +54,36 @@ probe 的 baseline 一致。共享 A、五级输入候选均未采用，当前�
 正式内核、计时器或评分门槛，也没有重新运行本地工具回归；此前完整回归仍为
 **614 passed**。
 
+## 验收后的补充回归与可选 Step 9 优化
+
+`2cb4fe5` 补齐了在 `f165b5e` 上执行的五轮全量 pytest 与全步骤 benchmark：
+`results_b300/pytest_f165b5e_{1..5}.log` 均为 **57 passed**，
+`results_b300/all_steps_f165b5e_{1..5}.csv` 每份 37 行、合计 **185/185 PASS**。
+每次 benchmark 为 trials=1，内核 SHA 与上文正式验收一致。
+Step 10／4096 五次为 **0.094277–0.094850 ms**，8192 为
+**0.645551–0.654315 ms**。这继续支持当前版本在这些运行中通过；不是五次
+独立的七轮 Step 10 测试，也不替代上文正式验收的 28 个样本。
+
+继续优化时先验证 Step 9 的不可变 TMEM 基址缓存。现有正式 Step 9 的本地
+CUDA 在 MMA K 循环内有四处 `((uint*)pool_buf_ptr)[0]` 操作数；新增独立
+`cluster_cache_tmem_base` 在初始化的 CTA/cluster 同步之后读取一次，后续
+计算复用该值。依据是 Step 8/10 已有同类优化的同轮收益，不能据此预报
+Step 9 的加速比例。若 NVRTC 本来已消除读取、缓存增加寄存器压力，或该开销
+并非关键路径，GPU 测量可能没有收益。
+
+本次 `gemm_kernels.py` 未改。新增候选保持 Step 9 的四级输入、单 consumer、
+TMA 描述符、网格与所有同步；GPU 入口先校验单 tile、矩形短/完整/部分 ring、
+部分 L2 分组和跨 tile 复用，再交错测 baseline 与候选。运行命令为
+`bash run_step9_cache.sh`，详见 [RUNNING.md](RUNNING.md#可选优化step-9-缓存-tmem-基址)。
+尚未执行 B300 候选测量，当前正式验收结果不发生变化。
+
+本地 TVM 0.26 在 SM100a/SM103a、四方阵与六组边界上完成差分检查：缓存值
+代回后完整 CUDA 函数体逐字一致，TMA 描述符一致，动态 SMEM 仍为
+148480 bytes。新增 **22 passed**；相关 persistent/profile-guided 旧实验
+回归 **102 passed**。脚本通过 Bash 语法与八种模拟场景（四尺寸、单尺寸、
+probe/tee/设备失败与非法参数），没有将本地源码生成当作 cubin 或 GPU 验证。
+此前完整工具回归仍为 614 项；本次只运行受影响的 124 项。
+
 ## 前次长序列：step10_share_a_state.fGOjDy，804/804 达标，五级有小幅持续收益
 
 `ccd28ab` 补齐在 `01a2248` 执行的 201 轮结果：

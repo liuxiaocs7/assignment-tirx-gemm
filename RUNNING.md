@@ -115,6 +115,37 @@ benchmark 保存正式 CUDA/cubin、编译参数和七轮原始样本，可核�
 probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder，会明确拒绝重复
 应用。要重放四尺寸历史实验需使用其记录的 `0f23484`，不能把新旧 baseline 混用。
 
+### 可选优化：Step 9 缓存 TMEM 基址
+
+当前正式验收已通过。继续优化时可先运行新增的独立候选
+`cluster_cache_tmem_base`：在初始化的 CTA/cluster 同步之后读取一次 TMEM
+基址，用于后续 MMA 和读回，保留 Step 9 的四级输入、单 consumer、网格与
+同步协议。Step 8/10 已采用过同类优化，但 Step 9 的收益需单独测量。
+
+在 B300 仓库目录运行：
+
+```bash
+bash run_step9_cache.sh
+```
+
+脚本顺序测试 1024/2048/4096/8192，每个尺寸包含正式 baseline 与一个缓存
+候选，各测七轮，warmup=10、repeat=30。自动记录版本、CUDA 设备 UUID、
+前后 GPU 快照、日志及 probe/tee 退出码；结果放在 `results_b300/step9_cache.*`。
+每个尺寸计时前，还校验单 tile、矩形 K64/192/256/320，以及 9×9 cluster
+tile 网格的部分 L2 分组，每组执行两次。若只做首轮筛选，可以运行
+`bash run_step9_cache.sh --size 4096`；采用前仍需完整四尺寸数据。
+
+底层调用是 `probe_persistent.py --steps 9 --variants cluster_cache_tmem_base`。
+baseline 是直接对照，默认不启用候选；工具不修改 `gemm_kernels.py`。SLOW
+保留为有效测量，数值、编译或日志写入错误会停止脚本。重点比较配对耗时、
+全部原始样本和 cubin/SASS 资源；若没有可重复收益或出现其他尺寸退化，就保留
+正式实现。候选采用后再运行全量 pytest 与正式 Step 9 benchmark。
+
+本地 TVM 0.26 检查覆盖 SM100a/SM103a 的十组形状，确认缓存值代回后整个
+CUDA 函数体和 TMA 描述符与 baseline 一致，动态 SMEM 仍为 148480 bytes。
+新增测试 **22 passed**，相关旧实验回归 **102 passed**；脚本通过语法检查和
+八种模拟调用/故障场景。它们没有执行 NVIDIA GPU 数值或性能测量。
+
 ### 共享 A 五级采用前验证
 
 **可选后续优化：当前正式版本已验收通过，以下流程尚未执行，也不是当前验收要求。**
