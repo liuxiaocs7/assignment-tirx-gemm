@@ -43,13 +43,49 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
 （覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调、角色插桩及硬件采集入口，
-共 **510 项本地通过，259.58 s**；
+共 **530 项本地通过，284.63 s**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：硬件报告已恢复，无需重新采集
+### 当前进度：TMEM 双缓冲对照实验
+
+`b033434` 仅修复硬件报告的 CSV 解析，`gemm_kernels.py` 未变，不能期望这个 commit
+提升性能。下面“离线恢复”命令可直接在 `b033434` 执行，检查修复；不需要重新采集。
+
+下一轮实验需要同步 `b033434` **之后**包含 `n128_tmem_double_buffer` 的工具提交。
+它不改正式内核，检验 MMA 是否能通过 TMEM 两个 accumulator 槽交替使用来隐藏
+上一 tile 的读回等待。原 N256 的两个 consumer 已用满 512 列；缩至 N128 后，每个
+consumer 用两套 128 列，占用仍为 512 列。对照保留既有窄 N 单缓冲版本，避免
+把缩 N 或 EPI32 的影响误算为双缓冲收益。
+
+```bash
+cd ~/assignment-tirx-gemm
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_tmem_double.XXXXXX)
+uv run python -u probe_persistent.py --steps 10 --size 4096 --trials 7 \
+  --variants n128_tmem_double_buffer \
+  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+命令自动包含 `baseline → n_tile_128 → n128_epi32 → n128_tmem_double_buffer`
+四个独立构建，记录每项的直接对照。新实验相对 `n128_epi32` 只改变 TMEM
+槽位和配套就绪/释放 barrier；输入四级 K64、线程、网格、共享内存、EPI32 写回
+均相同。每个槽都有单独的 phase，两个槽轮转一圈才翻转；必须等两个 CTA 的读回
+线程全部完成后才能重用该槽。与此前测过的 **SMEM 写回双缓冲** 是不同实验。
+
+计时前新实验对 `(4096,3072,K)` 的 K=64/192/256/320 各验算两次，覆盖两个 TMEM
+槽的首次使用、第三个 tile 重用槽 0，以及不同输入 ring 的边界。正式计时保持
+原 10 次预热、30 次 CUDA-event 重复，七轮交错。所有输出必须先通过数值检查。
+只有相对直接对照、生产 baseline 都有一致收益，并超过历史零点几百分比的噪声，
+才考虑采用；以 4096 **≤0.135 ms（约 3% 余量）**为本轮理想目标，不修改原
+0.139100 ms 评分门槛。即使 probe 全 PASS，也仍需采用后跑正式 Step 10、全量
+pytest 和五轮 benchmark 验收。本机检查仅验证构建及协议，B300 性能尚未测量。
+
+### b033434：离线恢复已有硬件报告
 
 `results_b300/step10_hardware.Mosdpx/analysis/metrics.csv` 已恢复全部 795 个指标及
 其原始单位。原 `profile/` 和失败的 `run.json` 均未覆盖；修复后的采集入口可直接
@@ -107,8 +143,9 @@ LaunchStats、Occupancy；缺少的 section 会明确记录。使用 kernel repl
 缺少 `ncu`、GPU 不受支持、`ERR_NVGPUCTRPERM`、空报告或验证失败时返回非零，
 保存已有日志，不修改驱动权限。缺少 ncu 时可加载平台提供的 Nsight Compute module
 或指定已有安装路径；计数器权限错误需平台管理员开放访问，保留目录供判断。
-当前 probe 默认只运行 baseline；历史展开比较用 `--variants mma_batch_unroll4`
-显式选取。详见 [最新复测与诊断依据](B300_VALIDATION.md)。
+当前 probe 默认运行 TMEM 双缓冲及其对照链；只测正式版本用 `--variants baseline`，
+历史展开比较用 `--variants mma_batch_unroll4` 显式选取。
+详见 [最新复测与诊断依据](B300_VALIDATION.md)。
 
 已采用的 Step 6/7 K128、Step 8 等待提示/基址缓存、Step 10 基址缓存/均衡网格/B 优先
 拒绝重复应用；依赖旧基线的历史组合需在对应历史提交重放。profiling 使用当前

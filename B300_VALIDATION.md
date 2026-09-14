@@ -68,6 +68,58 @@ clock/cache control，ncu 已提示多 pass 指标可能不一致。不能拿它
 139.1 us 直接评分，或单凭它宣称热降频。正式全量结果仍为 **56 passed / 1 failed**，
 本轮只修复诊断工具，生产内核、计时器和 GPU 验收标准均未改变。
 
+### 下一轮：N128 下独立验证 TMEM accumulator 双缓冲
+
+`b033434` 是报告修复，不是性能修复。下一步用一个新变体检验 tile 间的读回等待，
+依据是 TC 在 SM 活跃期间较忙、整体利用率较低，以及发射端指令削减没有收益。
+这些指标只支持安排实验，尚不能证明 accumulator 重用是主要瓶颈。
+
+可区分的预测：
+
+1. 若单个 accumulator 槽让下一 tile 的 MMA 等待前一 tile 读回，增加第二槽应使
+   `n128_tmem_double_buffer` 稳定快于相同 N128/EPI32 的单槽版本。
+2. 若这段等待已被输入供数或其他工作隐藏，双槽不会带来净收益，可能因为地址
+   和 phase 状态增多变慢；不采用，也不把 5/5 或 7/7 PASS 单独当成改进证据。
+3. 缩窄 N 和 EPI32 已测过，整体没有稳健净收益。新版本必须同时胜过直接对照和
+   正式 N256 baseline，才能说明隐藏的等待足以补偿窄 N 的额外任务数。
+
+默认及显式命令均保留四项对照链：
+
+| 版本 | N / EPI_N | 每 consumer 的 accumulator 槽 | 直接对照 |
+|---|---:|---:|---|
+| baseline | 256 / 64 | 1 | baseline |
+| n_tile_128 | 128 / 64 | 1 | baseline |
+| n128_epi32 | 128 / 32 | 1 | n_tile_128 |
+| n128_tmem_double_buffer | 128 / 32 | 2 | n128_epi32 |
+
+原 N256 两个 consumer 占满 512 列 TMEM，直接翻倍超出硬件容量。新版本沿用
+既有 N128/EPI32：每槽 128 列，地址为 `(slot * 2 + consumer) * 128`，四个区域
+覆盖 `[0,512)`。保留原 512 列分配/释放，只增加此前窄 N 版本未用的第二半区域。
+不增加线程、输入 ring、输出 SMEM buffer 或数学运算；与直接对照均为四级 K64、
+181248 字节动态 SMEM、384 线程，在 4096 下 64 cluster 各做四个 512×128 输出任务。
+
+`mma2ld` 和 `ld2mma` 各由两个槽增为四个，新增 barrier 仍在保留的 1024 字节
+头部内，故 SMEM 总量不变。每槽的 free 等待初始 phase=1、ready 等待初始 phase=0；
+两个槽轮转后才翻转 phase。MMA 在当前槽 ready commit 后推进，读回在所有 TMEM
+load wait、before-thread-sync fence 和 256 个远端线程到达后才释放当前槽。
+下一 tile 可以计算到另一个槽，隔一个 tile 重用时仍必须等两个 CTA 读完。
+原输入 `mma2tma.init(2)`、B-first TMA、输出写回与最终 cluster sync 不变。
+
+新变体计时前在 `(4096,3072,K)` 的 K=64/192/256/320 各验算两次；192 个窄输出
+任务使用 64 cluster，每个 cluster 做三个 tile，强制验证槽 0 的重用。原两个窄 N
+对照也保留其 K=64/320/384 边界验证。四个主尺寸和单 tile 同时覆盖本地生成检查。
+已核对 4096 的单槽对照 CUDA 与 `step10_n128.eVKFm2` 记录一致；新旧 CUDA 除
+槽地址、配套 barrier 和 phase 推进外逐字比较一致（展开并移除冗余 CSE 定义后）。
+随机交错模型从实际生成的 CUDA 提取槽位/地址表达式，模拟两个 CTA 的延迟读回，
+检验七个 tile 中的多轮 phase、不同 consumer 独立推进、无提前覆盖/死锁。
+这是协议检查，不能替代 GPU 数值检查和 SASS/资源检查。
+新增 20 项检查通过，完整本地工具/源码生成回归 **530 passed，284.63 s**。
+
+同步新增实验的工具提交后执行 [RUNNING.md 中的七轮命令](RUNNING.md)。
+本轮理想目标为 4096 最慢样本 ≤0.135 ms，给原门槛约 3% 余量；它是选优目标，
+**不改变原评分标准**。若有明确收益，再采用并验证所有 Step 10 形状及完整套件。
+目前生产内核 SHA256 和正式全量状态不变，仍不能宣称稳定通过。
+
 ## 前轮结果：step10_mma_unroll4.iR07fS，固定展开后没有性能收益
 
 数据：[summary](results_b300/step10_mma_unroll4.iR07fS/step10/summary.csv)、

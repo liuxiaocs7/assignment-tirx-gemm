@@ -21,7 +21,12 @@ TC active cycles are 91.85% of SM-active time and 75.69% of elapsed time; L2/DRA
 throughput is 22.61%/10.73%. These support investigating utilization gaps, but
 do not establish a specific cause or a stable performance pass. No GPU rerun
 is needed to recover this report. Production and CUDA-event timing are unchanged.
-All **510 local tool/source-generation checks pass** (259.58 s); they do not
+The next probe tests two TMEM accumulator slots per consumer, using the existing
+N128/EPI32 single-buffer variant as its direct control. Two N128 accumulators
+per consumer fit the existing 512-column TMEM allocation and let the next tile
+compute while writeback reads the previous tile. This is an unmeasured experiment,
+not a production optimization; see RUNNING.md for the explicit comparison command.
+All **530 local tool/source-generation checks pass** (284.63 s); they do not
 replace GPU correctness and timing validation of the adopted implementation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.

@@ -1,8 +1,8 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
 Step 10 has adopted B-first TMA requests but still crosses the 4096 limit.
-The default measures only production baseline. Fixed-unroll MMA probes found
-no useful gain; profile_hardware.py collects counters for the next diagnosis.
+The default tests two TMEM accumulator buffers against the measured narrow-N
+single-buffer control. Fixed-unroll MMA probes found no useful gain.
 Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
@@ -40,11 +40,11 @@ STEP_VARIANTS = {
          "warp_release", "paired_tmem_loads", "epilogue_depth3", "epilogue_double_buffer",
          "role_registers", "tma_b_first", "n_tile_128", "n128_epi32", "n128_epi32_depth5",
          "epilogue_32", "split_tma", "mma_batch", "mma_batch_no_unroll",
-         "mma_unroll4", "mma_batch_unroll4"),
+         "mma_unroll4", "mma_batch_unroll4", "n128_tmem_double_buffer"),
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline",)}
+                         10: ("baseline", "n128_tmem_double_buffer")}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -63,7 +63,8 @@ EXPERIMENT_CONTROLS = {**{v: "cache_tmem_base" for v in CACHE_EXPERIMENTS},
                        "n128_epi32": "n_tile_128",
                        "n128_epi32_depth5": "n128_epi32",
                        "mma_batch_no_unroll": "mma_batch",
-                       "mma_batch_unroll4": "mma_unroll4"}
+                       "mma_batch_unroll4": "mma_unroll4",
+                       "n128_tmem_double_buffer": "n128_epi32"}
 NARROW_N_VARIANTS = ("n_tile_128", "n128_epi32", "n128_epi32_depth5")
 DEPTH3_VARIANTS = ("balanced_depth3", "balanced_depth3_epi128")
 # K=1/3/5 stages covers shorter-than-ring, odd complete ring, and partial
@@ -88,6 +89,10 @@ VERIFICATION_SHAPES = {
     "mma_batch_no_unroll": ((4096, 3072, 64), (4096, 3072, 256), (4096, 3072, 320)),
     "mma_unroll4": ((4096, 3072, 64), (4096, 3072, 192), (4096, 3072, 256), (4096, 3072, 320)),
     "mma_batch_unroll4": ((4096, 3072, 64), (4096, 3072, 192), (4096, 3072, 256), (4096, 3072, 320)),
+    # 192 narrow tiles / 64 clusters = three tiles per cluster: slot 0 is
+    # reused after slot 1. K=64/192/256/320 crosses different input-ring phases.
+    "n128_tmem_double_buffer": ((4096, 3072, 64), (4096, 3072, 192),
+                                 (4096, 3072, 256), (4096, 3072, 320)),
 }
 
 
@@ -212,6 +217,50 @@ def pair_tmem_loads(source):
                     Tx.cast(Dreg_f16[col:col + 2 * TMEM_LD_N], Dreg[:])
 '''
     return replace_once(source, before, after)
+
+
+def double_buffer_tmem(source):
+    """Two independently fenced accumulator slots per narrow-N consumer.
+
+    Each slot owns a ready/free barrier. MMA may start tile t+1 in the other
+    slot while writeback reads tile t, but tile t+2 must await that slot's
+    readers. Input-ring reuse still waits for both MMA consumers as before.
+    """
+    if "    MMA_M, MMA_N = 256, 128\n" not in source or "    EPI_N = 32\n" not in source:
+        raise ValueError("TMEM double buffering requires the n128_epi32 control")
+    source = replace_once(source, "    NUM_CONSUMER = 2\n",
+                          "    NUM_CONSUMER = 2\n    TMEM_BUFFERS = 2\n")
+    for before, after in (
+        ("mma2ld = TCGen05Bar(pool, NUM_CONSUMER)", "mma2ld = TCGen05Bar(pool, TMEM_BUFFERS * NUM_CONSUMER)"),
+        ("ld2mma = MBarrier(pool, NUM_CONSUMER)", "ld2mma = MBarrier(pool, TMEM_BUFFERS * NUM_CONSUMER)"),
+        ("ld_phase = PipelineState(1)", "ld_phase = PipelineState(TMEM_BUFFERS)"),
+        ("wb_phase = PipelineState(1)", "wb_phase = PipelineState(TMEM_BUFFERS)"),
+        ("ld2mma.wait(warp_id, ld_phase.phase)",
+         "ld2mma.wait(ld_phase.stage * NUM_CONSUMER + warp_id, ld_phase.phase)"),
+        ("tmem[:, warp_id * MMA_N:(warp_id + 1) * MMA_N]",
+         "tmem[:, (ld_phase.stage * NUM_CONSUMER + warp_id) * MMA_N:(ld_phase.stage * NUM_CONSUMER + warp_id + 1) * MMA_N]"),
+        ("mma2ld.arrive(warp_id, cta_group=CTA_GROUP, cta_mask=3)",
+         "mma2ld.arrive(ld_phase.stage * NUM_CONSUMER + warp_id, cta_group=CTA_GROUP, cta_mask=3)"),
+        ("mma2ld.wait(wg_id, wb_phase.phase)",
+         "mma2ld.wait(wb_phase.stage * NUM_CONSUMER + wg_id, wb_phase.phase)"),
+        ("tmem[:, wg_id * MMA_N + col:wg_id * MMA_N + col + TMEM_LD_N]",
+         "tmem[:, (wb_phase.stage * NUM_CONSUMER + wg_id) * MMA_N + col:(wb_phase.stage * NUM_CONSUMER + wg_id) * MMA_N + col + TMEM_LD_N]"),
+        ("ld2mma.arrive(wg_id, remote=0)",
+         "ld2mma.arrive(wb_phase.stage * NUM_CONSUMER + wg_id, remote=0)"),
+    ):
+        source = replace_once(source, before, after)
+    # Keep the current slot unchanged through wait, TMEM use and commit/release.
+    # Advance phase only after both slots, not after every output tile.
+    source = replace_once(source, "                            ld_phase.advance()\n", "")
+    source = replace_once(source,
+        "                            mma2ld.arrive(ld_phase.stage * NUM_CONSUMER + warp_id, cta_group=CTA_GROUP, cta_mask=3)\n",
+        "                            mma2ld.arrive(ld_phase.stage * NUM_CONSUMER + warp_id, cta_group=CTA_GROUP, cta_mask=3)\n"
+        "                            ld_phase.advance()\n")
+    source = replace_once(source, "                wb_phase.advance()\n", "")
+    return replace_once(source,
+        "                ld2mma.arrive(wb_phase.stage * NUM_CONSUMER + wg_id, remote=0)\n",
+        "                ld2mma.arrive(wb_phase.stage * NUM_CONSUMER + wg_id, remote=0)\n"
+        "                wb_phase.advance()\n")
 
 
 def double_buffer_epilogue(source):
@@ -420,6 +469,8 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if variant == "n128_tmem_double_buffer":
+        return double_buffer_tmem(variant_builder_source(source, step, "n128_epi32"))
     if variant in ("mma_batch", "mma_batch_no_unroll", "mma_unroll4", "mma_batch_unroll4"):
         for required in ("mma_tmem_base: T.let", "TILES_PER_CLUSTER =",
                          "    BLK_M, BLK_N, BLK_K = 128, 128, 64\n",
