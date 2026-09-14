@@ -1,0 +1,19 @@
+--- baseline.py
++++ tmem_n64_depth5.py
+@@ -27,8 +27,15 @@
+     # slot = stage * TMEM_SLOT_STRIDE + consumer; tmem_col = slot * MMA_N.
+     # Ready/free barriers and TMEM columns always refer to the same slot.
+     TMEM_SLOT_STRIDE = NUM_CONSUMER if TMEM_BUFFERS == 2 else 0
++    # Probe only: finer shared-B tiles; keep the 512-column TMEM allocation.
++    if TMEM_BUFFERS == 2:
++        BLK_N = 32
++        MMA_N = 64
++        TOTAL_TILES = (M // (MMA_M * NUM_CONSUMER)) * (N // MMA_N)
++        PIPE_DEPTH = 5
+     TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS
+-    CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER
++    CLUSTER_COUNT = (min(MAX_CLUSTERS, TOTAL_TILES) if TMEM_BUFFERS == 2
++                     else (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER)
+     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
+     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
+     D_SWIZZLE = SwizzleMode.SWIZZLE_64B_ATOM if NARROW_N else SwizzleMode.SWIZZLE_128B_ATOM

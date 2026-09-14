@@ -1,0 +1,6 @@
+2026-09-14T11:01:43+00:00
+dev-slurm
+0961ddc add results
+?? results_b300/step10_geometry.PywrmG/
+job=27561 step=0 step_gpus=2 visible=0
+size=4096 variants=baseline,tmem_max_clusters,tmem_n64,tmem_n64_depth5 l2_group=8 trials=8 warmup=10 repeat=30 seed=0

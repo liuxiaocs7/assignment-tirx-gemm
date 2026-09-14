@@ -1,0 +1,12 @@
+{
+  "step": 10,
+  "variant": "tmem_n64",
+  "shape": [
+    4096,
+    3072,
+    128
+  ],
+  "launches": 2,
+  "verified": true,
+  "timed": false
+}

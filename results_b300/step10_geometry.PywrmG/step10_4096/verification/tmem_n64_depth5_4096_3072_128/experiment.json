@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "tmem_n64_depth5",
+  "sources": [
+    {
+      "before_sha256": "a22992fec5416d20ab5682af0607f12bca10fe469ac99f4a24c3d92c20f2da2b",
+      "compiled_sha256": "a22992fec5416d20ab5682af0607f12bca10fe469ac99f4a24c3d92c20f2da2b"
+    }
+  ]
+}

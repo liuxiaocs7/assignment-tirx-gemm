@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "tmem_max_clusters",
+  "sources": [
+    {
+      "before_sha256": "d36a67538e45ce9cc50b621f2cb9eea827c69e146e0da37cabdd697e22cd9095",
+      "compiled_sha256": "d36a67538e45ce9cc50b621f2cb9eea827c69e146e0da37cabdd697e22cd9095"
+    }
+  ]
+}
