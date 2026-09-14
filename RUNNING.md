@@ -128,59 +128,38 @@ probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder�
 `step10_share_a.r7r3iv` 已完成下面的四版本实验，数值与计时均通过，但
 baseline 比历史同一二进制快约 19.8%，且单轮序列中存在明显漂移。现在先
 补齐运行状态再复测，不增加新候选，也不把本轮最小值当作优化成绩。
-沿用 `f029ed7` 即可，无需新实验代码。保持当前 Slurm 分配，在 B300 终端运行：
+即使在同一台机器、同一张 GPU 上，时钟、功耗和并发负载也可能变化；先按
+同机处理，用记录判断状态变化，不把“换机器”作为前提。保持当前 Slurm 分配，
+同步包含 [run_step10_state.sh](run_step10_state.sh) 的提交后，在 B300 终端运行：
 
 ```bash
-bash <<'SH'
-set -uo pipefail
-mkdir -p results_b300
-tirx_run=$(mktemp -d results_b300/step10_share_a_state.XXXXXX) || exit 1
-{
-  date -Is
-  hostname
-  git log -1 --oneline
-  printf 'job=%s step=%s job_gpus=%s step_gpus=%s visible=%s\n' \
-    "${SLURM_JOB_ID:-}" "${SLURM_STEP_ID:-}" "${SLURM_JOB_GPUS:-}" \
-    "${SLURM_STEP_GPUS:-}" "${CUDA_VISIBLE_DEVICES:-}"
-} > "$tirx_run/session.txt"
-uv run python -c 'import torch; i = torch.cuda.current_device(); p = torch.cuda.get_device_properties(i); print("logical_device:", i, "uuid:", getattr(p, "uuid", "unavailable"), "name:", p.name, "SMs:", p.multi_processor_count)' \
-  > "$tirx_run/cuda_device.txt" 2>&1
-nvidia-smi -q > "$tirx_run/gpu_before.txt" 2>&1
-nvidia-smi \
-  --query-gpu=timestamp,uuid,pstate,clocks.current.sm,clocks.current.memory,power.draw,power.limit,temperature.gpu,utilization.gpu \
-  --format=csv,nounits --loop-ms=200 \
-  > "$tirx_run/gpu_samples.csv" 2> "$tirx_run/gpu_samples.err" &
-tirx_monitor_pid=$!
-cleanup() {
-  kill "$tirx_monitor_pid" 2>/dev/null || true
-  wait "$tirx_monitor_pid" 2>/dev/null || true
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-# Timestamp log lines for coarse alignment with GPU samples; CUDA timing is unchanged.
-uv run python -u probe_persistent.py --steps 10 --size 4096 --trials 7 \
-  --variants tmem_share_a_depth6 --output "$tirx_run/step10" 2>&1 \
-  | while IFS= read -r tirx_line; do
-      printf '[%s] %s\n' "$(date -Is)" "$tirx_line"
-    done | tee "$tirx_run/step10.log"
-tirx_probe_exit=$?
-printf '%s\n' "$tirx_probe_exit" > "$tirx_run/probe_exitcode.txt"
-nvidia-smi -q > "$tirx_run/gpu_after.txt" 2>&1
-printf '结果目录：%s；退出码：%s\n' "$tirx_run" "$tirx_probe_exit"
-exit "$tirx_probe_exit"
-SH
+bash run_step10_state.sh
 ```
 
-`nvidia-smi -q` 保存驱动、UUID、功耗限制和时钟事件等可用字段；连续 CSV
-保存运行期间的状态。CUDA 设备 UUID 用来对应物理 GPU，不能仅靠逻辑序号 0
+脚本只运行一次原四版本 probe，沿用 trials=7、warmup=10、repeat=30，无需先
+跑全量 pytest。它不更改实验实现或正式内核，也不设置 GPU 时钟和功耗。
+`nvidia-smi -q` 保存驱动、UUID、功耗限制和时钟事件等可用字段；每 200 ms
+采集 GPU 状态，每 1 s 采集可见计算进程。CUDA 设备 UUID 用来对应物理 GPU，
+不能仅靠逻辑序号 0
 判断两次是否使用同一张卡。若采样命令不受支持，错误保存在 `gpu_samples.err`，
-不能把缺失状态解释成稳定。工具只读取状态，不锁频或调整功耗。
+进程查询失败保存在 `compute_processes.err`，不能把采集缺失解释成没有竞争。
+`probe_exitcode.txt` 保存 probe 自身退出码，`pipeline_exitcodes.txt` 另外记录
+时间戳进程和 tee 的状态；无论 probe 成功或失败，退出时都清理本次监控进程。
 
-这轮带监控的运行用于诊断；200 ms 采样、秒级日志时间戳不足以覆盖每个 kernel，
+这轮带监控的运行用于诊断；200 ms 采样和毫秒级日志接收时间不足以覆盖每个
+kernel，
 日志和监控也可能扰动进程间隔。保留所有样本，查看时间区间与状态是否共同变化，
-不要据单个快照直接断言降频。确定可比较条件后，再用下方原命令无监控复测候选。
+不要据单个快照直接断言降频。若没有捕获到状态变化但耗时仍漂移，再检查宿主
+发射间隔、缓存和调度等因素。确定可比较条件后，再用下方原命令无监控复测候选。
+
+结果目录会自动打印。分析时保留整个目录，至少需要 `step10/samples.json`、
+`step10/run.json`、`step10.log`、`gpu_samples.csv`、`compute_processes.csv`、
+各 `.err`、`gpu_before.txt`、`gpu_after.txt`、`cuda_device.txt`、`session.txt`
+和退出码文件；只看 summary 无法对应耗时与状态。
+
+包装脚本已通过 Bash 语法检查及六种本地模拟：正常完成、probe 失败、tee
+失败、时间戳进程失败、监控查询失败和 CUDA 设备检查失败。核对了退出码、
+原 probe 参数和监控清理；这些模拟未执行 GPU 命令，不属于 GPU 性能验证。
 
 ### 共享 A 与六级输入缓冲实验
 
