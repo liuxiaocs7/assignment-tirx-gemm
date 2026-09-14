@@ -1,0 +1,51 @@
+Code: 88b0b399205099a9f6bc88e42eceafd5c86de447; gemm_sha256=3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7
+GPU: NVIDIA B300 SXM6 AC; SMs: 148; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Separate builds; each experiment records its direct comparison control. Verify all outputs before interleaved CUDA-event timing.
+Verified step 10 / baseline
+Verified step 10 / n_tile_128
+Verified step 10 / n128_epi32
+Verified step 10 / n128_tmem_double_buffer
+Verified boundary Step 10 / n_tile_128 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / n_tile_128 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / n_tile_128 / (4096, 3072, 384) twice (untimed)
+Verified boundary Step 10 / n128_epi32 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / n128_epi32 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / n128_epi32 / (4096, 3072, 384) twice (untimed)
+Verified boundary Step 10 / n128_tmem_double_buffer / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / n128_tmem_double_buffer / (4096, 3072, 192) twice (untimed)
+Verified boundary Step 10 / n128_tmem_double_buffer / (4096, 3072, 256) twice (untimed)
+Verified boundary Step 10 / n128_tmem_double_buffer / (4096, 3072, 320) twice (untimed)
+Trial 1: step 10 / baseline: 0.138799 ms
+Trial 1: step 10 / n_tile_128: 0.140985 ms
+Trial 1: step 10 / n128_epi32: 0.139249 ms
+Trial 1: step 10 / n128_tmem_double_buffer: 0.137650 ms
+Trial 2: step 10 / baseline: 0.137051 ms
+Trial 2: step 10 / n128_tmem_double_buffer: 0.135456 ms
+Trial 2: step 10 / n128_epi32: 0.137591 ms
+Trial 2: step 10 / n_tile_128: 0.140382 ms
+Trial 3: step 10 / n128_epi32: 0.138977 ms
+Trial 3: step 10 / n128_tmem_double_buffer: 0.137197 ms
+Trial 3: step 10 / baseline: 0.138114 ms
+Trial 3: step 10 / n_tile_128: 0.139927 ms
+Trial 4: step 10 / n128_epi32: 0.138810 ms
+Trial 4: step 10 / n_tile_128: 0.140251 ms
+Trial 4: step 10 / baseline: 0.137947 ms
+Trial 4: step 10 / n128_tmem_double_buffer: 0.137142 ms
+Trial 5: step 10 / baseline: 0.138197 ms
+Trial 5: step 10 / n_tile_128: 0.140170 ms
+Trial 5: step 10 / n128_epi32: 0.138639 ms
+Trial 5: step 10 / n128_tmem_double_buffer: 0.137376 ms
+Trial 6: step 10 / baseline: 0.137845 ms
+Trial 6: step 10 / n128_tmem_double_buffer: 0.137312 ms
+Trial 6: step 10 / n128_epi32: 0.138894 ms
+Trial 6: step 10 / n_tile_128: 0.139990 ms
+Trial 7: step 10 / n128_epi32: 0.138610 ms
+Trial 7: step 10 / n128_tmem_double_buffer: 0.137516 ms
+Trial 7: step 10 / baseline: 0.138340 ms
+Trial 7: step 10 / n_tile_128: 0.140800 ms
+step variant         median_ms    min_ms    max_ms paired_speedup vs_cache control                   vs_control limit_ms status
+  10 baseline         0.138114  0.137051  0.138799          1.000      n/a baseline                       1.000 0.139100 PASS
+  10 n_tile_128       0.140251  0.139927  0.140985          0.984      n/a baseline                       0.984 0.139100 SLOW
+  10 n128_epi32       0.138810  0.137591  0.139249          0.996      n/a n_tile_128                     1.011 0.139100 PASS
+  10 n128_tmem_double_buffer  0.137312  0.135456  0.137650          1.006      n/a n128_epi32                     1.012 0.139100 PASS
+Saved results_b300/step10_tmem_double.DYMgCt/step10/summary.csv; SLOW is a measured result, not a tool error.

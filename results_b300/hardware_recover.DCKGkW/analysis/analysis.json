@@ -1,0 +1,213 @@
+{
+  "status": "analyzed",
+  "diagnostic_only": true,
+  "source_directory": "/home/lcpu/27058528/assignment-tirx-gemm/results_b300/step10_hardware.Mosdpx/profile",
+  "analyzer": {
+    "git_revision": "88b0b399205099a9f6bc88e42eceafd5c86de447",
+    "git_dirty": false,
+    "gemm_kernels_sha256": "3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7",
+    "utils_sha256": "af9cc13549f0726e295a5ae65c91f580c7728d2c795e53e0ffe3547023f38d30",
+    "benchmark_sha256": "37d91ddbec1e74682eec22f7c64abc2b606095d04ec947aa031d889b253ef009",
+    "benchmark_diagnostics_sha256": "5db36328f88d5a5758659814bdec098cf0e5ac20823ac5b713b0ef41d0e06f74",
+    "compiler": "nvrtc",
+    "ptxas_reg_level": "10",
+    "TVM_CUDA_PTXAS_EXTRA_OPTS": "",
+    "TVM_CUDA_NVRTC_EXTRA_OPTS": "",
+    "TVM_CUDA_NVCC_NO_FAST_MATH": "",
+    "TVM_KERNEL_DEBUG": "",
+    "TVM_KERNEL_DUMP": "",
+    "CUDA_LAUNCH_BLOCKING": "",
+    "CUDA_VISIBLE_DEVICES": "0",
+    "step": 10,
+    "shape": [
+      4096,
+      4096,
+      4096
+    ],
+    "seed": 0,
+    "warmup": 10,
+    "diagnostic_only": true,
+    "profile_hardware_sha256": "d9f62dcd51a4da9f675901ef05f398ea1b992c5db781bb1b9b2dec7802b0944e"
+  },
+  "collected": {
+    "git_revision": "880a361604d40a74184e4eac71e47ff124af0ad1",
+    "git_dirty": true,
+    "gemm_kernels_sha256": "3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7",
+    "utils_sha256": "af9cc13549f0726e295a5ae65c91f580c7728d2c795e53e0ffe3547023f38d30",
+    "benchmark_sha256": "37d91ddbec1e74682eec22f7c64abc2b606095d04ec947aa031d889b253ef009",
+    "benchmark_diagnostics_sha256": "5db36328f88d5a5758659814bdec098cf0e5ac20823ac5b713b0ef41d0e06f74",
+    "compiler": "nvrtc",
+    "ptxas_reg_level": "10",
+    "TVM_CUDA_PTXAS_EXTRA_OPTS": "",
+    "TVM_CUDA_NVRTC_EXTRA_OPTS": "",
+    "TVM_CUDA_NVCC_NO_FAST_MATH": "",
+    "TVM_KERNEL_DEBUG": "",
+    "TVM_KERNEL_DUMP": "",
+    "CUDA_LAUNCH_BLOCKING": "",
+    "CUDA_VISIBLE_DEVICES": "0",
+    "step": 10,
+    "shape": [
+      4096,
+      4096,
+      4096
+    ],
+    "seed": 0,
+    "warmup": 10,
+    "diagnostic_only": true,
+    "profile_hardware_sha256": "ddf434258dadb3e4ec5a7654ac8c063951d33e2248068f5a5a16b63d31cf5a94",
+    "status": "failed",
+    "replay_mode": "kernel",
+    "clock_control": "none",
+    "cache_control": "none",
+    "replay_caveat": "No cache flush: metric values may differ between replay passes. Profiling perturbs execution; no PASS/SLOW scoring.",
+    "commands": [
+      {
+        "argv": [
+          "/usr/local/cuda/bin/ncu",
+          "--version"
+        ],
+        "returncode": 0
+      },
+      {
+        "argv": [
+          "/usr/local/cuda/bin/ncu",
+          "--help"
+        ],
+        "returncode": 0
+      },
+      {
+        "argv": [
+          "/usr/local/cuda/bin/ncu",
+          "--list-sections"
+        ],
+        "returncode": 0
+      },
+      {
+        "argv": [
+          "/usr/local/cuda/bin/ncu",
+          "--profile-from-start",
+          "off",
+          "--launch-count",
+          "1",
+          "--kernel-name-base",
+          "function",
+          "--kernel-name",
+          "kernel_kernel",
+          "--replay-mode",
+          "kernel",
+          "--clock-control",
+          "none",
+          "--cache-control",
+          "none",
+          "--pipeline-boost-state",
+          "dynamic",
+          "--section",
+          "SpeedOfLight",
+          "--section",
+          "ComputeWorkloadAnalysis",
+          "--section",
+          "MemoryWorkloadAnalysis",
+          "--section",
+          "SchedulerStats",
+          "--section",
+          "WarpStateStats",
+          "--section",
+          "LaunchStats",
+          "--section",
+          "Occupancy",
+          "--export",
+          "/home/lcpu/27058528/assignment-tirx-gemm/results_b300/step10_hardware.Mosdpx/profile/step10_4096",
+          "/home/lcpu/27058528/assignment-tirx-gemm/.venv/bin/python3",
+          "-u",
+          "/home/lcpu/27058528/assignment-tirx-gemm/profile_hardware.py",
+          "--_worker",
+          "--output",
+          "/home/lcpu/27058528/assignment-tirx-gemm/results_b300/step10_hardware.Mosdpx/profile"
+        ],
+        "returncode": 0
+      },
+      {
+        "argv": [
+          "/usr/local/cuda/bin/ncu",
+          "--import",
+          "/home/lcpu/27058528/assignment-tirx-gemm/results_b300/step10_hardware.Mosdpx/profile/step10_4096.ncu-rep",
+          "--page",
+          "raw",
+          "--csv",
+          "--print-kernel-base",
+          "function"
+        ],
+        "returncode": 0
+      }
+    ],
+    "ncu": "/usr/local/cuda/bin/ncu",
+    "ncu_version": "NVIDIA (R) Nsight Compute Command Line Profiler\nCopyright (c) 2018-2025 NVIDIA Corporation\nVersion 2025.3.1.0 (build 36398880) (public-release)",
+    "sections": [
+      "SpeedOfLight",
+      "ComputeWorkloadAnalysis",
+      "MemoryWorkloadAnalysis",
+      "SchedulerStats",
+      "WarpStateStats",
+      "LaunchStats",
+      "Occupancy"
+    ],
+    "missing_sections": [],
+    "pipeline_boost_state": "dynamic",
+    "report": "step10_4096.ncu-rep",
+    "error": "expected exactly one kernel_kernel result in NCU raw export"
+  },
+  "worker": {
+    "git_revision": "880a361604d40a74184e4eac71e47ff124af0ad1",
+    "git_dirty": true,
+    "gemm_kernels_sha256": "3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7",
+    "utils_sha256": "af9cc13549f0726e295a5ae65c91f580c7728d2c795e53e0ffe3547023f38d30",
+    "benchmark_sha256": "37d91ddbec1e74682eec22f7c64abc2b606095d04ec947aa031d889b253ef009",
+    "benchmark_diagnostics_sha256": "5db36328f88d5a5758659814bdec098cf0e5ac20823ac5b713b0ef41d0e06f74",
+    "compiler": "nvrtc",
+    "ptxas_reg_level": "10",
+    "TVM_CUDA_PTXAS_EXTRA_OPTS": "",
+    "TVM_CUDA_NVRTC_EXTRA_OPTS": "",
+    "TVM_CUDA_NVCC_NO_FAST_MATH": "",
+    "TVM_KERNEL_DEBUG": "",
+    "TVM_KERNEL_DUMP": "",
+    "CUDA_LAUNCH_BLOCKING": "",
+    "CUDA_VISIBLE_DEVICES": "0",
+    "step": 10,
+    "shape": [
+      4096,
+      4096,
+      4096
+    ],
+    "seed": 0,
+    "warmup": 10,
+    "diagnostic_only": true,
+    "profile_hardware_sha256": "ddf434258dadb3e4ec5a7654ac8c063951d33e2248068f5a5a16b63d31cf5a94",
+    "status": "verified_after_profile",
+    "target": "{\"kind\":\"cuda\",\"tag\":\"\",\"keys\":[\"cuda\",\"gpu\"],\"max_num_threads\":1024,\"thread_warp_size\":32,\"arch\":\"sm_103a\"}",
+    "gpu": "NVIDIA B300 SXM6 AC",
+    "sm_count": 148,
+    "tvm": "0.26.0",
+    "torch": "2.14.0+cu130",
+    "cuda": "13.0"
+  },
+  "raw_sha256": "2cbb697fcac225ddece581efc74ec4eb8bb05587448ffacb4010383e863591a7",
+  "report_format": "wide",
+  "report_check": {
+    "kernel": "kernel_kernel",
+    "launches": 1,
+    "numeric_counter_rows": 371
+  },
+  "launch": {
+    "ID": "0",
+    "Process ID": "2139037",
+    "Process Name": "python3.12",
+    "Host Name": "127.0.0.1",
+    "Kernel Name": "kernel_kernel",
+    "Context": "1",
+    "Stream": "7",
+    "Block Size": "(384, 1, 1)",
+    "Grid Size": "(128, 1, 1)",
+    "Device": "0",
+    "CC": "10.3"
+  }
+}
