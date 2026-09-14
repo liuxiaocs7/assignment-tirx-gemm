@@ -1,0 +1,4 @@
+Step 10 / (4096, 4096, 4096): 2/8 samples within 0.139100 ms
+  min=0.136766 median=0.139725 max=0.140390 ms; worst margin=-0.928%
+  samples: 0.140390 SLOW, 0.140095 SLOW, 0.140028 SLOW, 0.136766 PASS, 0.137115 PASS, 0.139505 SLOW, 0.139797 SLOW, 0.139653 SLOW
+Observed samples: 2/8 PASS. This is a diagnostic, not a replacement for full pytest acceptance.

@@ -1,0 +1,1 @@
+command=1 tee=0
