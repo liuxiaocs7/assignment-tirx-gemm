@@ -1,0 +1,11 @@
+{
+  "initial_registers": 167,
+  "threads": 384,
+  "requested_registers": 61440,
+  "budgets": [
+    208,
+    208,
+    64
+  ],
+  "valid": true
+}

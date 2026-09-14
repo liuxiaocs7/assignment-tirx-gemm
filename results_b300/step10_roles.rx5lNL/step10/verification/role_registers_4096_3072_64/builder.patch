@@ -1,0 +1,14 @@
+--- baseline.py
++++ role_registers.py
+@@ -48,6 +48,11 @@
+         Bsmem = pool.alloc((PIPE_DEPTH, BLK_N, BLK_K), b_type, layout=B_layout)
+         Dsmem = pool.alloc((NUM_CONSUMER, BLK_M, EPI_N), d_type, layout=D_layout)
+         pool.commit()
++
++        if wg_id == 2:
++            T.ptx.setmaxnreg(False, 64)
++        else:
++            T.ptx.setmaxnreg(True, 208)
+ 
+         # These helpers elect CTA thread zero internally; keep them at CTA scope.
+         tma2mma.init(1)

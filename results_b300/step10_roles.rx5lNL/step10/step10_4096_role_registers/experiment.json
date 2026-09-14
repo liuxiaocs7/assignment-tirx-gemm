@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "role_registers",
+  "sources": [
+    {
+      "before_sha256": "bac1934c3c750ca7299e0af2dfbad8845e60dbaf8c4d798fe84da35d48d10078",
+      "compiled_sha256": "bac1934c3c750ca7299e0af2dfbad8845e60dbaf8c4d798fe84da35d48d10078"
+    }
+  ]
+}

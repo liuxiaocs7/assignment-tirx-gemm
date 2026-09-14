@@ -1,0 +1,23 @@
+--- baseline.py
++++ tma_b_first.py
+@@ -85,16 +85,16 @@
+ 
+         @T.inline
+         def tma_load(k_st):
++            Tx.copy_async(Bsmem[tma_phase.stage, :, :],
++                          B[n_st:n_st + BLK_N, k_st:k_st + BLK_K],
++                          dispatch="tma_auto", cta_group=CTA_GROUP,
++                          mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
+             for consumer in T.unroll(NUM_CONSUMER):
+                 m_consumer = T.meta_var(m_st + consumer * MMA_M)
+                 Tx.copy_async(Asmem[tma_phase.stage, consumer, :, :],
+                               A[m_consumer:m_consumer + BLK_M, k_st:k_st + BLK_K],
+                               dispatch="tma_auto", cta_group=CTA_GROUP,
+                               mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
+-            Tx.copy_async(Bsmem[tma_phase.stage, :, :],
+-                          B[n_st:n_st + BLK_N, k_st:k_st + BLK_K],
+-                          dispatch="tma_auto", cta_group=CTA_GROUP,
+-                          mbar=tma2mma_cta0.ptr_to([tma_phase.stage]))
+ 
+         if wg_id == 2:
+             if warp_id == 3:
