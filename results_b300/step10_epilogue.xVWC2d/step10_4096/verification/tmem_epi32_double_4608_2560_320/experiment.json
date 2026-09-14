@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "tmem_epi32_double",
+  "sources": [
+    {
+      "before_sha256": "c77b52e195fc5fd65c6eac55779a31236c90e3a35b11ac567df4fc300cdb44bf",
+      "compiled_sha256": "c77b52e195fc5fd65c6eac55779a31236c90e3a35b11ac567df4fc300cdb44bf"
+    }
+  ]
+}

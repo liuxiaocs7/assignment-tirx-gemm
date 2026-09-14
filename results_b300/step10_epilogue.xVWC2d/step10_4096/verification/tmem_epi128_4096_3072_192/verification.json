@@ -1,0 +1,12 @@
+{
+  "step": 10,
+  "variant": "tmem_epi128",
+  "shape": [
+    4096,
+    3072,
+    192
+  ],
+  "launches": 2,
+  "verified": true,
+  "timed": false
+}

@@ -1,0 +1,49 @@
+--- baseline.py
++++ tmem_epi32_double.py
+@@ -27,12 +27,13 @@
+     # slot = stage * TMEM_SLOT_STRIDE + consumer; tmem_col = slot * MMA_N.
+     # Ready/free barriers and TMEM columns always refer to the same slot.
+     TMEM_SLOT_STRIDE = NUM_CONSUMER if TMEM_BUFFERS == 2 else 0
++    EPI_BUFFERS = 2 if TMEM_BUFFERS == 2 else 1
+     TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS
+     CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER
+     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
+     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
+     D_SWIZZLE = SwizzleMode.SWIZZLE_64B_ATOM if NARROW_N else SwizzleMode.SWIZZLE_128B_ATOM
+-    D_layout = mma_shared_layout(d_type, D_SWIZZLE, (NUM_CONSUMER, BLK_M, EPI_N))
++    D_layout = mma_shared_layout(d_type, D_SWIZZLE, (NUM_CONSUMER, EPI_BUFFERS, BLK_M, EPI_N))
+ 
+     @T.prim_func
+     def kernel(
+@@ -56,7 +57,7 @@
+         pool.move_base_to(1024)
+         Asmem = pool.alloc((PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K), a_type, layout=A_layout)
+         Bsmem = pool.alloc((PIPE_DEPTH, BLK_N, BLK_K), b_type, layout=B_layout)
+-        Dsmem = pool.alloc((NUM_CONSUMER, BLK_M, EPI_N), d_type, layout=D_layout)
++        Dsmem = pool.alloc((NUM_CONSUMER, EPI_BUFFERS, BLK_M, EPI_N), d_type, layout=D_layout)
+         pool.commit()
+ 
+         # These helpers elect CTA thread zero internally; keep them at CTA scope.
+@@ -165,15 +166,18 @@
+                     wb_phase.advance()
+                 for i in T.unroll(MMA_N // EPI_N):
+                     col = T.meta_var(i * EPI_N)
+-                    Tx.copy(Dsmem[wg_id, warp_id * 32 + lane_id, :], Dreg_f16[col:col + EPI_N])
++                    Tx.copy(Dsmem[wg_id, i % EPI_BUFFERS, warp_id * 32 + lane_id, :], Dreg_f16[col:col + EPI_N])
+                     T.ptx.fence.proxy_async("shared::cta")
+                     T.cuda.warpgroup_sync(wg_id + 10)
+                     if warp_id == 0:
+-                        if T.filter(lane_id, T.ptx.elect_sync()):
++                        if T.filter(lane_id, lane_id == 0 if EPI_BUFFERS == 2 else T.ptx.elect_sync()):
+                             Tx.copy_async(D[m_out:m_out + BLK_M, n_out + col:n_out + col + EPI_N],
+-                                          Dsmem[wg_id, :, :], dispatch="tma_auto")
++                                          Dsmem[wg_id, i % EPI_BUFFERS, :, :], dispatch="tma_auto")
+                             T.ptx.cp_async.bulk.commit_group()
+-                            T.ptx.cp_async.bulk.wait_group(0)
++                            if EPI_BUFFERS == 1 or i == MMA_N // EPI_N - 1:
++                                T.ptx.cp_async.bulk.wait_group(0)
++                            elif i > 0:
++                                T.ptx.cp_async.bulk.wait_group(1)
+                     T.cuda.warpgroup_sync(wg_id + 10)
+                 tile_scheduler.next_tile()
+ 

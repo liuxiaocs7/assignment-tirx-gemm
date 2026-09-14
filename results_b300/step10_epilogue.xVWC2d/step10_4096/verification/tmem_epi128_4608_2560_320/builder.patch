@@ -1,0 +1,17 @@
+--- baseline.py
++++ tmem_epi128.py
+@@ -27,11 +27,13 @@
+     # slot = stage * TMEM_SLOT_STRIDE + consumer; tmem_col = slot * MMA_N.
+     # Ready/free barriers and TMEM columns always refer to the same slot.
+     TMEM_SLOT_STRIDE = NUM_CONSUMER if TMEM_BUFFERS == 2 else 0
++    if TMEM_BUFFERS == 2:
++        EPI_N = 128
+     TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS
+     CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER
+     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
+     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
+-    D_SWIZZLE = SwizzleMode.SWIZZLE_64B_ATOM if NARROW_N else SwizzleMode.SWIZZLE_128B_ATOM
++    D_SWIZZLE = SwizzleMode.SWIZZLE_64B_ATOM if EPI_N == 32 else SwizzleMode.SWIZZLE_128B_ATOM
+     D_layout = mma_shared_layout(d_type, D_SWIZZLE, (NUM_CONSUMER, BLK_M, EPI_N))
+ 
+     @T.prim_func
