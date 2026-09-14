@@ -28,9 +28,10 @@
 余量仅 0.038%。所有数值校验通过，一次全过尚不足以证明稳定达标。
 正式 4096 的 CUDA/cubin/编译参数与 B-first probe 一致；两个提交之间生产源码未变。
 同目录独立 Step 10 benchmark 的 20 个样本虽全过，4096 最慢样本余量仅 0.076%。
-最新 `step10_mma_batch.13Q2qL` 中，batch 的同轮加速中位数为 0.451%，最慢样本
-余量 0.262%；SASS 同时把自动展开从四级改成八级，且每级 R2UR 未减少。关闭展开
-没有明显额外收益，两项暂不采用；下一轮双方固定展开四次，分离这个编译变化。
+最新 `step10_mma_unroll4.iR07fS` 已消除展开差异：`mma_unroll4` 的 cubin/SASS
+与 baseline 完全相同；同为四级展开的 batch 将主循环 R2UR 从 63 降为 22，
+却没有加速（对直接对照的同轮加速比 0.998207×）。两项均不采用，生产代码未变。
+下一步采正式内核的 Nsight Compute 硬件计数器，区分计算、供数与调度瓶颈。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
@@ -38,35 +39,47 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 详见 [最新验证和对照记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **477 项本地通过，249.46 s**；
+（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调、角色插桩及硬件采集入口，
+共 **494 项本地通过，258.27 s**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：Step 10 固定 MMA 展开因子的对照
+### 当前进度：采集正式 Step 10 的硬件计数器
 
-同步本轮工具提交后，运行以下一个 probe；当前生产内核没有新增未实测的改动。
+同步本轮工具提交后运行以下命令。需要支持 B300 的 Nsight Compute `ncu`；
+沿用当前 Slurm GPU 分配和 Python 环境，无需改编译选项。
 
 ```bash
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/step10_mma_unroll4.XXXXXX)
-uv run python -u probe_persistent.py --steps 10 --size 4096 \
-  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+tirx_run=$(mktemp -d results_b300/step10_hardware.XXXXXX)
+uv run python -u profile_hardware.py \
+  --output "$tirx_run/profile" 2>&1 | tee "$tirx_run/profile.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-默认比较 `baseline`、`mma_unroll4`、`mma_batch_unroll4`。两项新实验都只给 MMA
-K 循环加 `#pragma unroll 4`，后者再使用已验算的四条 K16 batch 发射块，直接对照
-`mma_unroll4`。保留 baseline 检查显式 pragma 本身是否改变原先自动展开的结果。
-原 builder/TIR、数学运算、同步、输入和写回保持不变；实际展开因子仍需看 SASS。
-计时前对矩形 K=64/192/256/320 各验算两次，再交错计时五轮。K=64 没有循环，
-pragma 不起作用；K=192/320 验证展开后的短循环和尾部。历史 batch 比较可通过
-`--variants mma_batch_no_unroll` 显式运行。
-本地源码检查不能证明性能收益，必须等 B300 数值与计时结果。
-详见 [最新复测与实验依据](B300_VALIDATION.md)。
+工具先检查 `ncu --version` 和可用 section；从 PATH、`CUDA_PATH/bin/ncu`
+（默认 `/usr/local/cuda/bin/ncu`）查找，也可添加 `--ncu /实际路径/ncu`。
+编译并首次运行正式 `hgemm_v10`，移除编译 hook，检查结果并预热十次，再只采集一个 GEMM。
+采集前将输出置为 NaN，采集后重新验算，防止误用预热的输出。cuBLAS 验证位于
+profiler 区间外；过滤器限定 `kernel_kernel`，原始报告也会检查只有一个内核结果。
+
+`profile/` 保存 `run.json`、`worker.json`、编译 CUDA/cubin/资源/SASS、`ncu.log`、
+`raw.csv`、`details.txt` 及 `.ncu-rep` 或 `.nsight-cuprof` 报告。采集项包括
+SpeedOfLight、Compute/MemoryWorkloadAnalysis、SchedulerStats、WarpStateStats、
+LaunchStats、Occupancy；缺少的 section 会明确记录。使用 kernel replay，显式设置
+`--clock-control none --cache-control none`；版本支持时设置动态 Tensor Core boost。
+缓存不刷新时，多 pass 的指标可能受之前的工作影响；profiling 本身也会扰动执行，
+**报告耗时不能当作评分或稳定通过的证据**。
+
+缺少 `ncu`、GPU 不受支持、`ERR_NVGPUCTRPERM`、空报告或验证失败时返回非零，
+保存已有日志，不修改驱动权限。缺少 ncu 时可加载平台提供的 Nsight Compute module
+或指定已有安装路径；计数器权限错误需平台管理员开放访问，保留目录供判断。
+当前 probe 默认只运行 baseline；历史展开比较用 `--variants mma_batch_unroll4`
+显式选取。详见 [最新复测与诊断依据](B300_VALIDATION.md)。
 
 已采用的 Step 6/7 K128、Step 8 等待提示/基址缓存、Step 10 基址缓存/均衡网格/B 优先
 拒绝重复应用；依赖旧基线的历史组合需在对应历史提交重放。profiling 使用当前

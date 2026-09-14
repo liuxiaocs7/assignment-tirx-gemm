@@ -55,7 +55,8 @@ def test_mma_unroll_control_changes_only_pragma_and_four_calls(arch, shape, tmp_
 
 def test_fixed_factor_uses_original_emission_as_direct_control():
     variants = ['baseline', 'mma_unroll4', 'mma_batch_unroll4']
-    assert select_variants(10) == select_variants(10, ['mma_batch_unroll4']) == variants
+    assert select_variants(10) == ['baseline']
+    assert select_variants(10, ['mma_batch_unroll4']) == variants
     cases = [dict(step=10, size=4096, variant=v, samples_ms=s) for v, s in
              zip(variants, [[10, 20], [8, 16], [4, 8]])]
     rows = summarize_with_cache_control(cases, {(10, 4096, 4096, 4096): 1}, 1.3)

@@ -1,0 +1,214 @@
+"""Exercise the profiler boundary and failure handling without a CUDA device."""
+
+from contextlib import contextmanager, nullcontext
+import csv
+import io
+import json
+from pathlib import Path
+import subprocess
+import sys
+from types import SimpleNamespace
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parents[1]))
+import profile_hardware as hardware
+
+
+def raw_csv(kernel="kernel_kernel", ids=(0,), value="72.5"):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "Process ID", "Kernel Name", "Metric Name", "Metric Value"])
+    for ident in ids:
+        writer.writerow([ident, "123", kernel, "sm__throughput.avg.pct_of_peak_sustained_elapsed", value])
+    return output.getvalue()
+
+
+@pytest.mark.parametrize("failure", [None, "launch", "synchronize"])
+def test_worker_profiles_only_warmed_production_launch_and_stops_on_failure(tmp_path, monkeypatch, failure):
+    events = []
+    state = dict(active=False, launches=0, captured=False)
+    A, B = object(), object()
+    output = SimpleNamespace(fill_=lambda value: events.append("fill"))
+
+    def launch(*args):
+        assert args == (A, B, output)
+        state["launches"] += 1
+        events.append("profiled_launch" if state["active"] else "launch")
+        if state["active"]:
+            assert not state["captured"]
+            assert state["launches"] == 12  # first compile/verify + ten warmups
+            if failure == "launch":
+                raise RuntimeError("fixture launch failed")
+
+    def start():
+        assert not state["active"] and not state["captured"]
+        state["active"] = True
+        events.append("start")
+
+    def stop():
+        assert state["active"]
+        state["active"] = False
+        events.append("stop")
+
+    def sync():
+        events.append("sync")
+        if state["active"] and failure == "synchronize":
+            raise RuntimeError("fixture synchronize failed")
+
+    def verify(*args):
+        assert args == (output, A, B)
+        assert not state["active"] and not state["captured"]
+        events.append("verify")
+
+    device = SimpleNamespace(name="B300 fixture", multi_processor_count=148)
+    cuda = SimpleNamespace(is_available=lambda: True, current_device=lambda: 0,
+                           get_device_properties=lambda index: device, synchronize=sync,
+                           manual_seed_all=lambda seed: None, profiler=SimpleNamespace(start=start, stop=stop))
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(
+        cuda=cuda, manual_seed=lambda seed: None, __version__="fixture", version=SimpleNamespace(cuda="13.0")))
+    kernel = object()
+    gemm = SimpleNamespace(SM_COUNT=0)
+
+    def builder(*shape):
+        assert shape == (4096,) * 3 and gemm.SM_COUNT == 148
+        return kernel
+
+    gemm.hgemm_v10 = builder
+    monkeypatch.setitem(sys.modules, "gemm_kernels", gemm)
+
+    def compile_kernel(mod, target, tir_pipeline):
+        assert mod == {"main": kernel} and tir_pipeline == "tirx" and state["captured"]
+        return SimpleNamespace(mod=launch)
+
+    monkeypatch.setitem(sys.modules, "tvm", SimpleNamespace(
+        compile=compile_kernel, IRModule=lambda value: value, __version__="fixture"))
+    monkeypatch.setitem(sys.modules, "utils", SimpleNamespace(
+        blackwell_target=nullcontext, prepare_data=lambda *shape: (A, B, output), verify=verify))
+    monkeypatch.setitem(sys.modules, "profile_persistent", SimpleNamespace(dump_sass=lambda path: None))
+
+    @contextmanager
+    def capture(path):
+        state["captured"] = True
+        try:
+            yield
+        finally:
+            state["captured"] = False
+
+    monkeypatch.setattr(hardware, "capture_compilation", capture)
+    if failure:
+        with pytest.raises(RuntimeError, match=f"fixture {failure} failed"):
+            hardware.worker(tmp_path)
+        assert events[-1] == "stop"
+        assert json.loads((tmp_path / "worker.json").read_text())["status"] != "verified_after_profile"
+    else:
+        hardware.worker(tmp_path)
+        assert events[events.index("start"):events.index("stop") + 1] == ["start", "profiled_launch", "sync", "stop"]
+        assert events[events.index("start") - 2:events.index("start")] == ["fill", "sync"]
+        assert events.count("fill") == 2
+        assert events.count("verify") == 2
+        assert json.loads((tmp_path / "worker.json").read_text())["status"] == "verified_after_profile"
+    assert not state["active"]
+
+
+@pytest.fixture
+def fake_ncu(tmp_path):
+    """A process fixture tests real argv, report paths, and stdout/stderr handling."""
+    executable = tmp_path / "ncu fixture with spaces"
+    executable.write_text(f"#!{sys.executable}\n" + '''
+import csv, io, json, os, pathlib, sys
+args = sys.argv[1:]
+mode = os.environ.get("TIRX_TEST_NCU_MODE", "modern")
+if args == ["--version"]:
+    print("Nsight Compute fixture")
+elif args == ["--help"]:
+    print("--print-details --pipeline-boost-state" if mode != "legacy" else "--details-all")
+elif args == ["--list-sections"]:
+    print("SpeedOfLight ComputeWorkloadAnalysis SchedulerStats LaunchStats")
+elif "--import" in args:
+    assert pathlib.Path(args[args.index("--import") + 1]).is_file()
+    if "raw" in args:
+        writer = csv.writer(sys.stdout)
+        writer.writerow(["ID", "Process ID", "Kernel Name", "Metric Name", "Metric Value"])
+        if mode != "empty":
+            writer.writerow(["0", "123", "kernel_kernel", "sm__throughput.avg.pct_of_peak_sustained_elapsed", "72.5"])
+    else:
+        assert ("--details-all" if mode == "legacy" else "--print-details") in args
+        print("fixture details")
+else:
+    for key, expected in (("--profile-from-start", "off"), ("--launch-count", "1"),
+                          ("--clock-control", "none"), ("--cache-control", "none"),
+                          ("--replay-mode", "kernel"), ("--kernel-name", "kernel_kernel")):
+        assert args[args.index(key) + 1] == expected
+    assert "--force-overwrite" not in args
+    if mode == "permission":
+        print("ERR_NVGPUCTRPERM: access to GPU Performance Counters denied", file=sys.stderr)
+        sys.exit(1)
+    directory = pathlib.Path(args[args.index("--output") + 1])
+    meta = json.loads((directory / "run.json").read_text())
+    meta["status"] = "verified_after_profile" if mode != "unverified" else "preparing"
+    if mode == "changed_source":
+        meta["gemm_kernels_sha256"] = "changed"
+    (directory / "worker.json").write_text(json.dumps(meta))
+    report = pathlib.Path(args[args.index("--export") + 1])
+    if mode != "no_report":
+        report.with_suffix(".ncu-rep" if mode == "legacy" else ".nsight-cuprof").write_bytes(b"fixture report")
+    print("fixture collection complete")
+''')
+    executable.chmod(0o755)
+    return executable
+
+
+@pytest.mark.parametrize("mode", ["modern", "legacy"])
+def test_collection_preserves_report_and_exports_with_version_appropriate_flags(tmp_path, fake_ncu, monkeypatch, mode):
+    monkeypatch.setenv("TIRX_TEST_NCU_MODE", mode)
+    directory = tmp_path / "result with spaces"
+    assert hardware.main(["--output", str(directory), "--ncu", str(fake_ncu)]) == 0
+    info = json.loads((directory / "run.json").read_text())
+    assert info["status"] == "collected" and info["diagnostic_only"]
+    assert info["report_check"]["launches"] == 1
+    assert info["missing_sections"] == ["MemoryWorkloadAnalysis", "WarpStateStats", "Occupancy"]
+    assert info["pipeline_boost_state"] == ("dynamic" if mode == "modern" else "tool default")
+    assert (directory / info["report"]).read_bytes() == b"fixture report"
+    assert (directory / "details.txt").read_text().strip() == "fixture details"
+    assert len(info["commands"]) == 6 and all(c["returncode"] == 0 for c in info["commands"])
+    # Reusing a directory must preserve its evidence, even if ncu could overwrite.
+    with pytest.raises(SystemExit):
+        hardware.main(["--output", str(directory), "--ncu", str(fake_ncu)])
+    assert json.loads((directory / "run.json").read_text()) == info
+
+
+@pytest.mark.parametrize("mode,expected", [("permission", "exit 1"), ("empty", "exactly one"),
+    ("no_report", "nonempty NCU report"), ("unverified", "verification"), ("changed_source", "source changed")])
+def test_incomplete_collection_is_failure_with_evidence(tmp_path, fake_ncu, monkeypatch, mode, expected):
+    monkeypatch.setenv("TIRX_TEST_NCU_MODE", mode)
+    directory = tmp_path / "failed"
+    assert hardware.main(["--output", str(directory), "--ncu", str(fake_ncu)]) == 1
+    info = json.loads((directory / "run.json").read_text())
+    assert info["status"] == "failed" and expected in info["error"]
+    if mode == "permission":
+        assert "ERR_NVGPUCTRPERM" in (directory / "ncu.log").read_text()
+
+
+def test_missing_ncu_fails_before_importing_gpu_dependencies(tmp_path):
+    # Launch via Python -S to ensure this path doesn't require torch/TVM installed.
+    directory = tmp_path / "missing"
+    result = subprocess.run([sys.executable, "-S", str(hardware.ROOT / "profile_hardware.py"),
+                             "--output", str(directory), "--ncu", str(tmp_path / "absent")],
+                            capture_output=True, text=True)
+    assert result.returncode == 1 and "ncu was not found" in result.stderr
+    assert json.loads((directory / "run.json").read_text())["status"] == "failed"
+
+
+@pytest.mark.parametrize("raw", ["", raw_csv(kernel="cublas_kernel"), raw_csv(ids=(0, 1)),
+                                 raw_csv(value="n/a"), raw_csv(value="nan")])
+def test_report_rejects_missing_wrong_or_unavailable_counters(raw):
+    with pytest.raises(RuntimeError):
+        hardware.check_raw_report(raw)
+
+
+def test_section_selection_never_silently_collects_an_empty_set():
+    with pytest.raises(RuntimeError, match="lacks"):
+        hardware.select_sections("UnknownSection LaunchStats")
+    assert hardware.select_sections('"SpeedOfLight","GPU Speed of Light"\n"LaunchStats","Launch Statistics"') == [
+        "SpeedOfLight", "LaunchStats"]

@@ -1,8 +1,8 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
 Step 10 has adopted B-first TMA requests but still crosses the 4096 limit.
-The default requests unroll factor four for both original and batched MMA K
-loops, separating descriptor emission from the compiler's automatic unrolling.
+The default measures only production baseline. Fixed-unroll MMA probes found
+no useful gain; profile_hardware.py collects counters for the next diagnosis.
 Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
@@ -44,7 +44,7 @@ STEP_VARIANTS = {
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "mma_unroll4", "mma_batch_unroll4")}
+                         10: ("baseline",)}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {

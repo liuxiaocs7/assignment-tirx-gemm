@@ -10,13 +10,14 @@ The earlier passing value was 0.139047 ms, with just 0.038% margin.
 All numerical checks pass. The formal 4096 CUDA/cubin and compiler options
 match the B-first probe exactly; the production source is unchanged between
 these commits. A single passing run has not established stable performance.
-The latest `step10_mma_batch.13Q2qL` probes showed a 0.451% paired median gain
-for batched MMA emission, but only 0.262% worst-sample margin. SASS also changed
-automatic K-loop unrolling from four stages to eight, without reducing R2UR
-per stage. Disabling unrolling gave no clear further gain. Neither candidate
-was adopted. The next comparison requests unroll factor four for both original
-and batched emission to separate these effects. Production remains unchanged.
-All **477 local tool/source-generation checks pass** (249.46 s); they do not
+The latest `step10_mma_unroll4.iR07fS` resolves the unrolling comparison:
+`mma_unroll4` has byte-identical cubin/SASS to baseline. At the same four-stage
+unroll, batched emission reduces main-loop R2UR from 63 to 22, but its paired
+speedup against the direct control is 0.998207x. Neither candidate was adopted.
+The next step is `profile_hardware.py`: collect Nsight Compute counters for one
+verified, warmed production Step 10 / 4096 launch. Reports are diagnostic only;
+no profiler duration is scored. Production and CUDA-event timing are unchanged.
+All **494 local tool/source-generation checks pass** (258.27 s); they do not
 replace GPU correctness and timing validation of the adopted implementation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.

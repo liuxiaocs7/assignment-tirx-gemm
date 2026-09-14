@@ -1,6 +1,85 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step10_mma_batch.13Q2qL，小幅改善伴随自动展开变化
+## 最新结果：step10_mma_unroll4.iR07fS，固定展开后没有性能收益
+
+数据：[summary](results_b300/step10_mma_unroll4.iR07fS/step10/summary.csv)、
+[samples](results_b300/step10_mma_unroll4.iR07fS/step10/samples.json)、
+[run.json](results_b300/step10_mma_unroll4.iR07fS/step10/run.json)。
+版本 `f2963b7`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+七个源码指纹、十一份 builder/编译 CUDA 指纹和八份边界验算记录核对通过。
+矩形 K=64/192/256/320 的两次验算和逐轮数值检查均通过。
+baseline 的 CUDA、cubin 和 NVRTC 参数与正式 B-first 验收产物一致。
+
+| 版本 | 中位数 ms | 最大值 ms | 达标轮次 | 同轮相对 baseline | 同轮相对直接对照 | 最慢样本余量 |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline | 0.138396 | 0.138846 | 5/5 | 1.000000× | 1.000000× | 0.183% |
+| mma_unroll4 | 0.138352 | 0.138522 | 5/5 | 1.000486× | 1.000486× | 0.416% |
+| mma_batch_unroll4 | 0.138343 | 0.138985 | 5/5 | 0.999204× | 0.998207×（对 mma_unroll4） | 0.083% |
+
+**`mma_unroll4` 的 cubin 和 SASS 与 baseline 逐字节相同**，其计时差异属于波动。
+batch 对直接对照五轮只快两轮，同轮加速中位数为 **0.998207×**，并未加速。
+虽然表中三个中位数都通过，batch 最慢样本距门槛仅 **0.115 微秒**。
+本轮两项均不采用。最新完整 GPU 套件仍是 **56 passed / 1 failed**，
+不能将这次 probe 的 PASS 当作正式稳定验收。
+
+三个版本均 **REG167 / STACK0**，没有 LDL/STL，MMA 主循环同为四级 K64：
+
+| 版本 | 主循环范围 | UTCHMMA | R2UR | 循环内指令数 |
+|---|---|---:|---:|---:|
+| baseline / mma_unroll4 | 0x1620–0x21c0 | 16 | 63 | 187 |
+| mma_batch_unroll4 | 0x1580–0x1e50 | 16 | 22 | 142 |
+
+统计包含主循环地址范围内的指令，不含跳出该范围的等待分支；这是静态代码计数。
+batch 减少寄存器搬运和指令数，却没有加速，当前证据不支持继续沿描述符复用和
+展开方向微调。所有版本的输入、数学运算和写回相同，生产文件 SHA256 仍为
+`3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7`。
+
+### 下一步：正式内核的 Nsight Compute 计数器
+
+按以下预测区分下一步方向：
+
+1. 若 Tensor Core 执行吞吐接近上限，减少发射端指令不应显著提速；查看实际 TC
+   pipeline 利用率和 ComputeWorkloadAnalysis。Blackwell 的 TC 与旧 Tensor
+   pipeline 不等价，不能只套用旧架构 metric 名称。
+2. 若输入供数受限，MemoryWorkloadAnalysis、L2/DRAM 吞吐和命中率应提供证据；
+   结合 ComputeWorkloadAnalysis 判断异步等待是否伴随计算空闲。
+3. 若供数和计算均未充分利用，结合 SchedulerStats、WarpStateStats 和 cluster
+   LaunchStats/Occupancy 检查可发射 warp 与等待。单个 stall 百分比不能独立定因。
+
+`profile_hardware.py` 只编译生产 Step 10 / 4096。第一次调用后移除编译 hook，
+验算并预热十次，输出置 NaN，再用 `cudaProfilerStart/Stop` 包围一次 GEMM 和完成同步。
+区间内没有数值验证、cuBLAS 或其他显式内核。区间结束后验算输出，检查报告中
+只有一个 `kernel_kernel` 结果且含数字形式的硬件计数器。工具保存编译产物、版本、
+命令参数、可用/缺失 section、原始 CSV、details 与原生报告，不给 PASS/SLOW 分数。
+
+使用 kernel replay，因为该内核不依赖 launch 之后的 host 响应；不为每个采集 pass
+重做 Python/TVM 编译。显式禁用 clock/cache control，支持时使用 dynamic pipeline
+boost；这不消除 profiler 扰动。缓存不刷新的多 pass 指标可能不完全一致，应结合
+报告警告解读，不能用 profiler 耗时解释原 CUDA-event 的零点几微秒差值。
+依据：[NVIDIA CLI 选项](https://docs.nvidia.com/nsight-compute/NsightComputeCli/index.html)、
+[Kernel Replay 与 pipeline 定义](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html)。
+
+缺少工具、计数器权限、空报告或 worker 验算失败会返回非零，并保留日志。
+本机无 NVIDIA GPU，尚未采到真实计数器；工具进程和区间测试不能替代 B300 验证。
+新增 17 项检查覆盖正式 builder 调用、采集前后验证与输出清空、区间内单次调用、
+异常时关闭 profiler、新旧 ncu 报告导出、权限失败、缺少工具、空报告和源码变化。
+完整本地工具/源码生成回归 **494 passed，258.27 s**；生产内核、计时器和 GPU
+用例均未修改。
+下轮只需运行：
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_hardware.XXXXXX)
+uv run python -u profile_hardware.py \
+  --output "$tirx_run/profile" 2>&1 | tee "$tirx_run/profile.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+若 ncu 不在 PATH，添加 `--ncu /实际路径/ncu`。输出目录必须是新目录。
+完整操作及权限错误处理见 [RUNNING.md](RUNNING.md)。
+
+## 前轮结果：step10_mma_batch.13Q2qL，小幅改善伴随自动展开变化
 
 数据：[summary](results_b300/step10_mma_batch.13Q2qL/step10/summary.csv)、
 [samples](results_b300/step10_mma_batch.13Q2qL/step10/samples.json)、
@@ -41,7 +120,7 @@ MMA 的主循环回跳统计，不含跳出循环范围的等待分支。上述�
 无展开版减少了搬运但没有明显额外加速。因此上一轮的约 0.45% 收益不能单独归因
 于描述符复用，也不足以证明任何具体硬件瓶颈。
 
-### 下一轮：双方固定展开四次，消除自动展开差异
+### 已完成实验：双方固定展开四次，消除自动展开差异
 
 按以下可区分的预测补齐对照：
 
@@ -52,7 +131,7 @@ MMA 的主循环回跳统计，不含跳出循环范围的等待分支。上述�
 3. 若显式 pragma 本身改变编译器决策，`mma_unroll4` 也可能不同于 baseline；
    保留生产 baseline 以发现这一点，不能假设“原先自动四次”等于“强制四次”。
 
-默认比较 `baseline`、`mma_unroll4`、`mma_batch_unroll4`。第一个新版本只给原
+当时默认比较 `baseline`、`mma_unroll4`、`mma_batch_unroll4`。第一个新版本只给原
 MMA K 循环加 `#pragma unroll 4`；第二个在相同 pragma 下使用已经验算过的四条
 K16 batch helper，直接对照 `mma_unroll4`。三个版本的 builder/TIR 相同。
 K=64 的循环已被 TVM 消去，原版保持原源码，batch 保持已测的单级发射块。
@@ -63,13 +142,15 @@ K=64 的循环已被 TVM 消去，原版保持原源码，batch 保持已测的�
 随后使用原 10 warmup / 30 repeat / 五轮交错 CUDA-event 计时并保存编译产物。
 19 项新增检查覆盖两个架构和九种形状，重放本轮实际编译输入，逐字比较除 pragma
 与四次 MMA 调用之外的源码；完整工具/源码生成回归 **477 项通过，249.46 s**。
-实际展开因子、GPU 数值和性能仍需 B300 验证。**生产内核和评分规则不变。**
+GPU 实际结果见本文最新记录，两项均不采用。以下为历史命令，现需显式选变体。
+**生产内核和评分规则不变。**
 
 ```bash
 mkdir -p results_b300
 set -o pipefail
 tirx_run=$(mktemp -d results_b300/step10_mma_unroll4.XXXXXX)
 uv run python -u probe_persistent.py --steps 10 --size 4096 \
+  --variants mma_batch_unroll4 \
   --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
