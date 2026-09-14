@@ -1,0 +1,12 @@
+Code: cb2638358e8e7e7c1d2688af0bc22143df09b24f; dirty=True; gemm_sha256=3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7
+Compiler: nvrtc; ptxas register-usage-level=10; target={"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+  CUDA_VISIBLE_DEVICES=0
+GPU: NVIDIA B300 SXM6 AC; SMs: 148
+TVM: 0.26.0; PyTorch: 2.14.0+cu130; CUDA: 13.0
+CUDA events: warmup=10, repeat=30, trials=5, seed=0
+Compiler artifacts: results_b300/step10_bfirst.A0Iwp0/compiler_step10 (hooks removed before timing)
+step       M       N       K   median_ms   TFLOP/s   cuBLAS_ms   vs_cuBLAS   limit_ms   status
+  10    1024    1024    1024    0.027481     78.15    0.006816       0.25   0.032500   PASS
+  10    2048    2048    2048    0.043169    397.97    0.021319       0.49   0.045500   PASS
+  10    4096    4096    4096    0.138409    992.99    0.127172       0.92   0.139100   PASS
+  10    8192    8192    8192    0.869102   1265.11    0.850797       0.98   0.946400   PASS
