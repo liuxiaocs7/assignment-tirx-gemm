@@ -13,7 +13,7 @@ from test_step8_adoption import body, generate
 RECORDED = ROOT / "results_b300/step10_roles.rx5lNL/step10/step10_4096_tma_b_first"
 
 
-def test_step10_matches_winning_b300_compiler_input():
+def test_step10_matches_winning_b300_compiler_input(pre_tmem_step10):
     pytest.importorskip("tvm")
     kernels = importlib.import_module("gemm_kernels")
     actual = generate(kernels.hgemm_v10, (4096,) * 3)
@@ -24,7 +24,7 @@ def test_step10_matches_winning_b300_compiler_input():
 @pytest.mark.parametrize("shape", [(1024,) * 3, (2048,) * 3, (8192,) * 3,
                                    (4096, 3072, 64), (4096, 3072, 320),
                                    (512, 256, 64)])
-def test_step10_replays_measured_builder_for_other_shapes(arch, shape):
+def test_step10_replays_measured_builder_for_other_shapes(arch, shape, pre_tmem_step10):
     pytest.importorskip("tvm")
     kernels = importlib.import_module("gemm_kernels")
     path = RECORDED / "builder.py"

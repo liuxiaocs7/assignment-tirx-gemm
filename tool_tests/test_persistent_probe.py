@@ -283,7 +283,7 @@ def test_step8_epilogue_keeps_four_stages_and_releases_tmem_after_reads(tmp_path
 
 @pytest.mark.parametrize("variant", ["specialize_mma", "specialize_writeback"])
 @pytest.mark.parametrize("shape", [(4096, 4096, 4096), (4096, 3072, 64), (4096, 3072, 320)])
-def test_static_consumer_roles_keep_barrier_slots_and_cluster_protocol(variant, shape, tmp_path):
+def test_static_consumer_roles_keep_barrier_slots_and_cluster_protocol(variant, shape, tmp_path, pre_tmem_step10):
     pytest.importorskip("tvm")
     kernel = build_variant(10, shape, variant, tmp_path)
     actual = body(generate(kernel))
@@ -319,7 +319,7 @@ def test_static_consumer_roles_keep_barrier_slots_and_cluster_protocol(variant, 
 
 
 @pytest.mark.parametrize("K", [64, 320])
-def test_unrolled_ring_preserves_partial_ring_cuda(K, tmp_path):
+def test_unrolled_ring_preserves_partial_ring_cuda(K, tmp_path, pre_tmem_step10):
     pytest.importorskip("tvm")
     import gemm_kernels
 
@@ -329,7 +329,7 @@ def test_unrolled_ring_preserves_partial_ring_cuda(K, tmp_path):
 
 
 @pytest.mark.parametrize("K", [256, 768, 4096])
-def test_unrolled_ring_keeps_slot_order_and_phase_across_tiles(K, tmp_path):
+def test_unrolled_ring_keeps_slot_order_and_phase_across_tiles(K, tmp_path, pre_tmem_step10):
     pytest.importorskip("tvm")
     kernel = build_variant(10, (4096, 3072, K), "unroll_ring", tmp_path)
     actual = body(generate(kernel))
@@ -361,7 +361,7 @@ def test_unrolled_ring_keeps_slot_order_and_phase_across_tiles(K, tmp_path):
 
 @pytest.mark.parametrize("variant", ["pipe_depth_2", "k128_depth_2"])
 @pytest.mark.parametrize("K", [64, 128, 320, 384, 4096])
-def test_two_stage_probe_preserves_cluster_work_and_transaction_bytes(variant, K, tmp_path):
+def test_two_stage_probe_preserves_cluster_work_and_transaction_bytes(variant, K, tmp_path, pre_tmem_step10):
     pytest.importorskip("tvm")
     kernel = build_variant(10, (4096, 3072, K), variant, tmp_path)
     actual = body(generate(kernel))
@@ -388,7 +388,7 @@ def test_two_stage_probe_preserves_cluster_work_and_transaction_bytes(variant, K
 
 
 @pytest.mark.parametrize("K", [64, 320, 4096])
-def test_stream_epilogue_keeps_producers_and_releases_after_all_tmem_reads(K, tmp_path):
+def test_stream_epilogue_keeps_producers_and_releases_after_all_tmem_reads(K, tmp_path, pre_tmem_step10):
     pytest.importorskip("tvm")
     import gemm_kernels
 

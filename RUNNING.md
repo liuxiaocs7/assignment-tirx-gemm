@@ -18,7 +18,7 @@
 | 7 | TMA / MMA / 写回分工 | 教程 Step 7 |
 | 8 | 将 Step 7 流水线扩为四级 | 教程在后续 cluster 中使用四级流水线 |
 | 9 | 双 CTA 协作，cluster 输出 256×256 | 教程 Step 8 |
-| 10 | 两个 MMA consumer 共享 B，cluster 输出 512×256 | 教程 Step 9 |
+| 10 | 两个 MMA consumer 共享 B，按输出量选择 512×128/256 及 TMEM 单/双缓冲 | 教程 Step 9 |
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
 覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线。
@@ -28,16 +28,17 @@
 余量仅 0.038%。所有数值校验通过，一次全过尚不足以证明稳定达标。
 正式 4096 的 CUDA/cubin/编译参数与 B-first probe 一致；两个提交之间生产源码未变。
 同目录独立 Step 10 benchmark 的 20 个样本虽全过，4096 最慢样本余量仅 0.076%。
-最新 `step10_mma_unroll4.iR07fS` 已消除展开差异：`mma_unroll4` 的 cubin/SASS
+此前 `step10_mma_unroll4.iR07fS` 已消除展开差异：`mma_unroll4` 的 cubin/SASS
 与 baseline 完全相同；同为四级展开的 batch 将主循环 R2UR 从 63 降为 22，
-却没有加速（对直接对照的同轮加速比 0.998207×）。两项均不采用，生产代码未变。
+却没有加速（对直接对照的同轮加速比 0.998207×）。当轮两项均未采用。
 `step10_hardware.Mosdpx` 已成功采集计数器，20 pass 后数值验证通过。工具因不兼容
 ncu 2025.3 的宽 CSV 和单位行而误报失败，现已修复，并从原文件离线恢复 795 个指标。
 TC 活跃周期占 SM 活跃期 91.85%、总时段 75.69%，L2/DRAM 吞吐为 22.61%/10.73%；
 支持优先查整体利用率空档，尚不能确定具体瓶颈或证明性能稳定。
-最新 `step10_tmem_double.DYMgCt` 的 TMEM 双缓冲在 4096 七轮都快于生产 baseline
-和 N128/EPI32 单缓冲对照，同轮收益分别为 0.600% / 1.162%。最慢 0.137650 ms，
-低于门槛约 1.042%；尚未采用，下一步检查四个评分尺寸，详见下面命令。
+最新 `step10_tmem_sizes.I9nGIJ` 已完成四尺寸七轮对照。1024/2048 的窄 N 单缓冲
+明显提速；4096 双缓冲在两次运行中累计 14/14 轮快于 baseline，最新最慢样本余量
+约 0.933%；8192 双缓冲慢约 3.9%，保留宽 N。现已采用按输出工作量选择的正式
+Step 10，生成 CUDA 与各尺寸所选实测版本一致；新正式版本仍待 GPU 全量验收。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
@@ -46,54 +47,57 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
 （覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调、角色插桩及硬件采集入口，
-共 **530 项本地通过，284.63 s**；
+共 **557 项本地通过，299.28 s**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：TMEM 双缓冲四尺寸验证
+### 当前进度：已采用实测选择，验证正式 Step 10
 
-`b033434` 仅修复硬件报告的 CSV 解析，`gemm_kernels.py` 未变，不能期望这个 commit
-提升性能。下面“离线恢复”命令可直接在 `b033434` 执行，检查修复；不需要重新采集。
+先同步本轮 **修改 `gemm_kernels.py` 的提交**，仅 `0f23484` 文档提交还没有新内核。
+新的内核 SHA256：`5515a04dfc3018bff2fe06e7f1f00681db4ee4ce8b376f4098f2348d85989b6c`。
 
-`88b0b39` 已包含所需实验，下面命令可直接在该提交或当前版本执行。本次仅更新
-实测记录，无需等待新内核。已有七轮结果支持继续验证：双缓冲相对单缓冲与正式
-baseline 都七轮更快，但最慢样本约 1% 余量，还不能保证全量运行时稳定。
-先固定同一个候选，顺序检查四个评分尺寸，避免尚未测量的 1024/2048/8192 回退。
-4096 也在新进程中独立复测一次。
+| 尺寸 | 正式选择 | 本轮对应 probe 中位数 ms |
+|---|---|---:|
+| 1024 | N128 / EPI32 / TMEM 单缓冲 | 0.018566 |
+| 2048 | N128 / EPI32 / TMEM 单缓冲 | 0.027029 |
+| 4096 | N128 / EPI32 / TMEM 双缓冲 | 0.137422 |
+| 8192 | N256 / EPI64 / TMEM 单缓冲 | 0.868543 |
+
+选择在编译时完成：输出面积不超过 4096² 时用窄 N，窄 tile 数超过最大 cluster
+数时才启用双槽；其余用宽 N。接口对齐要求、两 consumer 结构、四级 K64、计时器
+和原评分门槛均不变。4096 最慢样本 0.137803 ms，距 0.139100 ms 仅约 0.933%，
+需要正式运行检查稳定性。局部或全量的性能失败都保留日志，不筛选通过结果。
+
+在 B300 上顺序运行以下命令；重复两次全量是为了检查此前的偶发性能失败：
 
 ```bash
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/step10_tmem_sizes.XXXXXX)
-for tirx_size in 1024 2048 4096 8192; do
-  uv run python -u probe_persistent.py --steps 10 --size "$tirx_size" --trials 7 \
-    --variants n128_tmem_double_buffer \
-    --output "$tirx_run/step10_$tirx_size" \
-    2>&1 | tee "$tirx_run/step10_$tirx_size.log" || break
+tirx_run=$(mktemp -d results_b300/step10_tmem_adopt.XXXXXX)
+git log -1 --oneline
+sha256sum gemm_kernels.py
+
+uv run python -m pytest tests/test_step10.py -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest_step10.log"
+
+uv run python -u benchmark.py --steps 10 --trials 7 \
+  --csv "$tirx_run/step10.csv" --diagnostics-dir "$tirx_run/compiler_step10" \
+  2>&1 | tee "$tirx_run/benchmark_step10.log"
+
+for tirx_trial in 1 2; do
+  uv run python -m pytest tests/ -vs --tb=short \
+    2>&1 | tee "$tirx_run/pytest_all_$tirx_trial.log"
 done
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-命令自动包含 `baseline → n_tile_128 → n128_epi32 → n128_tmem_double_buffer`
-四个独立构建，记录每项的直接对照。新实验相对 `n128_epi32` 只改变 TMEM
-槽位和配套就绪/释放 barrier；输入四级 K64、线程、网格、共享内存、EPI32 写回
-均相同。每个槽都有单独的 phase，两个槽轮转一圈才翻转；必须等两个 CTA 的读回
-线程全部完成后才能重用该槽。与此前测过的 **SMEM 写回双缓冲** 是不同实验。
-
-每个进程仍在计时前对 `(4096,3072,K)` 的 K=64/192/256/320 各验算两次，覆盖两个
-TMEM 槽的首次使用、第三个 tile 重用槽 0，以及不同输入 ring 的边界。保留原
-10 次预热、30 次 CUDA-event 重复，七轮交错。数值或编译错误会停止后续尺寸，
-`SLOW` 只记录实测结果，会继续收集其他尺寸；不要只看进程退出码判断是否达标。
-
-每个尺寸都比较 baseline 与候选的同轮结果和最慢样本，检查收益是否以其他尺寸
-回退为代价。4096 首测中位数 0.137312 ms、最慢 0.137650 ms，尚未达到
-≤0.135 ms（约 3% 余量）的理想目标；原 0.139100 ms 评分门槛不变。
-四尺寸验证支持后再采用到 `gemm_kernels.py`，随后跑正式 Step 10、全量 pytest
-和五轮 benchmark。当前 pytest 仍测旧生产内核，probe 的改善不会自动生效。
-本机只能核对源码生成和协议；另外三个尺寸的 GPU 正确性及性能仍待本轮结果。
+benchmark 保存正式 CUDA/cubin、编译参数和七轮原始样本，可核对采用后是否仍与
+实测候选一致。这里是正式评分路径，不再使用 `--variants n128_tmem_double_buffer`。
+probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder，会明确拒绝重复
+应用。要重放四尺寸历史实验需使用其记录的 `0f23484`，不能把新旧 baseline 混用。
 
 ### b033434：离线恢复已有硬件报告
 
@@ -153,8 +157,8 @@ LaunchStats、Occupancy；缺少的 section 会明确记录。使用 kernel repl
 缺少 `ncu`、GPU 不受支持、`ERR_NVGPUCTRPERM`、空报告或验证失败时返回非零，
 保存已有日志，不修改驱动权限。缺少 ncu 时可加载平台提供的 Nsight Compute module
 或指定已有安装路径；计数器权限错误需平台管理员开放访问，保留目录供判断。
-当前 probe 默认运行 TMEM 双缓冲及其对照链；只测正式版本用 `--variants baseline`，
-历史展开比较用 `--variants mma_batch_unroll4` 显式选取。
+当前 probe 默认运行正式版本，也可显式指定 `--variants baseline`。
+历史展开和 TMEM 对照需在各自记录的提交重放。
 详见 [最新复测与诊断依据](B300_VALIDATION.md)。
 
 已采用的 Step 6/7 K128、Step 8 等待提示/基址缓存、Step 10 基址缓存/均衡网格/B 优先

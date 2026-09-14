@@ -10,7 +10,7 @@ The earlier passing value was 0.139047 ms, with just 0.038% margin.
 All numerical checks pass. The formal 4096 CUDA/cubin and compiler options
 match the B-first probe exactly; the production source is unchanged between
 these commits. A single passing run has not established stable performance.
-The latest `step10_mma_unroll4.iR07fS` resolves the unrolling comparison:
+The earlier `step10_mma_unroll4.iR07fS` resolves the unrolling comparison:
 `mma_unroll4` has byte-identical cubin/SASS to baseline. At the same four-stage
 unroll, batched emission reduces main-loop R2UR from 63 to 22, but its paired
 speedup against the direct control is 0.998207x. Neither candidate was adopted.
@@ -20,16 +20,18 @@ actual report as a regression fixture. Offline analysis recovered 795 metrics:
 TC active cycles are 91.85% of SM-active time and 75.69% of elapsed time; L2/DRAM
 throughput is 22.61%/10.73%. These support investigating utilization gaps, but
 do not establish a specific cause or a stable performance pass. No GPU rerun
-is needed to recover this report. Production and CUDA-event timing are unchanged.
-The latest `step10_tmem_double.DYMgCt` tests two N128 TMEM accumulator slots per
-consumer against the N128/EPI32 single-buffer control. At 4096 it beats both that
-control and production in all seven trials: paired speedups are 1.011616x and
-1.005996x, respectively. Median/worst times are 0.137312/0.137650 ms; the worst
-sample has 1.042% margin to the limit. Boundary checks pass, and the double buffer
-uses the same 112 registers and 181248-byte dynamic SMEM as its direct control.
-It is still a probe candidate. Next, compare all four Step 10 sizes using the
-existing tool, then decide adoption and run the formal suite; see RUNNING.md.
-All **530 local tool/source-generation checks pass** (284.63 s); they do not
+is needed to recover this report. That parser fix did not change production or timing.
+`step10_tmem_sizes.I9nGIJ` now measures all four Step 10 sizes. Narrow N128/EPI32
+single buffering cuts median time from 0.027389 to 0.018566 ms at 1024 and from
+0.043305 to 0.027029 ms at 2048. At 4096, double buffering wins all seven paired
+trials again (14/14 across two runs); its worst time is 0.137803 ms, with 0.933%
+margin. At 8192 it regresses from 0.868543 to 0.902522 ms, so wide N256 is retained.
+Production now selects narrow N for output area up to 4096², using two TMEM slots
+only when narrow tiles require persistent reuse; larger outputs retain the wide
+path. Generated CUDA and host tensor maps match the selected measured variants.
+This adoption still needs the formal B300 pytest/benchmark commands in RUNNING.md;
+the latest completed full GPU suite predates it and remains 56 passed / 1 failed.
+All **557 local tool/source-generation checks pass** (299.28 s); they do not
 replace GPU correctness and timing validation of the adopted implementation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
@@ -701,6 +703,18 @@ This doubles the compute density per CTA: each CTA now processes a 256x256 outpu
 - Tile scheduler: `num_m_tiles=M // 256 // NUM_CONSUMER` — cluster tile is now 512x256
 - TMA arrive bytes: `CTA_GROUP * (NUM_CONSUMER * BLK_M * BLK_K + BLK_N * BLK_K) * DTYPE_SIZE` — 2 A blocks + 1 B block per CTA
 - Writeback uses `warpgroup_sync(wg_id + 10)` — each WG needs its own barrier ID. Using the same ID (e.g., `warpgroup_sync(10)`) for both WG0 and WG1 mixes their threads on a single barrier, causing partial writes and deadlocks at large sizes. This is something you should watch out for carefully.
+
+**Measured tile and accumulator choices:**
+The N256 single-buffer schedule above remains the large-output path. For output
+area up to 4096², the implementation uses N128/EPI32 (512×128 per cluster), with
+64-byte output swizzling. If all narrow tiles fit in one cluster wave, a single
+accumulator per consumer suffices. Otherwise two 128-column slots per consumer
+use the existing 512-column allocation. Ready/free barrier indices become
+`stage * NUM_CONSUMER + consumer`; each slot waits for both CTAs' 256 readers
+before reuse. Double-buffer phase advances after commit/release, once per slot,
+and flips after both slots. Input-ring reuse still requires both MMA consumers.
+These are compile-time choices based on output workload, with no runtime dispatch
+or changes to numerical tolerances or grading.
 
 **Test:** `pytest tests/test_step10.py -xvs`
 

@@ -91,6 +91,9 @@ def layout(step, shape, sm_count):
     group, consumers, tile_m, tile_n = (1, 1, 128, 128) if step == 8 else (2, 2, 512, 256)
     if M % tile_m or N % tile_n or sm_count % group:
         raise ValueError("shape or SM count does not match the production grid")
+    # Match hgemm_v10's output-area choice, retaining its N % 256 API guard.
+    if step == 10 and M * N <= 4096 * 4096:
+        tile_n = 128
     total = (M // tile_m) * (N // tile_n)
     clusters = min(sm_count // group, total)
     if step == 10:

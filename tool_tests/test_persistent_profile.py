@@ -107,7 +107,7 @@ def test_trace_covers_each_active_cluster_rank_consumer_and_persistent_tile(step
     summaries = summarize_traces([dict(step=step, size=size, role=role, **r) for r in rows])
     assert sum(r["records"] for r in summaries) == expected
     assert all(r["wait_pct"] == 20 and r["work_pct"] == 30 and r["cycles_per_ns"] == 1.5 for r in summaries)
-    assert {r["tile_ordinal"] for r in summaries} == {0, 1}
+    assert {r["tile_ordinal"] for r in summaries} == set(range(info["max_tiles"]))
 
 
 @pytest.mark.parametrize("failure", ["missing", "inactive", "backwards", "overlap", "coords", "duplicate"])

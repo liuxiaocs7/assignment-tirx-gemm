@@ -17,7 +17,7 @@ from test_persistent_probe import body
 @pytest.mark.parametrize('arch', ['sm_100a', 'sm_103a'])
 @pytest.mark.parametrize('shape', [(1024,) * 3, (2048,) * 3, (4096,) * 3, (8192,) * 3,
                                   *VERIFICATION_SHAPES['warp_release']])
-def test_writeback_experiments_preserve_read_coverage_and_producer_protocol(arch, shape, tmp_path):
+def test_writeback_experiments_preserve_read_coverage_and_producer_protocol(arch, shape, tmp_path, pre_tmem_step10):
     tvm = pytest.importorskip('tvm')
     target = tvm.target.Target({'kind': 'cuda', 'arch': arch})
     sources = {}
@@ -92,7 +92,7 @@ def test_writeback_experiments_preserve_read_coverage_and_producer_protocol(arch
 
 
 @pytest.mark.parametrize('variant', ['warp_release', 'paired_tmem_loads'])
-def test_writeback_transform_rejects_reapplication_and_pre_adoption_source(variant, tmp_path):
+def test_writeback_transform_rejects_reapplication_and_pre_adoption_source(variant, tmp_path, pre_tmem_step10):
     pytest.importorskip('tvm')
     build_variant(10, (4096,) * 3, variant, tmp_path)
     with pytest.raises(ValueError):

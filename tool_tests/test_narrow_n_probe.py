@@ -18,7 +18,7 @@ from test_persistent_probe import body
 @pytest.mark.parametrize('arch', ['sm_100a', 'sm_103a'])
 @pytest.mark.parametrize('shape', [(1024,) * 3, (2048,) * 3, (4096,) * 3, (8192,) * 3,
                                   *VERIFICATION_SHAPES['n128_epi32_depth5'], (512, 256, 64)])
-def test_narrow_n_work_and_phase_survive_codegen(arch, shape, tmp_path, monkeypatch):
+def test_narrow_n_work_and_phase_survive_codegen(arch, shape, tmp_path, monkeypatch, pre_tmem_step10):
     tvm = pytest.importorskip('tvm')
     import gemm_kernels
     from tvm.backend.cuda.tile_primitive.copy_async import tma
@@ -151,7 +151,7 @@ def test_narrow_n_work_and_phase_survive_codegen(arch, shape, tmp_path, monkeypa
 
 
 @pytest.mark.parametrize('variant', NARROW_N_VARIANTS)
-def test_narrow_n_transform_refuses_reapplication_or_old_control(variant, tmp_path):
+def test_narrow_n_transform_refuses_reapplication_or_old_control(variant, tmp_path, pre_tmem_step10):
     pytest.importorskip('tvm')
     build_variant(10, (4096,) * 3, variant, tmp_path)
     with pytest.raises(ValueError):

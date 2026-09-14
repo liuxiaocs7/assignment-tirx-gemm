@@ -114,7 +114,7 @@ def simulate_handoffs(cuda, tiles, seed):
 @pytest.mark.parametrize('arch', ['sm_100a', 'sm_103a'])
 @pytest.mark.parametrize('shape', [(1024,) * 3, (2048,) * 3, (4096,) * 3, (8192,) * 3,
                                   *VERIFICATION_SHAPES[VARIANT], (512, 256, 64)])
-def test_tmem_double_buffer_preserves_work_and_guards_each_slot(arch, shape, tmp_path):
+def test_tmem_double_buffer_preserves_work_and_guards_each_slot(arch, shape, tmp_path, pre_tmem_step10):
     tvm = pytest.importorskip('tvm')
     target = tvm.target.Target({'kind': 'cuda', 'arch': arch})
     sources = []
@@ -182,7 +182,7 @@ def test_tmem_double_buffer_preserves_work_and_guards_each_slot(arch, shape, tmp
     assert any([simulate_handoffs(actual, 7, seed) for seed in range(12)])
 
 
-def test_tmem_double_buffer_requires_its_control_and_refuses_reapplication(tmp_path):
+def test_tmem_double_buffer_requires_its_control_and_refuses_reapplication(tmp_path, pre_tmem_step10):
     pytest.importorskip('tvm')
     build_variant(10, (4096,) * 3, VARIANT, tmp_path)
     builder = (tmp_path / 'builder.py').read_text()
@@ -196,9 +196,10 @@ def test_tmem_double_buffer_requires_its_control_and_refuses_reapplication(tmp_p
         double_buffer_tmem(inspect.getsource(gemm_kernels.hgemm_v10))
 
 
-def test_default_comparison_includes_measured_controls():
+def test_explicit_historical_comparison_includes_measured_controls():
     variants = ['baseline', 'n_tile_128', 'n128_epi32', VARIANT]
-    assert select_variants(10) == select_variants(10, [VARIANT]) == variants
+    assert select_variants(10) == ['baseline']
+    assert select_variants(10, [VARIANT]) == variants
     cases = [dict(step=10, size=4096, variant=v, samples_ms=s) for v, s in
              zip(variants, [[10, 20], [8, 16], [4, 8], [5, 10]])]
     rows = summarize_with_cache_control(cases, {(10, 4096, 4096, 4096): 1}, 1.3)

@@ -21,7 +21,7 @@ def normalized_lines(source):
 @pytest.mark.parametrize('arch', ['sm_100a', 'sm_103a'])
 @pytest.mark.parametrize('shape', [(1024,) * 3, (2048,) * 3, (4096,) * 3, (8192,) * 3,
                                   *VERIFICATION_SHAPES['split_tma'], (512, 256, 64)])
-def test_wide_n_experiments_preserve_work_and_stage_ownership(arch, shape, tmp_path, monkeypatch):
+def test_wide_n_experiments_preserve_work_and_stage_ownership(arch, shape, tmp_path, monkeypatch, pre_tmem_step10):
     tvm = pytest.importorskip('tvm')
     from tvm.backend.cuda.tile_primitive.copy_async import tma
     emit, plans = tma._emit_plan, []
@@ -120,7 +120,7 @@ def test_wide_n_experiments_preserve_work_and_stage_ownership(arch, shape, tmp_p
 
 
 @pytest.mark.parametrize('variant', ['epilogue_32', 'split_tma'])
-def test_wide_n_probe_refuses_reapplication_and_wrong_baseline(variant, tmp_path):
+def test_wide_n_probe_refuses_reapplication_and_wrong_baseline(variant, tmp_path, pre_tmem_step10):
     pytest.importorskip('tvm')
     build_variant(10, (4096,) * 3, variant, tmp_path)
     with pytest.raises(ValueError):

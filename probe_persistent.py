@@ -1,8 +1,8 @@
 """Independent B300 performance experiments for persistent GEMM kernels.
 
-Step 10 has adopted B-first TMA requests but still crosses the 4096 limit.
-The default tests two TMEM accumulator buffers against the measured narrow-N
-single-buffer control. Fixed-unroll MMA probes found no useful gain.
+Step 10 has adopted measured narrow-N/TMEM choices by output workload.
+The default validates the production baseline. Historical wide-N probes must
+be replayed at their recorded commits, before the workload dispatch adoption.
 Historical experiments are explicit; adopted transforms refuse reapplication.
 GPU verification precedes every scored experiment.
 No production kernel is edited by this tool.
@@ -44,7 +44,7 @@ STEP_VARIANTS = {
 }
 DEFAULT_STEP_VARIANTS = {6: ("baseline",), 7: ("baseline",),
                          8: ("baseline",),
-                         10: ("baseline", "n128_tmem_double_buffer")}
+                         10: ("baseline",)}
 VARIANTS = tuple(dict.fromkeys(v for variants in STEP_VARIANTS.values() for v in variants))
 # Each combination varies exactly one factor relative to cache_tmem_base.
 CACHE_EXPERIMENTS = {
@@ -469,6 +469,10 @@ def variant_builder_source(source, step, variant):
     """Keep each variant independent; refuse an unexpected production builder."""
     if step not in STEP_VARIANTS or variant not in STEP_VARIANTS[step]:
         raise ValueError(f"unsupported Step {step} variant: {variant}")
+    if step == 10 and variant != "baseline" and "    NARROW_N =" in source:
+        raise ValueError("Step 10 has adopted workload-based narrow N and TMEM buffering; "
+                         "validate with benchmark.py --steps 10 and tests/test_step10.py. "
+                         "Replay historical probes at their recorded commit (0f23484 for TMEM comparisons).")
     if variant == "n128_tmem_double_buffer":
         return double_buffer_tmem(variant_builder_source(source, step, "n128_epi32"))
     if variant in ("mma_batch", "mma_batch_no_unroll", "mma_unroll4", "mma_batch_unroll4"):

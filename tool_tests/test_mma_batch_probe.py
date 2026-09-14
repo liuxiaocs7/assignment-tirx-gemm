@@ -86,7 +86,7 @@ def test_emitted_ptx_preserves_four_k16_addresses_masks_and_accumulation():
 @pytest.mark.parametrize('arch', ['sm_100a', 'sm_103a'])
 @pytest.mark.parametrize('shape', [(1024,) * 3, (2048,) * 3, (4096,) * 3, (8192,) * 3,
                                   *VERIFICATION_SHAPES['mma_batch'], (512, 256, 64)])
-def test_codegen_batches_only_one_stage_without_moving_sync(arch, shape, tmp_path):
+def test_codegen_batches_only_one_stage_without_moving_sync(arch, shape, tmp_path, pre_tmem_step10):
     tvm = pytest.importorskip('tvm')
     target = tvm.target.Target({'kind': 'cuda', 'arch': arch})
     kernel = build_variant(10, shape, 'mma_batch', tmp_path)
@@ -132,7 +132,7 @@ def test_mma_batch_rejects_changed_operands_or_intervening_work(before, after):
         batch_mma_stage(source.replace(before, after))
 
 
-def test_mma_batch_controls_and_baseline_guard(tmp_path):
+def test_mma_batch_controls_and_baseline_guard(tmp_path, pre_tmem_step10):
     pytest.importorskip('tvm')
     variants = ['baseline', 'mma_batch', 'mma_batch_no_unroll']
     assert select_variants(10, ['mma_batch_no_unroll']) == variants

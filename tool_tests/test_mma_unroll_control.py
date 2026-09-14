@@ -19,7 +19,7 @@ RECORDED = ROOT / 'results_b300/step10_mma_batch.13Q2qL/step10'
 @pytest.mark.parametrize('arch', ['sm_100a', 'sm_103a'])
 @pytest.mark.parametrize('shape', [(1024,) * 3, (2048,) * 3, (4096,) * 3, (8192,) * 3,
                                   *VERIFICATION_SHAPES['mma_unroll4'], (512, 256, 64)])
-def test_mma_unroll_control_changes_only_pragma_and_four_calls(arch, shape, tmp_path):
+def test_mma_unroll_control_changes_only_pragma_and_four_calls(arch, shape, tmp_path, pre_tmem_step10):
     tvm = pytest.importorskip('tvm')
     target = tvm.target.Target({'kind': 'cuda', 'arch': arch})
     kernels = [build_variant(10, shape, v, tmp_path / v)

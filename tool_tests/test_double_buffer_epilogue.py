@@ -115,7 +115,7 @@ def test_double_buffer_owns_distinct_storage_and_drains_before_reuse(arch, shape
 
 
 @pytest.mark.parametrize('variant', ['epilogue_depth3', 'epilogue_double_buffer'])
-def test_epilogue_transform_refuses_reapplication_or_old_baseline(variant, tmp_path):
+def test_epilogue_transform_refuses_reapplication_or_old_baseline(variant, tmp_path, pre_tmem_step10):
     pytest.importorskip('tvm')
     build_variant(10, (4096,) * 3, variant, tmp_path)
     with pytest.raises(ValueError):

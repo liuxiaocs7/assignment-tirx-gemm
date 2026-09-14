@@ -15,3 +15,16 @@ def pre_bfirst_step10(monkeypatch):
     namespace = dict(vars(gemm_kernels))
     exec(compile(path.read_text(), str(path), "exec"), namespace)
     monkeypatch.setattr(gemm_kernels, "hgemm_v10", namespace["hgemm_v10"])
+
+
+@pytest.fixture
+def pre_tmem_step10(monkeypatch):
+    """Keep wide-N historical experiments on their measured B-first builder."""
+    pytest.importorskip("tvm")
+    import gemm_kernels
+
+    path = (Path(__file__).parents[1] / "results_b300/step10_tmem_sizes.I9nGIJ/"
+            "step10_4096/step10_4096_baseline/builder.py")
+    namespace = dict(vars(gemm_kernels))
+    exec(compile(path.read_text(), str(path), "exec"), namespace)
+    monkeypatch.setattr(gemm_kernels, "hgemm_v10", namespace["hgemm_v10"])
