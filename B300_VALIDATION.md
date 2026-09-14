@@ -1,6 +1,71 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step10_epilogue.Y2EFaW
+## 最新结果：step10_roles.rx5lNL
+
+数据：[summary](results_b300/step10_roles.rx5lNL/step10/summary.csv)、
+[samples](results_b300/step10_roles.rx5lNL/step10/samples.json)、
+[run.json](results_b300/step10_roles.rx5lNL/step10/run.json)。
+版本 `c69e612`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+七个源码指纹、七份 builder/编译 CUDA 指纹核对通过。三个版本数值校验通过，
+两个实验的矩形 K=64/320 各完成两次不计时验算。
+baseline 的 CUDA、cubin 和 NVRTC 参数与 `step10_adopt.UFT7xo` 相同。
+
+| 版本 | 中位数 ms | 最大值 ms | 达标轮次 | 同轮加速比 | REG / STACK |
+|---|---:|---:|---:|---:|---:|
+| baseline | 0.138356 | 0.139254 | 4/5 | 1.000000× | 167 / 0 |
+| role_registers | 0.138396 | 0.138643 | 5/5 | 1.001733× | 167 / 0 |
+| tma_b_first | **0.137891** | **0.138605** | **5/5** | **1.004687×** | 167 / 0 |
+
+### 采用 B 优先加载，仍需正式全量验收
+
+`tma_b_first` 五轮都快于同轮 baseline，同轮加速中位数约 **0.469%**。
+最慢样本距 0.139100 ms 门槛约 **0.495 微秒 / 0.356%**，收益一致但余量仍窄。
+CUDA 和 SASS 确认每级请求由 A0/A1/B 改为 B/A0/A1；请求数、地址、字节数、
+barrier、MMA 和写回协议保持一致。三个版本都无 LDL/STL，静态指令数量均为
+12 处 UTMALDG、16 处 UTCHMMA、8 处 LDTM.x32。
+这支持采用请求顺序这一小改动，尚不能证明它解决了全量测试中的波动。
+
+正式 `hgemm_v10` 采用实测 B-first builder，保留四级 K64 输入、两个 consumer、
+EPI64、缓存 TMEM 基址和均衡网格。4096 生成的 CUDA kernel 与实测输入一致，
+其他评分尺寸、矩形短 K 和单 tile 在 SM100a / SM103a 上重放实测 builder。
+生产文件的新 SHA256：
+`3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7`。
+实测 B-first cubin SHA256：
+`afadd2f4f7f171021362e419883ab200ac3fa1e7f504c58e9a762eb471725e3d`。
+本地无 NVIDIA GPU，cubin 一致性和性能需由下一次服务器运行确认。
+
+### 寄存器提示被编译器忽略
+
+`role_registers` 的 [NVRTC 日志](results_b300/step10_roles.rx5lNL/step10/step10_4096_role_registers/nvrtc_01.log)
+报告：`(C7508) Potential Performance Loss: 'setmaxnreg' ignored; unable to determine register count at entry.`
+SASS 中没有对应的寄存器重分配指令。因此这次实验**没有实际检验寄存器重分配的性能**，
+不能根据 PASS 或小幅计时变化认为该策略有效，也不采用它。
+历史 `register_budget.json` 的 `valid: true` 仅说明初始 REG167 足以容纳所请求总量，
+不能证明指令生效。工具现在分别记录 `capacity_valid` 和 `setmaxnreg_ignored`，
+遇到该忽略诊断会在返回 cubin、启动 kernel 之前停止，并恢复编译回调。
+没有此诊断也不等于提示必然生效，今后的寄存器实验仍需检查实际 SASS。
+
+默认 probe 现只运行正式 baseline；已采用的 `tma_b_first` 拒绝重复应用，
+历史角色和双缓冲实验的本地回归使用记录的旧 builder，保留原对照含义。
+完整本地工具/源码生成回归 **395 项通过，188.26 s**，包含实测 CUDA 重放、
+跨架构边界检查和忽略提示时停止/恢复回调的回归。原评分、容差、计时规则和 GPU
+测试未改。最新全量仍为 **56/57**；
+下一步是运行正式代码的全量 pytest 和 Step 10 五轮 benchmark：
+
+```bash
+mkdir -p results_b300
+set -o pipefail
+tirx_run=$(mktemp -d results_b300/step10_bfirst.XXXXXX)
+uv run python -m pytest tests/ -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest_all.log"
+uv run python -u benchmark.py --steps 10 --trials 5 \
+  --csv "$tirx_run/step10.csv" \
+  --diagnostics-dir "$tirx_run/compiler_step10" \
+  2>&1 | tee "$tirx_run/benchmark_step10.log"
+printf '结果目录：%s\n' "$tirx_run"
+```
+
+## 前轮结果：step10_epilogue.Y2EFaW
 
 数据：[summary](results_b300/step10_epilogue.Y2EFaW/step10/summary.csv)、
 [samples](results_b300/step10_epilogue.Y2EFaW/step10/samples.json)、
@@ -29,7 +94,7 @@ SASS 的 `DEPBAR.LE` 静态位置由 6 减至 5，但新增 **8 处 STL / 8 处 
 baseline 的编译产物也与正式采用时相同。因此不以本轮 PASS 宣称三级输入解决了
 稳定性问题。生产继续保持四级输入、单写回缓冲区；最新全量仍为 **56/57**。
 
-### 下一轮：角色寄存器预算与 TMA 发射顺序
+### 已完成实验：角色寄存器预算与 TMA 发射顺序
 
 三个可区分的假设按优先级为：
 
@@ -41,7 +106,7 @@ baseline 的编译产物也与正式采用时相同。因此不以本轮 PASS �
 3. 若以上微调仍无明显收益，输入/MMA tile 的形状或供给粒度更可能限制吞吐；下一步
    再测 tile 结构变化，本轮不将它与前两项叠加。
 
-默认比较 `baseline`、`role_registers`、`tma_b_first`，两项实验均直接对照正式 baseline：
+当时默认比较 `baseline`、`role_registers`、`tma_b_first`，两项实验均直接对照正式 baseline：
 
 - `role_registers`：在角色分歧、线程选举和初始化同步之前，整个 WG2 执行
   `setmaxnreg.dec 64`，WG0/WG1 各执行 `setmaxnreg.inc 208`。请求总量为
@@ -61,7 +126,7 @@ baseline 的编译产物也与正式采用时相同。因此不以本轮 PASS �
 计时前对矩形 K=64/320 各两次验算，再用原 10 warmup / 30 repeat / 五轮交错计时。
 完整本地工具/源码生成回归 **393 项通过，181.16 s**，新增检查覆盖两个架构、四个评分
 尺寸、矩形边界、单 tile，以及寄存器配额不足/资源报告缺失时拦截和恢复编译回调。
-**尚无新实验的 GPU 数值或性能结果，生产内核不变。**
+该轮工具提交未改生产内核；随后 GPU 结果和采用决策见本文最新记录。
 
 ```bash
 mkdir -p results_b300

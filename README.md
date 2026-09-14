@@ -7,15 +7,15 @@ source generation checks. The latest full B300 run, `step10_adopt.UFT7xo`, is
 checks and Step 8 pass. Only Step 10 / 4096 fails: 0.139278 ms versus the
 0.139100 ms limit, about 0.13% over. Its separate benchmark passes all 20 samples
 across four shapes, but the worst 4096 sample has just 0.38% margin.
-The production CUDA/cubin matches the earlier winning cache/grid probe exactly.
-The adopted implementation is retained; passing the benchmark does not yet
-resolve the full-suite failure. In `step10_epilogue.Y2EFaW`, double-buffered
-writeback is slower than its three-stage control in all five trials and adds a
-32-byte stack frame; it is not adopted. The depth-only control passes this run
-but yields just 0.069% paired gain, and its identical cubin failed earlier runs.
-The next diagnostics independently test role-specific register budgets and
-B-first TMA requests against production. All 393 local tool/source-generation
-checks pass; GPU validation remains pending.
+In `step10_roles.rx5lNL`, B-first TMA requests beat the same-trial baseline in
+all five trials, with a median paired speedup of 1.004687× and all samples below
+the limit. Step 10 now adopts that request order; generated CUDA matches the
+measured kernel. Its worst sample has only 0.356% margin, so full-suite GPU
+validation is still required. The register-budget experiment was ignored by
+ptxas (C7508), and does not establish a benefit from register redistribution.
+The diagnostic tool now rejects that ignored-hint warning before launch.
+All **395 local tool/source-generation checks pass** (188.26 s); they do not
+replace GPU correctness and timing validation of the adopted implementation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)
 for measured results and compiler diagnostics.
 

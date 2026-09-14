@@ -26,10 +26,11 @@
 唯一失败是 Step 10 / 4096 的性能：0.139278 ms，比 0.139100 ms 门槛慢约 0.13%。
 所有数值校验通过，Step 8 全过，Step 10 其他评分尺寸及两个矩形边界也通过。
 同目录独立 Step 10 benchmark 四个尺寸 × 五轮，共 20 个样本全过，但 4096 最慢
-样本仅有 0.38% 余量。正式 CUDA/cubin/参数与此前胜出 probe 完全一致；改动已生效，
-仍需增加性能余量。最新 `step10_epilogue.Y2EFaW` 的双缓冲五轮都慢于三级对照，
-并出现 32 字节栈帧，不采用。三级对照虽 5/5 达标，同轮收益中位数仅 0.069%，
-其相同 cubin 此前五轮都超限，也未采用。保留 `48d743a` 的缓存基址和均衡网格。
+样本仅有 0.38% 余量。当时正式 CUDA/cubin/参数与缓存加均衡网格的胜出 probe 一致。
+最新 `step10_roles.rx5lNL` 的 B 优先加载五轮都快于同轮 baseline，全部达标，
+同轮加速中位数约 0.469%，最慢样本余量仍仅 0.356%。正式 Step 10 现已采用此顺序，
+本地生成的 CUDA 与实测版本一致，尚待新代码的全量 GPU 验收。
+寄存器重分配实验被 ptxas C7508 忽略，不能将其计时变化视为该策略的收益。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
@@ -37,37 +38,36 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 详见 [最新验证和对照记录](B300_VALIDATION.md)。
 
 不依赖 GPU 的工具测试可单独运行：`uv run python -m pytest tool_tests/ -q`
-（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **393 项本地通过，181.16 s**；
+（覆盖构建、实测 CUDA/trace 重放、fallback、实验隔离、编译回调与角色插桩，共 **395 项本地通过，188.26 s**；
 依赖 TVM 的用例在没有 TVM 时跳过）。
 
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：Step 10 角色资源与 TMA 顺序实验
+### 当前进度：验收采用 B 优先加载的正式 Step 10
 
-同步本轮工具提交后，只需跑以下一个 probe。生产内核保持已验证的缓存加均衡网格。
+同步本轮提交后，运行正式全量测试和 Step 10 benchmark；最新全量结果仍为 56/57。
 
 ```bash
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/step10_roles.XXXXXX)
-uv run python -u probe_persistent.py --steps 10 --size 4096 \
-  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+tirx_run=$(mktemp -d results_b300/step10_bfirst.XXXXXX)
+uv run python -m pytest tests/ -vs --tb=short \
+  2>&1 | tee "$tirx_run/pytest_all.log"
+uv run python -u benchmark.py --steps 10 --trials 5 \
+  --csv "$tirx_run/step10.csv" \
+  --diagnostics-dir "$tirx_run/compiler_step10" \
+  2>&1 | tee "$tirx_run/benchmark_step10.log"
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
-默认三个版本：`baseline`、`role_registers`、`tma_b_first`，两项实验各自与 baseline
-比较。前者将 producer / 两个 writeback warpgroup 的寄存器配额分为 64/208/208；
-启动前用 cuobjdump 检查实际初始配额足够，记录 `register_budget.json`。后者只将
-每级 TMA 请求从 A0/A1/B 改为 B/A0/A1。保留四级输入和单写回缓冲区，评分标准不变。
+每级 TMA 请求已从 A0/A1/B 改为 B/A0/A1，四级输入、单写回缓冲区和所有同步保留。
+probe 默认只运行 baseline。寄存器实验的初始配额检查现在也拦截 NVRTC 日志中
+`setmaxnreg` 被忽略的诊断，避免将没有实施的变更当作性能实验。
+详见 [最新结果与采用依据](B300_VALIDATION.md#最新结果step10_rolesrx5lnl)。
 
-工具先为各实验验算 K=64/320 的矩形复用路径，每个形状两次、不计时，之后进行
-五轮交错计时和数值检查。保存 builder/CUDA、资源和可用 SASS，以确认优化是否
-真正减少工作或产生新的栈开销。本地仅验证源码生成与协议，GPU 结论仍待回传。
-详见 [最新结果与实验依据](B300_VALIDATION.md#最新结果step10_epiloguey2efaw)。
-
-已采用的 Step 6/7 K128、Step 8 等待提示/基址缓存、Step 10 基址缓存/均衡网格
+已采用的 Step 6/7 K128、Step 8 等待提示/基址缓存、Step 10 基址缓存/均衡网格/B 优先
 拒绝重复应用；依赖旧基线的历史组合需在对应历史提交重放。profiling 使用当前
 生产网格，历史 trace 应使用其保存的 layout 解读。
 
