@@ -29,11 +29,13 @@ Its `pytest_3a9d486_2.log` filename alone does not verify the source revision/ha
 
 The balanced eight-trial L2 probe at `9ad4a38` is complete: groups 4/2/1 were
 about 0.64%/0.55%/0.41% slower in paired latency; none is adopted. The group-eight
-baseline passed only 3/8 samples. Details are recorded from user terminal output
-for `step10_l2.nqNoLW`; that directory is not yet local.
-Next run `bash run_step10_depth5.sh` to recheck the existing depth-five input
-candidate with eight AB/BA trials. Earlier small gains used biased ordering;
-this recheck changes no production kernel, shared-B structure, timer or threshold.
+baseline passed only 3/8 samples. `step10_l2.nqNoLW` is now archived locally.
+The depth-five AB/BA recheck in `step10_depth5_balanced.Fm3CcJ` is also complete:
+**8/8 faster**, paired speedup **1.003139×**, but only **6/8 samples below the limit**
+(maximum 0.139322 ms). Original samples, source hashes and compiled artifacts have
+been checked. This supports a small gain; it does not resolve the performance
+margin. Depth five remains a candidate, production stays at depth four, and these
+completed probes need not be repeated. No timer or threshold has changed.
 
 Step 9 now snapshots the immutable TMEM allocation after cluster synchronization.
 AB/BA rechecks at `3a9d486` showed about **1.25% / 2.00%** paired speedup for
