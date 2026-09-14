@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "mma_unroll4",
+  "sources": [
+    {
+      "before_sha256": "ead9081eea1e0c40418f509fb0e75a77c0fc324386350aa252bca35d3b4ea4b4",
+      "compiled_sha256": "8bbb902125e7ca771ad5445cd2c3376a3b3d220ed6fe4836e861b2ae15475b55"
+    }
+  ]
+}
