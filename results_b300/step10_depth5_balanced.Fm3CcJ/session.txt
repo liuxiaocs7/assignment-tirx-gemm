@@ -1,0 +1,6 @@
+2026-09-14T09:54:39+00:00
+dev-slurm
+79dd8f8 docs(perf): reject L2 probes and prepare balanced depth-five recheck
+?? results_b300/step10_depth5_balanced.Fm3CcJ/
+job=27527 step=0 step_gpus=0 visible=0
+size=4096 input_depths=4,5 l2_group=8 trials=8 warmup=10 repeat=30 seed=0
