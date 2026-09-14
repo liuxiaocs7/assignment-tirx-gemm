@@ -40,7 +40,9 @@ group8 和 4096 下的 64 个均衡 cluster。Step 9 缓存已采用并通过新
 后续性能优化属于可选工作，已完成的对照无需重复。
 
 完整证据与历史见 [B300_VALIDATION.md](B300_VALIDATION.md)，各步原理与
-可选改进见 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)。
+初学者可先读 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)：从矩阵乘法、GPU
+线程和内存讲起，逐步解释十个内核、实测收益、失败实验和当前验收范围。
+文末附离线数据重算命令；[汇总表](docs/optimization_data/tables.md)链接原始样本。
 
 本机已用 TVM 0.26.0 完成全部 10 个 step 的 TIR 构建、lowering 和 CUDA 源码生成，
 覆盖 SM100a / SM103a，以及短 K、矩形和不完整流水线；本机没有 NVIDIA GPU，
@@ -151,8 +153,10 @@ probe 默认只运行新的生产 baseline；历史变体依赖旧 N256 builder�
 首轮 [step9_cache.1WDeei](results_b300/step9_cache.1WDeei/) 四尺寸和边界验证
 通过。后续 `3a9d486` 的 AB/BA 终端结果为 4096 **1.012452×**、8192
 **1.019953×**，两尺寸均 7/7 更快，且分别按 AB/BA 分组仍有收益。
-两个新结果目录 `step9_cache.EWrE9G` / `step9_cache.BBJEQB` 尚未同步到本地，
-这里使用终端数据，尚未核对其完整精度 CSV、GPU UUID 与 cubin。
+两个结果目录 [step9_cache.EWrE9G](results_b300/step9_cache.EWrE9G/) /
+[step9_cache.BBJEQB](results_b300/step9_cache.BBJEQB/) 现已在本地；已按原始样本
+重算配对收益，并核对 16 份 builder/CUDA 指纹。两次记录的 GPU UUID 均为
+`778768b4-6c9e-e483-890e-0812760948ae`，包含 cubin 与六组边界记录。
 
 以下脚本保留供后续改动验收或需要额外编译产物时重放，本次验收无需再跑：
 

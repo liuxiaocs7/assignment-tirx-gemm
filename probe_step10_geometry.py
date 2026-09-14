@@ -1,7 +1,8 @@
 """Independent grid/tile experiments for the current shared-B Step 10 builder.
 
-Only the production narrow, persistent two-slot branch is changed. These are
-unmeasured candidates, not dispatch choices for the production kernel.
+Only the production narrow, persistent two-slot branch is changed. B300 run
+step10_geometry.PywrmG measured all three candidates slower than baseline;
+they remain archived experiments, not production dispatch choices.
 """
 
 from probe_step45 import replace_once

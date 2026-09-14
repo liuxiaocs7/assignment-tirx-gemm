@@ -55,8 +55,10 @@ GPU execution; the previously reported **636-test tool suite** was at `c788f3a`.
 This result review checked recorded data and did not rerun GPU tests locally.
 
 See [RUNNING.md](RUNNING.md) for reproducible commands,
-[OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for the Chinese Step 1–10
-optimization guide, and [B300_VALIDATION.md](B300_VALIDATION.md) for experiment history.
+[OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for a beginner-friendly Chinese
+walkthrough of GPU concepts, Steps 1–10, measured gains and rejected experiments.
+It includes latency charts and [recomputed tables](docs/optimization_data/tables.md)
+linked to raw samples. See [B300_VALIDATION.md](B300_VALIDATION.md) for experiment history.
 
 In this assignment, you will progressively build a high-performance FP16 GEMM kernel for NVIDIA Blackwell (SM100) GPUs using TVM/TIRX. Starting from a minimal single-tile kernel, you will incrementally add optimizations — K-loop accumulation, spatial tiling, TMA async loads, software pipelining, persistent kernels, warp specialization, deeper pipelines, multi-CTA clusters, and multi-consumer parallelism — until you arrive at a fully optimized kernel that matches the structure of production-grade implementations.
 
