@@ -1,5 +1,39 @@
 # Blackwell GEMM：安装、测试与性能测量
 
+> 最新复测补充（2026-09-15）：用户在 `32d4fa8` 再次报告全量
+> **61 passed / 1 failed**，Step 10／4096 为 **0.139973 ms**；随后一次仍在同项
+> 性能失败。先前五轮验收记录保留，当前后续运行的性能稳定性仍待诊断。
+> 保持发生问题的 Slurm 分配，先用 `bash run_step10_diagnose.sh` 收集聚焦记录。
+
+### Step 10 性能不稳定时的聚焦复现
+
+将本次新增脚本和汇总器同步到服务器，在仓库根目录执行：
+
+```bash
+bash run_step10_diagnose.sh
+```
+
+它固定跑三次 `tests/test_step10.py::test_multi_consumer[4096]`，随后运行正式
+`benchmark.py --steps 10 --sizes 4096 --trials 8`。pytest 失败也继续采集；
+benchmark 保留 warmup=10 / repeat=30，八轮按 AB/BA 交错自研 kernel 与 cuBLAS。
+不改变 kernel、原性能门槛、评分计时器，不自动采用候选或调整 GPU 时钟。
+这里只缩小复现范围，不能把单项全过作为全量验收完成的替代证据。
+
+结果目录 `results_b300/step10_diagnose.*` 保存 GPU UUID、作业与源码信息、
+生成的 CUDA/cubin/编译选项、三次 pytest 日志、八个原始计时样本和各命令退出码。
+综合退出码非零表示测试、采集或任一原始样本超线；`summary.log` 列出全部样本、
+达标数量、最大值及最差余量。**即使 benchmark 中位数 PASS，某个原始样本超线
+仍会在诊断汇总中返回非零**，这项附加检查不修改正式 benchmark 的评分语义。
+设备快照位于计时之外，只能提供前后状态，不能证明整个 kernel 内时钟恒定。
+
+先保留全部结果，按 UUID 对应实际设备，再检查是否有其他计算进程、时钟/功耗
+限制计数变化，以及与旧记录的编译设置差异。只有数据支持后再决定是否需要
+管理员提供受控的独占/固定时钟环境，或继续针对较慢条件优化内核。
+不建议靠反复挑选通过轮次、取最小值、增大计时批次或放宽容限使原测试变绿。
+
+原先 `set -euo pipefail` 的两条验证命令会在 pytest 失败后停止，因此没有后续
+benchmark 是正常的脚本控制流，并不是 benchmark 卡住。新入口会显式保存失败。
+
 ## 1. 当前实现与验证范围
 
 `gemm_kernels.py` 已实现 Step 1–10，每个 Step 独立提交。实现参考
@@ -39,7 +73,7 @@ Step 10／4096 的五次正式 benchmark 为 0.094261–0.094725 ms，最慢仍�
 group8 和 4096 下的 64 个均衡 cluster。Step 9 缓存已采用并通过新回归。
 后续性能优化属于可选工作，已完成的对照无需重复。
 
-完整证据与历史见 [B300_VALIDATION.md](B300_VALIDATION.md)，各步原理与
+完整证据与历史见 [B300_VALIDATION.md](B300_VALIDATION.md)。
 初学者可先读 [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)：从矩阵乘法、GPU
 线程和内存讲起，逐步解释十个内核、实测收益、失败实验和当前验收范围。
 文末附离线数据重算命令；[汇总表](docs/optimization_data/tables.md)链接原始样本。

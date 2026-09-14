@@ -1,5 +1,13 @@
 # Assignment: Blackwell GEMM Kernel Optimization
 
+**Latest reproduction (2026-09-15):** the user reported another **61 passed /
+1 failed** run at `32d4fa8`: Step 10 / 4096 took **0.139973 ms**, above the unchanged
+0.139100 ms limit; a subsequent run failed the same timing assertion again.
+The five accepted runs below remain valid, but reliable performance in later
+runs is not established. Use `bash run_step10_diagnose.sh` on the failing allocation
+to preserve targeted pytest results, formal benchmark samples and device/compiler
+metadata. See [RUNNING.md](RUNNING.md) and [the latest evidence](B300_VALIDATION.md).
+
 **Implementation status:** `hgemm_v1` through `hgemm_v10` use Apache TVM
 **0.26.0** for SM100/SM103. **The five complete runs at `9e3b989` all pass:
 62/62 pytest cases per run and 185/185 all-step benchmark rows in total.**
