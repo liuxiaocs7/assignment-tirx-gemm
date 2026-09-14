@@ -1,0 +1,12 @@
+{
+  "step": 10,
+  "variant": "n128_tmem_double_buffer",
+  "shape": [
+    4096,
+    3072,
+    320
+  ],
+  "launches": 2,
+  "verified": true,
+  "timed": false
+}

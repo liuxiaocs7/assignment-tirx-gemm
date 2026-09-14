@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "baseline",
+  "sources": [
+    {
+      "before_sha256": "f23acbb9d44ce3699fca5d06cafd837b647d444b31d2f8dbfb46a1ed60008ac9",
+      "compiled_sha256": "f23acbb9d44ce3699fca5d06cafd837b647d444b31d2f8dbfb46a1ed60008ac9"
+    }
+  ]
+}

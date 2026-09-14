@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "n128_tmem_double_buffer",
+  "sources": [
+    {
+      "before_sha256": "b7233b6332e3ca53750fbdb9c84bba33e51314b8bf91e1843c114b1b5aa1bfb1",
+      "compiled_sha256": "b7233b6332e3ca53750fbdb9c84bba33e51314b8bf91e1843c114b1b5aa1bfb1"
+    }
+  ]
+}

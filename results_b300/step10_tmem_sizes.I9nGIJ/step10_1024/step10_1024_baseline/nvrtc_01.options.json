@@ -1,0 +1,22 @@
+[
+  "--gpu-architecture=sm_103a",
+  "-default-device",
+  "--device-int128",
+  "-I/usr/local/cuda/include",
+  "-I/usr/local/cuda/targets/x86_64-linux/include",
+  "-I/usr/local/cuda/targets/x86_64-linux/include/cccl",
+  "-D__NV_SILENCE_DEPRECATION_BEGIN=",
+  "-D__NV_SILENCE_DEPRECATION_END=",
+  "-D__NV_SILENCE_HOST_DEPRECATION_BEGIN=",
+  "-D__NV_SILENCE_HOST_DEPRECATION_END=",
+  "-U__CUDA_NO_HALF_OPERATORS__",
+  "-U__CUDA_NO_HALF_CONVERSIONS__",
+  "-U__CUDA_NO_BFLOAT16_OPERATORS__",
+  "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
+  "-U__CUDA_NO_BFLOAT162_OPERATORS__",
+  "-U__CUDA_NO_BFLOAT162_CONVERSIONS__",
+  "--use_fast_math",
+  "--ptxas-options=-v",
+  "--ptxas-options=--register-usage-level=10",
+  "--ptxas-options=--warn-on-local-memory-usage"
+]
