@@ -21,11 +21,14 @@ TC active cycles are 91.85% of SM-active time and 75.69% of elapsed time; L2/DRA
 throughput is 22.61%/10.73%. These support investigating utilization gaps, but
 do not establish a specific cause or a stable performance pass. No GPU rerun
 is needed to recover this report. Production and CUDA-event timing are unchanged.
-The next probe tests two TMEM accumulator slots per consumer, using the existing
-N128/EPI32 single-buffer variant as its direct control. Two N128 accumulators
-per consumer fit the existing 512-column TMEM allocation and let the next tile
-compute while writeback reads the previous tile. This is an unmeasured experiment,
-not a production optimization; see RUNNING.md for the explicit comparison command.
+The latest `step10_tmem_double.DYMgCt` tests two N128 TMEM accumulator slots per
+consumer against the N128/EPI32 single-buffer control. At 4096 it beats both that
+control and production in all seven trials: paired speedups are 1.011616x and
+1.005996x, respectively. Median/worst times are 0.137312/0.137650 ms; the worst
+sample has 1.042% margin to the limit. Boundary checks pass, and the double buffer
+uses the same 112 registers and 181248-byte dynamic SMEM as its direct control.
+It is still a probe candidate. Next, compare all four Step 10 sizes using the
+existing tool, then decide adoption and run the formal suite; see RUNNING.md.
 All **530 local tool/source-generation checks pass** (284.63 s); they do not
 replace GPU correctness and timing validation of the adopted implementation.
 See [RUNNING.md](RUNNING.md) for commands and [B300_VALIDATION.md](B300_VALIDATION.md)

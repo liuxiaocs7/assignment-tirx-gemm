@@ -35,6 +35,9 @@
 ncu 2025.3 的宽 CSV 和单位行而误报失败，现已修复，并从原文件离线恢复 795 个指标。
 TC 活跃周期占 SM 活跃期 91.85%、总时段 75.69%，L2/DRAM 吞吐为 22.61%/10.73%；
 支持优先查整体利用率空档，尚不能确定具体瓶颈或证明性能稳定。
+最新 `step10_tmem_double.DYMgCt` 的 TMEM 双缓冲在 4096 七轮都快于生产 baseline
+和 N128/EPI32 单缓冲对照，同轮收益分别为 0.600% / 1.162%。最慢 0.137650 ms，
+低于门槛约 1.042%；尚未采用，下一步检查四个评分尺寸，详见下面命令。
 
 `k128_step67.TdkZy5`（`ade5040`）已确认 Step 6、7 正式 **16 项全过**，8 个评分形状
 各五轮 benchmark、合计 40 个样本全部通过，64/128 两种 K 宽度的边界用例也通过。
@@ -49,25 +52,28 @@ Step 10 更早的等待提示、循环展开、三级流水线和宽写回均未
 主文件保持自包含，作业提交仍只需要 `gemm_kernels.py`。新增测试专门覆盖短 K、
 奇数个 K tile、矩形输出和常驻 CTA 的跨 tile 重用；原有 37 个正确性与性能用例没有降低标准。
 
-### 当前进度：TMEM 双缓冲对照实验
+### 当前进度：TMEM 双缓冲四尺寸验证
 
 `b033434` 仅修复硬件报告的 CSV 解析，`gemm_kernels.py` 未变，不能期望这个 commit
 提升性能。下面“离线恢复”命令可直接在 `b033434` 执行，检查修复；不需要重新采集。
 
-下一轮实验需要同步 `b033434` **之后**包含 `n128_tmem_double_buffer` 的工具提交。
-它不改正式内核，检验 MMA 是否能通过 TMEM 两个 accumulator 槽交替使用来隐藏
-上一 tile 的读回等待。原 N256 的两个 consumer 已用满 512 列；缩至 N128 后，每个
-consumer 用两套 128 列，占用仍为 512 列。对照保留既有窄 N 单缓冲版本，避免
-把缩 N 或 EPI32 的影响误算为双缓冲收益。
+`88b0b39` 已包含所需实验，下面命令可直接在该提交或当前版本执行。本次仅更新
+实测记录，无需等待新内核。已有七轮结果支持继续验证：双缓冲相对单缓冲与正式
+baseline 都七轮更快，但最慢样本约 1% 余量，还不能保证全量运行时稳定。
+先固定同一个候选，顺序检查四个评分尺寸，避免尚未测量的 1024/2048/8192 回退。
+4096 也在新进程中独立复测一次。
 
 ```bash
 cd ~/assignment-tirx-gemm
 mkdir -p results_b300
 set -o pipefail
-tirx_run=$(mktemp -d results_b300/step10_tmem_double.XXXXXX)
-uv run python -u probe_persistent.py --steps 10 --size 4096 --trials 7 \
-  --variants n128_tmem_double_buffer \
-  --output "$tirx_run/step10" 2>&1 | tee "$tirx_run/step10.log"
+tirx_run=$(mktemp -d results_b300/step10_tmem_sizes.XXXXXX)
+for tirx_size in 1024 2048 4096 8192; do
+  uv run python -u probe_persistent.py --steps 10 --size "$tirx_size" --trials 7 \
+    --variants n128_tmem_double_buffer \
+    --output "$tirx_run/step10_$tirx_size" \
+    2>&1 | tee "$tirx_run/step10_$tirx_size.log" || break
+done
 printf '结果目录：%s\n' "$tirx_run"
 ```
 
@@ -77,13 +83,17 @@ printf '结果目录：%s\n' "$tirx_run"
 均相同。每个槽都有单独的 phase，两个槽轮转一圈才翻转；必须等两个 CTA 的读回
 线程全部完成后才能重用该槽。与此前测过的 **SMEM 写回双缓冲** 是不同实验。
 
-计时前新实验对 `(4096,3072,K)` 的 K=64/192/256/320 各验算两次，覆盖两个 TMEM
-槽的首次使用、第三个 tile 重用槽 0，以及不同输入 ring 的边界。正式计时保持
-原 10 次预热、30 次 CUDA-event 重复，七轮交错。所有输出必须先通过数值检查。
-只有相对直接对照、生产 baseline 都有一致收益，并超过历史零点几百分比的噪声，
-才考虑采用；以 4096 **≤0.135 ms（约 3% 余量）**为本轮理想目标，不修改原
-0.139100 ms 评分门槛。即使 probe 全 PASS，也仍需采用后跑正式 Step 10、全量
-pytest 和五轮 benchmark 验收。本机检查仅验证构建及协议，B300 性能尚未测量。
+每个进程仍在计时前对 `(4096,3072,K)` 的 K=64/192/256/320 各验算两次，覆盖两个
+TMEM 槽的首次使用、第三个 tile 重用槽 0，以及不同输入 ring 的边界。保留原
+10 次预热、30 次 CUDA-event 重复，七轮交错。数值或编译错误会停止后续尺寸，
+`SLOW` 只记录实测结果，会继续收集其他尺寸；不要只看进程退出码判断是否达标。
+
+每个尺寸都比较 baseline 与候选的同轮结果和最慢样本，检查收益是否以其他尺寸
+回退为代价。4096 首测中位数 0.137312 ms、最慢 0.137650 ms，尚未达到
+≤0.135 ms（约 3% 余量）的理想目标；原 0.139100 ms 评分门槛不变。
+四尺寸验证支持后再采用到 `gemm_kernels.py`，随后跑正式 Step 10、全量 pytest
+和五轮 benchmark。当前 pytest 仍测旧生产内核，probe 的改善不会自动生效。
+本机只能核对源码生成和协议；另外三个尺寸的 GPU 正确性及性能仍待本轮结果。
 
 ### b033434：离线恢复已有硬件报告
 

@@ -1,6 +1,54 @@
 # B300 验证记录与性能诊断
 
-## 最新结果：step10_hardware.Mosdpx，采集成功，CSV 解析错误已修复
+## 最新结果：step10_tmem_double.DYMgCt，双缓冲七轮均有收益，进入四尺寸验证
+
+数据：[summary.csv](results_b300/step10_tmem_double.DYMgCt/step10/summary.csv)、
+[samples.json](results_b300/step10_tmem_double.DYMgCt/step10/samples.json)、
+[run.json](results_b300/step10_tmem_double.DYMgCt/step10/run.json)。
+版本 `88b0b39`，B300 / 148 SM / `sm_103a` / TVM 0.26.0 / NVRTC 13.0。
+七个源码指纹与该提交及当前文件一致；14 份 builder/CUDA 编译前后指纹全部匹配。
+baseline 的 CUDA、cubin、NVRTC 参数与正式 B-first 产物完全一致；两个窄 N
+单缓冲对照的这三项产物也与 `step10_n128.eVKFm2` 完全一致。
+十份边界记录、合计 20 次非计时验算通过，七轮交错计时后的数值检查也全部通过。
+
+| 版本 | 中位数 ms | 最大值 ms | 达标轮次 | 同轮相对 baseline | 同轮相对直接对照 |
+|---|---:|---:|---:|---:|---:|
+| baseline | 0.138114 | 0.138799 | 7/7 | 1.000000× | 1.000000× |
+| n_tile_128 | 0.140251 | 0.140985 | 0/7 | 0.984498× | 0.984498× |
+| n128_epi32 | 0.138810 | 0.139249 | 6/7 | 0.996069× | 1.011041×（对 n_tile_128） |
+| n128_tmem_double_buffer | **0.137312** | **0.137650** | **7/7** | **1.005996×** | **1.011616×（对 n128_epi32）** |
+
+双缓冲在 **全部七轮** 同时快于 baseline 和直接单缓冲对照，同轮加速中位数分别为
+**0.600% / 1.162%**。单独缩 N、改 EPI32 仍七轮都慢于 baseline，因此有价值的
+是完整双槽组合。最慢样本比 0.139100 ms 门槛低 **1.450 微秒 / 1.042%**；
+本轮 baseline 最慢样本余量仅 0.301 微秒 / 0.216%。收益方向比前几轮一致，
+但没有达到此前 ≤0.135 ms、约 3% 余量的理想目标，也尚无跨运行稳定性结论。
+
+| 版本 | 寄存器 / thread | STACK / LOCAL | 动态 SMEM / CTA |
+|---|---:|---:|---:|
+| baseline | 167 | 0 / 0 | 230400 bytes |
+| n_tile_128 | 105 | 0 / 0 | 197632 bytes |
+| n128_epi32 | 112 | 0 / 0 | 181248 bytes |
+| n128_tmem_double_buffer | 112 | 0 / 0 | 181248 bytes |
+
+四份 SASS 均无 LDL/STL；双缓冲 ptxas 日志明确为 0 spill stores / loads。
+新增四个 ready/free barrier 已出现在二进制初始化中，CUDA 使用随槽位改变的
+TMEM 地址并在两槽轮转后翻转 phase。与直接对照相比，双槽未增加寄存器或 SMEM；
+不能把 baseline 的 167→112 寄存器变化归为双缓冲本身的收益。
+这些证据支持继续验证 accumulator 双槽，尚不能把具体等待认定为唯一瓶颈。
+
+**下一步固定此候选，检查 1024、2048、4096、8192 四个评分尺寸。** 沿用 `88b0b39`
+已有的 `--size` / `--variants` 即可，无需新实验代码或重采 NCU。四个进程顺序运行，
+各七轮且保留完整对照链；其中 4096 同时构成一次独立复测。命令见
+[RUNNING.md](RUNNING.md)。检查每个尺寸的正确性、原门槛、同轮收益及最慢样本，
+尤其不能用 4096 的改善推断 8192 也会改善。
+
+四尺寸证据支持后再将候选纳入正式内核，随后运行原 Step 10 / 全量 pytest 和
+benchmark；当前直接运行 pytest 仍使用旧生产版本。本次只更新实测记录和验证步骤，
+生产 SHA256 仍为 `3dfec9f00bda86d46f1664ca17ffe7af5f6095e78884cdc54bec956990c7bcf7`，
+最新正式全量状态仍是 **56 passed / 1 failed**，不能称为已稳定全过。
+
+## 前轮结果：step10_hardware.Mosdpx，采集成功，CSV 解析错误已修复
 
 原始数据：[raw.csv](results_b300/step10_hardware.Mosdpx/profile/raw.csv)、
 [worker.json](results_b300/step10_hardware.Mosdpx/profile/worker.json)、
@@ -68,7 +116,7 @@ clock/cache control，ncu 已提示多 pass 指标可能不一致。不能拿它
 139.1 us 直接评分，或单凭它宣称热降频。正式全量结果仍为 **56 passed / 1 failed**，
 本轮只修复诊断工具，生产内核、计时器和 GPU 验收标准均未改变。
 
-### 下一轮：N128 下独立验证 TMEM accumulator 双缓冲
+### TMEM 双缓冲实验设计（4096 首轮实测见本文开头）
 
 `b033434` 是报告修复，不是性能修复。下一步用一个新变体检验 tile 间的读回等待，
 依据是 TC 在 SM 活跃期间较忙、整体利用率较低，以及发射端指令削减没有收益。
@@ -115,10 +163,10 @@ load wait、before-thread-sync fence 和 256 个远端线程到达后才释放�
 这是协议检查，不能替代 GPU 数值检查和 SASS/资源检查。
 新增 20 项检查通过，完整本地工具/源码生成回归 **530 passed，284.63 s**。
 
-同步新增实验的工具提交后执行 [RUNNING.md 中的七轮命令](RUNNING.md)。
-本轮理想目标为 4096 最慢样本 ≤0.135 ms，给原门槛约 3% 余量；它是选优目标，
-**不改变原评分标准**。若有明确收益，再采用并验证所有 Step 10 形状及完整套件。
-目前生产内核 SHA256 和正式全量状态不变，仍不能宣称稳定通过。
+该实验已在 `88b0b39` 完成 4096 七轮实测，结果见本文开头。
+原理想目标为最慢样本 ≤0.135 ms，给原门槛约 3% 余量；它是选优目标，
+**不改变原评分标准**。首测有一致收益，下一步按 [RUNNING.md](RUNNING.md)
+完成四尺寸对照，再决定正式采用；生产内核和正式全量状态尚未改变。
 
 ## 前轮结果：step10_mma_unroll4.iR07fS，固定展开后没有性能收益
 
