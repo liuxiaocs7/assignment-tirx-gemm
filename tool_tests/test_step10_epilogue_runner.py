@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize('runner,variants', [
     ('run_step10_epilogue.sh', ['tmem_epi64', 'tmem_epi128', 'tmem_epi32_double']),
     ('run_step10_ready.sh', ['tmem_split_ready']),
+    ('run_step10_granularity.sh', ['tmem_k32_depth10']),
 ])
 @pytest.mark.parametrize('failure', ['', 'device', 'probe', 'tee', 'snapshot'])
 def test_epilogue_runner_saves_failures_and_balanced_command(tmp_path, failure, runner, variants):
@@ -60,7 +61,8 @@ sys.exit(4 if os.environ['TEST_FAILURE']=='device' else 0)
         f'probe={3 if failure == "probe" else 0} tee={5 if failure == "tee" else 0}')
 
 
-@pytest.mark.parametrize('runner', ['run_step10_epilogue.sh', 'run_step10_ready.sh'])
+@pytest.mark.parametrize('runner', ['run_step10_epilogue.sh', 'run_step10_ready.sh',
+                                  'run_step10_granularity.sh'])
 def test_bad_arguments_exit_before_any_run(tmp_path, runner):
     shutil.copy2(ROOT / runner, tmp_path)
     result = subprocess.run(['bash', runner, '--unexpected'], cwd=tmp_path,

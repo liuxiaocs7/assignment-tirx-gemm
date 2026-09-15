@@ -31,16 +31,19 @@ def slot(pointer, role, stage, consumer=0):
     return eval(expression, {'__builtins__': {}}, {'warp_id_in_cta': 8 + consumer})
 
 
-def simulate_input_ring(cuda, k_stages, seed):
+def simulate_input_ring(cuda, k_stages, seed, *, transfer_sizes=None):
     """Delay each CTA's B/A transfers and each consumer independently.
 
     Barrier addresses, expected transaction bytes, and free arrival counts
     come from emitted CUDA. Each transfer may complete before expect_tx is
     posted, and the input phase persists across output tile boundaries.
     """
-    depth, total = 4, k_stages * 7
+    depth = int(re.search(r'if \(tma_phase_stage_ptr\[0\] == (\d+)\)', cuda)[1])
+    assert f'if (mma_phase_stage_ptr[0] == {depth})' in cuda
+    total = k_stages * 7
     rng = random.Random(seed)
-    loads, expects = calls(cuda, COPY), calls(cuda, EXPECT)
+    loads = calls(cuda, (COPY, COPY.replace('2d', '3d')))
+    expects = calls(cuda, EXPECT)
     waits = [a for a in calls(cuda, WAIT) if 'mma_phase_stage' in a[0]]
     commits = [a for a in calls(cuda, COMMIT) if 'mma_phase_stage' in a[0]]
     frees = [a for a in calls(cuda, WAIT) if 'tma_phase_stage' in a[0]]
@@ -54,9 +57,11 @@ def simulate_input_ring(cuda, k_stages, seed):
         return remote_bases[name] + eval(expr.replace('tma_phase_stage_ptr[0]', str(stage)),
                                         {'__builtins__': {}}, {})
 
-    # Each rank issues three input copies with identical storage/shape to
-    # production. Their completion credits must match exactly one ready bar.
-    sizes = [8192, 16384, 16384]
+    # Each rank issues B/A0/A1. Byte sizes default to the split-ready K64
+    # experiment; other layouts supply sizes from their TMA descriptors.
+    # Each transfer's completion credit must match exactly one ready bar.
+    sizes = transfer_sizes if transfer_sizes is not None else [8192, 16384, 16384]
+    assert len(loads) == len(sizes) == 3
     produced, issued, finished = [0, 0], [0, 0], [0, 0]
     free_phase = {(rank, s): 0 for rank in range(2) for s in range(depth)}
     ready_phase, ready_generation = {}, {}
