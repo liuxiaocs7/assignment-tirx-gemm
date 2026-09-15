@@ -1,9 +1,11 @@
-"""Unmeasured shared-B input-granularity experiments on the current Step 10.
+"""Archived shared-B input-granularity experiments on the current Step 10.
 
 Separate the required 64-byte swizzle from K32 staging, then vary capacity.
 K64/depth4 and K32/depth8 hold the same input bytes. K32 doubles per-tile
 TMA requests and barrier epochs; smaller transactions need not be faster.
 Production dispatch, timing and grading are unchanged.
+Measured in step10_granularity.nVKp6r: all three candidates lose every pair
+to production by about 28% latency. None is adopted; retained for replay.
 """
 
 from probe_step45 import replace_once

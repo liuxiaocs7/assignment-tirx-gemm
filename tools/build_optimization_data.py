@@ -59,6 +59,11 @@ EXPERIMENTS = [
     *[(f"s10_{v}", "step10_epilogue.xVWC2d/step10_4096", 10, "baseline", f"tmem_{v}", "not_adopted")
       for v in ("epi64", "epi128", "epi32_double")],
     ("s10_split_ready", "step10_ready.FAnkEQ/step10_4096", 10, "baseline", "tmem_split_ready", "not_adopted"),
+    ("s10_input_sw64", "step10_granularity.nVKp6r/step10_4096", 10, "baseline", "tmem_k64_sw64", "not_adopted"),
+    ("s10_k32depth8", "step10_granularity.nVKp6r/step10_4096", 10, "tmem_k64_sw64", "tmem_k32_depth8", "not_adopted"),
+    ("s10_k32depth8_total", "step10_granularity.nVKp6r/step10_4096", 10, "baseline", "tmem_k32_depth8", "not_adopted"),
+    ("s10_k32depth10", "step10_granularity.nVKp6r/step10_4096", 10, "tmem_k32_depth8", "tmem_k32_depth10", "not_adopted"),
+    ("s10_k32depth10_total", "step10_granularity.nVKp6r/step10_4096", 10, "baseline", "tmem_k32_depth10", "not_adopted"),
 ]
 
 

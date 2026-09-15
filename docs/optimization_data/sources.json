@@ -12,6 +12,7 @@
   "results_b300/step10_epilogue.xVWC2d/step10_4096/samples.json": "ffdcd32c4d430621337c8a6bdbf0988bea2041c80c01b8c3933bee9d419d8072",
   "results_b300/step10_fused_a.1VXYz2/step10/samples.json": "4fa7ed898f30cd411380c33d45affbd279cf455c9aafdbe149ea8e85b06d1aff",
   "results_b300/step10_geometry.PywrmG/step10_4096/samples.json": "8ba468af3ae678d1716af8773524a89fcf8804326f2fdf346b0c1b9547455735",
+  "results_b300/step10_granularity.nVKp6r/step10_4096/samples.json": "20d93830ff71ee0114f123f7e2159b41728b617c04b3ce9b50a3861b9a5c0528",
   "results_b300/step10_input_ring.9SsKZM/step10/samples.json": "106a2392d11b8cff341976b49d200031330e89f37c0dc56cfaddf5b82fa5f919",
   "results_b300/step10_l2.nqNoLW/step10_4096/samples.json": "b0a2f383971aa4e3efb9149d18f464b371129fe9ea03f756807ebc144d374dd4",
   "results_b300/step10_mma_unroll4.iR07fS/step10/samples.json": "7edec90ac9585e616b96577c3711138135ad9f48c3e89d18054c8d3e3207074d",
