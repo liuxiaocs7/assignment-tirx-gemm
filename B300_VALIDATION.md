@@ -1,5 +1,40 @@
 # B300 验证记录与性能诊断
 
+## 待执行：SW128 / SW64 的定向硬件对照
+
+上一轮布局改变造成约28%的配对耗时退化，但 K32 在相同 SW64 布局上基本
+持平。新增 [profile_step10_layout.py](profile_step10_layout.py) 复用已有
+[profile_hardware.py](profile_hardware.py)，只对正式 K64/SW128 与已验证的
+K64/SW64 各采两份 NCU 报告，按 ABBA 顺序。目标是区分计算取数、TMA 搬运、
+控制指令或运行状态的解释；没有新性能候选，更没有宣称问题已经修复。
+
+入口及判读标准见 [运行说明](RUNNING.md)。每次先验算、十次预热，之后独立
+采集一个 launch 并再次验算。编译捕获 hook 在采集前移除；采集前将输出填 NaN，
+防止复用预热结果误判。每份保留源码/编译设置/GPU UUID、CUDA/cubin、原始计数器。
+仅请求 NCU 实际列出的补充指标，缺失与非数值指标显式标记；报告同时给出
+两组 SW64/正式版比值与同版本首尾比值，不隐藏四份原始值。
+
+重点补绝对 Tensor Core/TMA 活跃周期、动态指令与 TMA 请求数、L2 sectors 和
+DRAM bytes，并结合时钟/活跃百分比阅读。SMEM、TMEM 与 TMA 是不同路径；
+`sm__mem_tensor_cycles_active` 是 TMEM 活动，不是 SMEM bank conflict 指标。
+请求次数无法独自给出搬运延迟，活跃百分比也不能独自给出单位计算效率。
+NCU kernel replay 不属于原始评分计时；ABBA 不能消除一切漂移，也不能用四次
+profile 宣称统计显著。若证据不足，将补针对性的同口径角色插桩/微基准。
+
+本机 TVM 0.26 的相关测试 **51 passed / 14.34 s，零跳过**：
+
+- 真实归档 NCU CSV 的解析与离线恢复继续通过。
+- 两版生成的 CUDA kernel 主体分别与 `step10_granularity.nVKp6r` 归档一致；
+  候选通过隔离 builder 构建，正式 builder 保持原对象。
+- 验证采集窗口、异常时关闭 profiler、NaN 输出校验，两个版本均覆盖。
+- 子进程 fixture 实测完整四次 ABBA 调用/CSV 导出/离线重建；拒绝源码、GPU、
+  编译参数、重复二进制不一致、未验算、缺报告或错误 kernel 的混合证据。
+- 计数器不可用、NaN、零分母、不同单位不生成误导性比值；采集失败保留记录。
+
+本机没有 B300，此处的完成范围是诊断入口与 CPU 可验证行为。正式
+`gemm_kernels.py`、`utils.py`、`benchmark.py` 与 GPU tests 均未修改，性能稳定性
+仍待后续实际优化解决。
+
 ## 最新输入粒度实验：三个候选均明显退化，全部不采用
 
 `47300da` 归档 [step10_granularity.nVKp6r](results_b300/step10_granularity.nVKp6r/)。

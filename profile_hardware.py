@@ -1,9 +1,10 @@
-"""Collect Nsight Compute counters for production Step 10 / 4096.
+"""Collect Nsight Compute counters for Step 10 / 4096.
 
 This is a diagnostic run, not a performance test. Compilation, verification
 and ten warmups precede a single cudaProfilerStart/Stop-delimited GEMM launch.
 NCU kernel replay can perturb execution even with clock/cache control disabled.
 Use --analyze DIRECTORY to recover an existing raw.csv without NCU or a GPU.
+The only optional candidate is the previously verified K64/SW64 layout.
 """
 
 import argparse
@@ -25,11 +26,30 @@ from benchmark_diagnostics import capture_compilation, run_metadata, write_json
 SECTIONS = ("SpeedOfLight", "ComputeWorkloadAnalysis", "MemoryWorkloadAnalysis",
             "SchedulerStats", "WarpStateStats", "LaunchStats", "Occupancy")
 ROOT = Path(__file__).resolve().parent
+VARIANTS = ("baseline", "tmem_k64_sw64")
+# Request absolute work/cycle counters as well as the section percentages.
+# Availability is discovered on the installed NCU/device, not assumed. In
+# particular mem_tensor measures TMEM activity, NOT SMEM bank conflicts.
+LAYOUT_METRICS = (
+    "gpc__cycles_elapsed.avg", "gpc__cycles_elapsed.avg.per_second",
+    "sm__cycles_active.avg", "sm__pipe_tc_cycles_active.avg",
+    "sm__pipe_tensor_cycles_active.avg", "sm__mem_tensor_cycles_active.avg",
+    "sm__pipe_tma_cycles_active.avg",
+    "sm__inst_executed_pipe_tensor_subpipe_hmma.sum",
+    "sm__inst_executed_pipe_tma.sum", "smsp__inst_executed.sum",
+    "l1tex__tmain_requests.sum", "lts__t_sectors.sum", "dram__bytes.sum",
+)
+SOURCE_KEYS = ("gemm_kernels_sha256", "utils_sha256", "benchmark_diagnostics_sha256",
+               "profile_hardware_sha256")
 
 
-def metadata():
+def metadata(variant="baseline"):
     return dict(run_metadata(ROOT), step=10, shape=[4096, 4096, 4096], seed=0,
-                warmup=10, diagnostic_only=True,
+                warmup=10, diagnostic_only=True, variant=variant,
+                slurm={k: os.environ.get(k, "") for k in ("SLURM_JOB_ID", "SLURM_STEP_ID")},
+                profile_sources={name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+                                 for name in ("probe_persistent.py", "probe_step45.py",
+                                              "probe_step10_granularity.py", "profile_persistent.py")},
                 profile_hardware_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
 
 
@@ -53,7 +73,12 @@ def select_sections(listing):
     return selected
 
 
-def collection_command(ncu, directory, sections, help_text):
+def select_layout_metrics(listing):
+    available = set(re.findall(r"\b[A-Za-z][A-Za-z0-9_]*__[A-Za-z0-9_.]+", listing))
+    return [name for name in LAYOUT_METRICS if name in available]
+
+
+def collection_command(ncu, directory, sections, help_text, variant="baseline", metrics=()):
     command = [ncu, "--profile-from-start", "off", "--launch-count", "1",
                "--kernel-name-base", "function", "--kernel-name", "kernel_kernel",
                "--replay-mode", "kernel", "--clock-control", "none", "--cache-control", "none"]
@@ -63,8 +88,21 @@ def collection_command(ncu, directory, sections, help_text):
         command += ["--pipeline-boost-state", "dynamic"]
     for section in sections:
         command += ["--section", section]
+    if metrics:
+        command += ["--metrics", ",".join(metrics)]
     return command + ["--export", str(directory / "step10_4096"), sys.executable,
-                      "-u", str(Path(__file__).resolve()), "--_worker", "--output", str(directory)]
+                      "-u", str(Path(__file__).resolve()), "--_worker", "--output", str(directory),
+                      "--variant", variant]
+
+
+def profile_kernel(variant, directory):
+    import gemm_kernels
+    if variant == "baseline":
+        return gemm_kernels.hgemm_v10(4096, 4096, 4096)
+    if variant != "tmem_k64_sw64":
+        raise ValueError(f"unsupported hardware profile variant: {variant}")
+    from probe_persistent import build_variant
+    return build_variant(10, (4096,) * 3, variant, directory / "builder")
 
 
 def profile_once(call, cuda):
@@ -78,14 +116,14 @@ def profile_once(call, cuda):
         cuda.profiler.stop()
 
 
-def worker(directory):
+def worker(directory, variant="baseline"):
     import torch
     import tvm
     import gemm_kernels
     from profile_persistent import dump_sass
     from utils import blackwell_target, prepare_data, verify
 
-    info = metadata()
+    info = metadata(variant)
     info["status"] = "preparing"
     write_json(directory / "worker.json", info)
     if not torch.cuda.is_available():
@@ -94,12 +132,14 @@ def worker(directory):
     device = torch.cuda.get_device_properties(torch.cuda.current_device())
     gemm_kernels.SM_COUNT = device.multi_processor_count
     info.update(target=str(target), gpu=device.name, sm_count=device.multi_processor_count,
+                gpu_uuid=str(device.uuid),
+                cpu_affinity=sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
                 tvm=tvm.__version__, torch=torch.__version__, cuda=torch.version.cuda)
     torch.manual_seed(0)
     torch.cuda.manual_seed_all(0)
     A, B, output = prepare_data(4096, 4096, 4096)
     output.fill_(float("nan"))
-    kernel = gemm_kernels.hgemm_v10(4096, 4096, 4096)
+    kernel = profile_kernel(variant, directory)
     compiler_dir = directory / "compiler"
     with target, capture_compilation(compiler_dir):
         executable = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
@@ -108,7 +148,8 @@ def worker(directory):
     dump_sass(compiler_dir)
     info["status"] = "verified_before_profile"
     write_json(directory / "worker.json", info)
-    print(f"Verified production Step 10 / 4096; GPU: {device.name}; SMs: {device.multi_processor_count}",
+    print(f"Verified Step 10 / 4096 / {variant}; GPU: {device.name}; UUID: {device.uuid}; "
+          f"SMs: {device.multi_processor_count}",
           flush=True)
     call = lambda: executable.mod(A, B, output)
     for _ in range(10):
@@ -210,7 +251,7 @@ def analyze(source, directory):
         child = json.loads((source / "worker.json").read_text())
         if child.get("status") != "verified_after_profile":
             raise RuntimeError("recorded worker did not finish output verification")
-        for key in ("gemm_kernels_sha256", "utils_sha256", "benchmark_diagnostics_sha256", "profile_hardware_sha256"):
+        for key in (*SOURCE_KEYS, *(k for k in ("variant", "profile_sources") if k in collected)):
             if not collected.get(key) or child.get(key) != collected[key]:
                 raise RuntimeError(f"recorded collection/worker source mismatch: {key}")
         raw = source / "raw.csv"
@@ -230,9 +271,9 @@ def analyze(source, directory):
     return code
 
 
-def collect(directory, requested_ncu=None):
+def collect(directory, requested_ncu=None, variant="baseline", layout_counters=False):
     directory.mkdir(parents=True, exist_ok=False)
-    info = metadata()
+    info = metadata(variant)
     info.update(status="collecting", replay_mode="kernel", clock_control="none", cache_control="none",
                 replay_caveat="No cache flush: metric values may differ between replay passes. "
                               "Profiling perturbs execution; no PASS/SLOW scoring.", commands=[])
@@ -269,17 +310,26 @@ def collect(directory, requested_ncu=None):
         info["ncu_version"] = run([ncu, "--version"], "ncu_version.txt").strip()
         help_text = run([ncu, "--help"], "ncu_help.txt")
         sections = select_sections(run([ncu, "--list-sections"], "ncu_sections.txt"))
+        metrics = []
+        if layout_counters:
+            listing = run([ncu, "--query-metrics", "--query-metrics-mode", "all", "--devices", "0"],
+                          "ncu_metrics.txt")
+            metrics = select_layout_metrics(listing)
+            info.update(layout_metrics=metrics,
+                        missing_layout_metrics=[m for m in LAYOUT_METRICS if m not in metrics])
+            print(f"Extra layout counters: {len(metrics)}/{len(LAYOUT_METRICS)} available; "
+                  f"missing: {info['missing_layout_metrics']}", flush=True)
         info.update(sections=sections, missing_sections=[s for s in SECTIONS if s not in sections],
                     pipeline_boost_state="dynamic" if "--pipeline-boost-state" in help_text else "tool default")
         print(f"{info['ncu_version']}\nSections: {', '.join(sections)}", flush=True)
         if info["missing_sections"]:
             print(f"Unavailable sections: {', '.join(info['missing_sections'])}", flush=True)
-        print("Collecting production Step 10 / 4096. Diagnostic counters only; no timing score.", flush=True)
-        run(collection_command(ncu, directory, sections, help_text), "ncu.log", stream=True)
+        print(f"Collecting Step 10 / 4096 / {variant}. Diagnostic counters only; no timing score.", flush=True)
+        run(collection_command(ncu, directory, sections, help_text, variant, metrics), "ncu.log", stream=True)
         child = json.loads((directory / "worker.json").read_text())
         if child["status"] != "verified_after_profile":
             raise RuntimeError("profile worker did not finish output verification")
-        for key in ("gemm_kernels_sha256", "utils_sha256", "benchmark_diagnostics_sha256", "profile_hardware_sha256"):
+        for key in (*SOURCE_KEYS, "variant", "profile_sources"):
             if child[key] != info[key]:
                 raise RuntimeError(f"source changed during collection: {key}")
         reports = [p for p in (directory / "step10_4096.ncu-rep", directory / "step10_4096.nsight-cuprof",
@@ -292,6 +342,9 @@ def collect(directory, requested_ncu=None):
                    "--print-kernel-base", "function"], "raw.csv")
         parsed = parse_raw_report(raw)
         info.update(report_check=parsed["check"], report_format=parsed["format"])
+        if layout_counters:
+            info["unavailable_layout_metrics"] = [m for m in LAYOUT_METRICS
+                if not numeric_value(parsed["metrics"].get(m, {}).get("value", ""))]
         write_metrics(directory, parsed)
         detail_flag = "--print-details" if "--print-details" in help_text else "--details-all"
         detail_args = [detail_flag, "all"] if detail_flag == "--print-details" else [detail_flag]
@@ -312,19 +365,21 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True, help="fresh directory; must not exist")
     parser.add_argument("--ncu", help="Nsight Compute executable; default: PATH, then CUDA_PATH/bin/ncu")
     parser.add_argument("--analyze", type=Path, help="existing collection directory with raw.csv; no GPU/NCU needed")
+    parser.add_argument("--variant", choices=VARIANTS, default="baseline")
+    parser.add_argument("--layout-counters", action="store_true", help="query and add absolute input/compute counters")
     parser.add_argument("--_worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    if args.analyze and (args._worker or args.ncu):
-        parser.error("--analyze cannot be combined with --ncu or --_worker")
+    if args.analyze and (args._worker or args.ncu or args.variant != "baseline" or args.layout_counters):
+        parser.error("--analyze cannot be combined with collection options")
     directory = args.output.resolve()
     if args._worker:
-        worker(directory)
+        worker(directory, args.variant)
         return 0
     if directory.exists():
         parser.error("--output must be a fresh directory")
     if args.analyze:
         return analyze(args.analyze.resolve(), directory)
-    return collect(directory, args.ncu)
+    return collect(directory, args.ncu, args.variant, args.layout_counters)
 
 
 if __name__ == "__main__":

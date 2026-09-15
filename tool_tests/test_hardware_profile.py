@@ -118,7 +118,8 @@ def test_offline_recovery_rejects_invalid_evidence(tmp_path, change):
 
 
 @pytest.mark.parametrize("failure", [None, "launch", "synchronize"])
-def test_worker_profiles_only_warmed_production_launch_and_stops_on_failure(tmp_path, monkeypatch, failure):
+@pytest.mark.parametrize("variant", hardware.VARIANTS)
+def test_worker_profiles_only_warmed_production_launch_and_stops_on_failure(tmp_path, monkeypatch, failure, variant):
     events = []
     state = dict(active=False, launches=0, captured=False)
     A, B = object(), object()
@@ -154,7 +155,7 @@ def test_worker_profiles_only_warmed_production_launch_and_stops_on_failure(tmp_
         assert not state["active"] and not state["captured"]
         events.append("verify")
 
-    device = SimpleNamespace(name="B300 fixture", multi_processor_count=148)
+    device = SimpleNamespace(name="B300 fixture", uuid="GPU-fixture", multi_processor_count=148)
     cuda = SimpleNamespace(is_available=lambda: True, current_device=lambda: 0,
                            get_device_properties=lambda index: device, synchronize=sync,
                            manual_seed_all=lambda seed: None, profiler=SimpleNamespace(start=start, stop=stop))
@@ -169,6 +170,11 @@ def test_worker_profiles_only_warmed_production_launch_and_stops_on_failure(tmp_
 
     gemm.hgemm_v10 = builder
     monkeypatch.setitem(sys.modules, "gemm_kernels", gemm)
+    def build_variant(step, shape, selected, directory):
+        assert step == 10 and selected == "tmem_k64_sw64" and variant == selected
+        assert directory == tmp_path / "builder"
+        return builder(*shape)
+    monkeypatch.setitem(sys.modules, "probe_persistent", SimpleNamespace(build_variant=build_variant))
 
     def compile_kernel(mod, target, tir_pipeline):
         assert mod == {"main": kernel} and tir_pipeline == "tirx" and state["captured"]
@@ -191,16 +197,17 @@ def test_worker_profiles_only_warmed_production_launch_and_stops_on_failure(tmp_
     monkeypatch.setattr(hardware, "capture_compilation", capture)
     if failure:
         with pytest.raises(RuntimeError, match=f"fixture {failure} failed"):
-            hardware.worker(tmp_path)
+            hardware.worker(tmp_path, variant)
         assert events[-1] == "stop"
         assert json.loads((tmp_path / "worker.json").read_text())["status"] != "verified_after_profile"
     else:
-        hardware.worker(tmp_path)
+        hardware.worker(tmp_path, variant)
         assert events[events.index("start"):events.index("stop") + 1] == ["start", "profiled_launch", "sync", "stop"]
         assert events[events.index("start") - 2:events.index("start")] == ["fill", "sync"]
         assert events.count("fill") == 2
         assert events.count("verify") == 2
         assert json.loads((tmp_path / "worker.json").read_text())["status"] == "verified_after_profile"
+        assert json.loads((tmp_path / "worker.json").read_text())["variant"] == variant
     assert not state["active"]
 
 
@@ -218,17 +225,27 @@ elif args == ["--help"]:
     print("--print-details --pipeline-boost-state" if mode != "legacy" else "--details-all")
 elif args == ["--list-sections"]:
     print("SpeedOfLight ComputeWorkloadAnalysis SchedulerStats LaunchStats")
+elif "--query-metrics" in args:
+    assert args == ["--query-metrics", "--query-metrics-mode", "all", "--devices", "0"]
+    print("sm__pipe_tc_cycles_active.avg sm__cycles_active.avg smsp__inst_executed.sum")
 elif "--import" in args:
     assert pathlib.Path(args[args.index("--import") + 1]).is_file()
     if "raw" in args:
         writer = csv.writer(sys.stdout)
-        if mode == "wide":
+        if mode == "layout":
+            directory = pathlib.Path(args[args.index("--import") + 1]).parent
+            info = json.loads((directory / "worker.json").read_text())
+            writer.writerow(["ID", "Process ID", "Kernel Name", "Metric Name", "Metric Value", "Metric Unit"])
+            value = 128 if info["variant"] == "tmem_k64_sw64" else 100
+            writer.writerow(["0", "123", "kernel_kernel", "sm__pipe_tc_cycles_active.avg", value, "cycle"])
+            writer.writerow(["0", "123", "kernel_kernel", "sm__cycles_active.avg", value, "cycle"])
+        elif mode == "wide":
             writer.writerow(["ID", "Process ID", "Kernel Name", "sm__throughput.avg.pct_of_peak_sustained_elapsed"])
             writer.writerow(["", "", "", "%"])
             writer.writerow(["0", "123", "kernel_kernel", "72.5"])
         else:
             writer.writerow(["ID", "Process ID", "Kernel Name", "Metric Name", "Metric Value"])
-        if mode not in ("empty", "wide"):
+        if mode not in ("empty", "wide", "layout"):
             writer.writerow(["0", "123", "kernel_kernel", "sm__throughput.avg.pct_of_peak_sustained_elapsed", "72.5"])
     else:
         assert ("--details-all" if mode == "legacy" else "--print-details") in args
@@ -244,7 +261,19 @@ else:
         sys.exit(1)
     directory = pathlib.Path(args[args.index("--output") + 1])
     meta = json.loads((directory / "run.json").read_text())
+    assert args[args.index("--variant") + 1] == meta["variant"]
     meta["status"] = "verified_after_profile" if mode != "unverified" else "preparing"
+    if mode == "layout":
+        assert args[args.index("--metrics") + 1] == "sm__cycles_active.avg,sm__pipe_tc_cycles_active.avg,smsp__inst_executed.sum"
+        meta.update(gpu_uuid="GPU-fixture", gpu="B300", sm_count=148, target="sm_103a",
+                    tvm="0.26", torch="fixture", cuda="13.0", cpu_affinity=[210, 211])
+        compiler = directory / "compiler"
+        compiler.mkdir()
+        (compiler / "capture.json").write_text(json.dumps(dict(modules=1, compiler="nvrtc")))
+        for suffix in ("cu", "cubin"):
+            (compiler / ("module_01." + suffix)).write_text(meta["variant"])
+        (compiler / "nvrtc_01.options.json").write_text('["fixture"]')
+        (compiler / "nvrtc_version.json").write_text('{"major":13}')
     if mode == "changed_source":
         meta["gemm_kernels_sha256"] = "changed"
     (directory / "worker.json").write_text(json.dumps(meta))
