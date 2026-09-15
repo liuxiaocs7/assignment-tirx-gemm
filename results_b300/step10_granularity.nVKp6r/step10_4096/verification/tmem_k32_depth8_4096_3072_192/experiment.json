@@ -1,0 +1,10 @@
+{
+  "step": 10,
+  "variant": "tmem_k32_depth8",
+  "sources": [
+    {
+      "before_sha256": "59cf7887e0257adf85d08bf892b6f22696f36b932ff8ae2dbfe83fbd2e66f244",
+      "compiled_sha256": "59cf7887e0257adf85d08bf892b6f22696f36b932ff8ae2dbfe83fbd2e66f244"
+    }
+  ]
+}

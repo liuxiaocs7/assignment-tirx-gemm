@@ -1,0 +1,69 @@
+Code: c6a92ff30ed9b818675d3ccc190354e8055dd2cf; gemm_sha256=727a44403b6c1ea0a0499c8212e5796d0fa2b31944929e9ecd50d60be4b961f2
+GPU: NVIDIA B300 SXM6 AC; SMs: 148; {"kind":"cuda","tag":"","keys":["cuda","gpu"],"max_num_threads":1024,"thread_warp_size":32,"arch":"sm_103a"}
+Separate builds; each experiment records its direct comparison control. Verify all outputs before interleaved CUDA-event timing.
+Verified step 10 / baseline
+Verified step 10 / tmem_k64_sw64
+Verified step 10 / tmem_k32_depth8
+Verified step 10 / tmem_k32_depth10
+Verified boundary Step 10 / tmem_k64_sw64 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / tmem_k64_sw64 / (4096, 3072, 192) twice (untimed)
+Verified boundary Step 10 / tmem_k64_sw64 / (4096, 3072, 256) twice (untimed)
+Verified boundary Step 10 / tmem_k64_sw64 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / tmem_k64_sw64 / (4096, 3072, 384) twice (untimed)
+Verified boundary Step 10 / tmem_k64_sw64 / (4096, 3072, 512) twice (untimed)
+Verified boundary Step 10 / tmem_k64_sw64 / (4608, 2560, 320) twice (untimed)
+Verified boundary Step 10 / tmem_k64_sw64 / (512, 9728, 192) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth8 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth8 / (4096, 3072, 192) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth8 / (4096, 3072, 256) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth8 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth8 / (4096, 3072, 384) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth8 / (4096, 3072, 512) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth8 / (4608, 2560, 320) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth8 / (512, 9728, 192) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth10 / (4096, 3072, 64) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth10 / (4096, 3072, 192) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth10 / (4096, 3072, 256) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth10 / (4096, 3072, 320) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth10 / (4096, 3072, 384) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth10 / (4096, 3072, 512) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth10 / (4608, 2560, 320) twice (untimed)
+Verified boundary Step 10 / tmem_k32_depth10 / (512, 9728, 192) twice (untimed)
+Trial 1: step 10 / baseline: 0.139820 ms
+Trial 1: step 10 / tmem_k64_sw64: 0.179228 ms
+Trial 1: step 10 / tmem_k32_depth8: 0.176447 ms
+Trial 1: step 10 / tmem_k32_depth10: 0.176293 ms
+Trial 2: step 10 / tmem_k32_depth10: 0.179789 ms
+Trial 2: step 10 / tmem_k32_depth8: 0.178358 ms
+Trial 2: step 10 / tmem_k64_sw64: 0.178438 ms
+Trial 2: step 10 / baseline: 0.138975 ms
+Trial 3: step 10 / tmem_k32_depth8: 0.178580 ms
+Trial 3: step 10 / tmem_k32_depth10: 0.178742 ms
+Trial 3: step 10 / baseline: 0.138931 ms
+Trial 3: step 10 / tmem_k64_sw64: 0.178130 ms
+Trial 4: step 10 / tmem_k64_sw64: 0.177555 ms
+Trial 4: step 10 / baseline: 0.138901 ms
+Trial 4: step 10 / tmem_k32_depth10: 0.179086 ms
+Trial 4: step 10 / tmem_k32_depth8: 0.177963 ms
+Trial 5: step 10 / baseline: 0.139442 ms
+Trial 5: step 10 / tmem_k64_sw64: 0.178571 ms
+Trial 5: step 10 / tmem_k32_depth8: 0.178073 ms
+Trial 5: step 10 / tmem_k32_depth10: 0.179335 ms
+Trial 6: step 10 / tmem_k32_depth10: 0.179002 ms
+Trial 6: step 10 / tmem_k32_depth8: 0.178638 ms
+Trial 6: step 10 / tmem_k64_sw64: 0.178132 ms
+Trial 6: step 10 / baseline: 0.139001 ms
+Trial 7: step 10 / tmem_k32_depth8: 0.178103 ms
+Trial 7: step 10 / tmem_k32_depth10: 0.178702 ms
+Trial 7: step 10 / baseline: 0.138938 ms
+Trial 7: step 10 / tmem_k64_sw64: 0.178059 ms
+Trial 8: step 10 / tmem_k64_sw64: 0.177952 ms
+Trial 8: step 10 / baseline: 0.138907 ms
+Trial 8: step 10 / tmem_k32_depth10: 0.179335 ms
+Trial 8: step 10 / tmem_k32_depth8: 0.178290 ms
+step variant         median_ms    min_ms    max_ms paired_speedup vs_cache control                   vs_control limit_ms status
+  10 baseline         0.138956  0.138901  0.139820          1.000      n/a baseline                       1.000 0.139100 PASS
+  10 tmem_k64_sw64    0.178131  0.177555  0.179228          0.780      n/a baseline                       0.780 0.139100 SLOW
+  10 tmem_k32_depth8  0.178197  0.176447  0.178638          0.780      n/a tmem_k64_sw64                  0.999 0.139100 SLOW
+  10 tmem_k32_depth10  0.179044  0.176293  0.179789          0.777      n/a tmem_k32_depth8                0.995 0.139100 SLOW
+Saved results_b300/step10_granularity.nVKp6r/step10_4096/summary.csv; SLOW is a measured result, not a tool error.

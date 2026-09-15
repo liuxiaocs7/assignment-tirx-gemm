@@ -1,0 +1,33 @@
+--- baseline.py
++++ tmem_k32_depth10.py
+@@ -8,12 +8,10 @@
+     # B300 measurements favor narrow tiles up to 256 cluster output tiles.
+     # Larger outputs retain N256 to avoid the measured 8192 regression.
+     NARROW_N = M * N <= 4096 * 4096
+-    BLK_M, BLK_N, BLK_K = 128, (64 if NARROW_N else 128), 64
++    BLK_M, BLK_N = 128, (64 if NARROW_N else 128)
+     CTA_GROUP = 2
+     NUM_CONSUMER = 2
+     MMA_M, MMA_N = 256, (128 if NARROW_N else 256)
+-    K_TILES = K // BLK_K
+-    PIPE_DEPTH = 4
+     EPI_N = 32 if NARROW_N else 64
+     TMEM_LD_N = 32  # Four/eight loads per narrow/wide consumer.
+     WG_NUMBER = 3
+@@ -27,10 +25,14 @@
+     # slot = stage * TMEM_SLOT_STRIDE + consumer; tmem_col = slot * MMA_N.
+     # Ready/free barriers and TMEM columns always refer to the same slot.
+     TMEM_SLOT_STRIDE = NUM_CONSUMER if TMEM_BUFFERS == 2 else 0
++    BLK_K = 32 if TMEM_BUFFERS == 2 else 64
++    PIPE_DEPTH = 10 if TMEM_BUFFERS == 2 else 4
++    K_TILES = K // BLK_K
++    INPUT_SWIZZLE = SwizzleMode.SWIZZLE_64B_ATOM if TMEM_BUFFERS == 2 else SwizzleMode.SWIZZLE_128B_ATOM
+     TILES_PER_CLUSTER = (TOTAL_TILES + MAX_CLUSTERS - 1) // MAX_CLUSTERS
+     CLUSTER_COUNT = (TOTAL_TILES + TILES_PER_CLUSTER - 1) // TILES_PER_CLUSTER
+-    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
+-    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
++    A_layout = mma_shared_layout(a_type, INPUT_SWIZZLE, (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
++    B_layout = mma_shared_layout(b_type, INPUT_SWIZZLE, (PIPE_DEPTH, BLK_N, BLK_K))
+     D_SWIZZLE = SwizzleMode.SWIZZLE_64B_ATOM if NARROW_N else SwizzleMode.SWIZZLE_128B_ATOM
+     D_layout = mma_shared_layout(d_type, D_SWIZZLE, (NUM_CONSUMER, BLK_M, EPI_N))
+ 
